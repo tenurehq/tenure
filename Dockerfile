@@ -3,9 +3,14 @@ RUN apk add --no-cache curl
 
 ARG MONGO_CRYPT_VERSION=8.2.6
 RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "aarch64" ]; then ARCH_SUFFIX="aarch64"; else ARCH_SUFFIX="x86_64"; fi && \
-    curl -fsSL "https://downloads.mongodb.com/linux/mongo_crypt_shared_v1-linux-${ARCH_SUFFIX}-enterprise-debian12-${MONGO_CRYPT_VERSION}.tgz" \
-    | tar -xz -C /tmp --strip-components=1
+    if [ "$ARCH" = "aarch64" ]; then \
+      URL="https://downloads.mongodb.com/linux/mongo_crypt_shared_v1-linux-aarch64-enterprise-ubuntu2204-${MONGO_CRYPT_VERSION}.tgz"; \
+    else \
+      URL="https://downloads.mongodb.com/linux/mongo_crypt_shared_v1-linux-x86_64-enterprise-debian12-${MONGO_CRYPT_VERSION}.tgz"; \
+    fi && \
+    mkdir -p /tmp/crypt /tmp/lib && \
+    curl -fsSL --max-time 120 "$URL" | tar -xz -C /tmp/crypt --strip-components=1 && \
+    find /tmp/crypt -name "mongo_crypt_v1.so" -exec cp {} /tmp/lib/mongo_crypt_v1.so \;
 
 FROM node:25-alpine AS deps
 WORKDIR /app
