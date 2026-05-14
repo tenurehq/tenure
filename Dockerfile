@@ -36,6 +36,8 @@ COPY package*.json ./
 COPY src/static ./dist/static
 COPY --from=crypt /tmp/lib/mongo_crypt_v1.so /app/vendor/mongo_crypt_v1.so
 
+COPY docker-compose.yml /app/docker-compose.yml
+
 RUN mkdir -p /app/config /app/.tenure && \
     chown -R tenure:tenure /app
 
