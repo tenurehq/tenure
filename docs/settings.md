@@ -73,9 +73,47 @@ of it as the difference between working with a colleague who remembers
 everything you've told them, versus one who is also taking notes. Paused
 means no new notes.
 
+## Injection
+
+Tenure injects relevant beliefs from your world model into each session as context. Injection can be controlled at the session or global level without touching Settings.
+
+### Session-level commands
+
+| Command              | Effect                                        |
+| -------------------- | --------------------------------------------- |
+| `!inject off`        | Pauses belief injection for this session only |
+| `!inject on`         | Resumes belief injection for this session     |
+| `!inject global off` | Disables belief injection everywhere          |
+| `!inject global on`  | Re-enables belief injection everywhere        |
+
+When you send `!inject off`, the model will receive no belief context for the remainder of that session. Extraction continues unless you also send `!extract off`. To get a fully clean session with no memory of past context and no new beliefs recorded, send both commands.
+
+**On session boundaries**: like `!extract off`, injection pause persists until you explicitly send `!inject on`, or until your client starts a session with a new session ID.
+
 ## Scope
 
 **Automatic scope detection**: when enabled, Tenure infers the domain from your first message each session and sets scope automatically. When disabled, scope is only set via explicit `!scope` commands or client metadata. In explicit-only mode, sessions without a declared scope surface only `user:universal` beliefs.
+
+### Setting scope manually
+
+You can set the active scope directly from any chat session:
+
+| Command                            | Effect                                  |
+| ---------------------------------- | --------------------------------------- |
+| `!scope domain:code`               | Sets scope to a top-level domain        |
+| `!scope domain:code/typescript`    | Sets scope to a technology sub-domain   |
+| `!scope project:my-project`        | Sets scope to a named project           |
+| `set scope domain:code/typescript` | Alternative syntax, identical behaviour |
+
+Multiple scopes can be set at once by separating them with spaces or commas, for example `!scope domain:code/typescript domain:writing`.
+
+**Scope format rules:**
+
+- `domain:<slug>` -- a top-level domain (e.g. `domain:code`, `domain:writing`, `domain:music`)
+- `domain:<slug>/<tech>` -- a technology or topic sub-domain (e.g. `domain:code/typescript`, `domain:code/python`)
+- `project:<slug>` -- a specific named project (e.g. `project:my-app`)
+
+When you set a sub-domain scope such as `domain:code/typescript`, Tenure automatically expands the hierarchy to include parent scopes, so you do not need to list them separately.
 
 ## Your Persona
 
@@ -93,17 +131,7 @@ These settings are hidden by default. Most users won't need to change them.
 
 **Belief context token target**: how many tokens to budget for injected beliefs per request. Lower values mean less context per session; higher values inject more but increase cost and latency. Default: 400.
 
-**History token cap**: the maximum number of tokens of compacted session history Tenure retains. History beyond this cap is dropped during compaction. Default: 120,000.
-
 **Strict model tiers**: when enabled, only verified models can be selected as the default. Disable this if you are running a self-hosted or custom model that isn't in the supported list.
-
-**History compaction mode**: controls how aggressively past session turns are collapsed:
-
-| Mode         | What it does                                                                                     |
-| ------------ | ------------------------------------------------------------------------------------------------ |
-| Aggressive   | Collapses acknowledgments, deduplicated turns, and completed topics. Recommended for most users. |
-| Conservative | Only collapses pure acknowledgments                                                              |
-| Off          | Keeps all history. Uses significantly more tokens over time.                                     |
 
 ## API Token
 
