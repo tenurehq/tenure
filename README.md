@@ -1,53 +1,29 @@
-# Tenure: Local Long-Term Memory for Open WebUI, LM Studio, and Any OpenAI-Compatible Client
+# Tenure: Local Long-Term Memory for Any OpenAI-Compatible Client
 
 ![Build](https://github.com/jeffreyflynt/tenure/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-ready-blue?logo=docker)
 ![arXiv](https://img.shields.io/badge/arXiv-2605.11325-b31b1b.svg)
 
-_Stop briefing strangers. Start working with a model that already knows your work._
+You explain something to one person and it goes right over their head. Same thing, different person, clicks instantly. The difference isn't the information. It's knowing how someone hears things.
 
-Tenure is a local, privacy-first proxy that builds a structured world model of your preferences, decisions, and expertise, injecting the right context into every session
-automatically. Point any OpenAI-compatible client at `localhost:5757` and every response is already contextualized. Your client doesn't know Tenure exists.
+Your AI has the same problem. It doesn't fail because it lacks information. It fails because it doesn't know how to reach _you_, how you process decisions, what kind of answer actually lands, what you've already ruled out and why.
 
-- **Zero Configuration**: Drop-in OpenAI API compatibility.
-- **Local-First**: Your memory stays on your machine, no cloud, no tracking.
-- **Beyond RAG**: Similarity search returns everything in the neighborhood because your beliefs genuinely are semantically related. Tenure uses alias-weighted term matching that returns exactly what you named, not everything nearby.
+Tenure fixes that. It's a local proxy that learns how you think, what you've decided, and how you want to be spoken to, then brings that into every session automatically. Point any OpenAI-compatible client at `localhost:5757` and every response is already yours. Your client doesn't know Tenure exists.
 
-## Features
-
-- **Zero re-briefing**: Your stack, decisions, and preferences carry forward automatically. Tenure ensures every new session already knows your work, eliminating the "Monday morning" context reset.
-- **Instant import**: Drop in an existing skills file, bio, or notes doc and Tenure seeds your world model immediately, no cold start, no manual entry.
-- **Transparent to your tools**: Point any OpenAI-compatible client at `localhost:5757/v1` and it works; no plugins, no custom integrations. The client doesn't know Tenure exists.
-- **Structured beliefs, not transcript dumps**: Organizes what it knows about you into Preferences, Decisions, Entities, Open Questions, and Expertise. Injects a curated slice per session, not raw history. Stays fast and cheap at scale.
-- **Full control**: Every belief is visible, editable, and auditable at `/beliefs`. Pin what matters, correct what's wrong. Pause extraction globally from Settings, or per-session with `!extract off` directly in your chat client, without leaving your workflow.
-- **Compaction you can tune**: History and belief compaction run automatically, with aggressive, conservative, and off modes configurable from the admin UI.
-- **Private and local**: Runs entirely on your machine. Your context never leaves `localhost`. Belief content is encrypted at rest. See [docs/security.md](docs/security.md).
-- **Portable**: Export your entire world model as a passphrase-encrypted archive and restore it on any machine.
-- **Provider agnostic**: Routes to any OpenAI-compatible endpoint: GPT-4o, Claude, Bedrock, LiteLLM, with prompt caching where supported.
+New install? Start here: [Quickstart](docs/quickstart.md)
 
 ## The Problem
 
-Every new LLM session starts from zero. You re-explain your stack, restate your voice, re-establish decisions you made weeks ago. The model meets you as a stranger every time. And when you don't re-explain, when you just ask the question, this is what you get.
+Every new session starts from zero. You re-explain your stack, restate your voice, re-establish decisions you made weeks ago. And when you don't re-explain, when you just ask the question, this is what you get.
 
-A developer had already established in a prior session: TypeScript, Fastify, MongoDB, raw driver only, no ORMs, composition over inheritance. In a new session they asked:
+A developer had already established: TypeScript, Fastify, MongoDB, raw driver, composition over inheritance. New session, they asked:
 
-> _How should I structure my repository layer?_
+> _How should I structure my repo?_
 
-The response was 200 lines of Python using SQLAlchemy:
+200 lines of Python using SQLAlchemy. Wrong language. Wrong database. Wrong paradigm. The next prompt becomes a correction instead of progress.
 
-```python
-class SQLUserRepository:
-    def __init__(self, session: Session) -> None:
-        self._session = session
-
-    def get_by_id(self, user_id: int) -> User | None:
-        return self._session.get(User, user_id)
-```
-
-Wrong language. Wrong database. Wrong paradigm. And now the next prompt has to be a correction instead of progress.
-
-With Tenure, the same question in a new session, cold start, produced this:
+With Tenure running, same question, cold start, new session:
 
 ```typescript
 export function makeUserRepository(db: Db): UserRepository {
@@ -74,19 +50,37 @@ export function makeUserRepository(db: Db): UserRepository {
 }
 ```
 
-TypeScript. MongoDB raw driver. Factory function returning a plain object. Session threading via optional `ctx` argument. No re-explanation required, because those preferences were already in the world model.
+TypeScript. MongoDB raw driver. Factory function. No re-explanation required because those preferences were already in the world model.
 
-The same problem applies to every iterative, session-heavy workflow. A writer shouldn't re-explain a character's voice in session four. A researcher shouldn't re-litigate a ruled-out approach. The model should already know.
+This isn't just a developer problem. A writer shouldn't re-explain a character's voice in session four. A researcher shouldn't re-litigate a ruled-out approach. A consultant switching between clients shouldn't re-brief from scratch. The model should already know.
+
+## Why This Is Different
+
+Most memory tools are glorified search. They store what you said and retrieve what sounds similar. That's not memory, it's a transcript with a search bar. The model still has to read it, infer what matters, and figure out how to apply it, competing with the actual task at hand.
+
+Tenure doesn't retrieve. It instructs.
+
+Every observation is converted into a structured belief with a `why_it_matters` field: not just "uses TypeScript with strict mode" but "shapes all code examples toward TypeScript with strict mode and no implicit any." The model receives instructions it can act on directly, not raw material to process first.
+
+**It knows what you ruled out, not just what you chose.** Rejected alternatives are indexed too. Ask about Mongoose and Tenure surfaces your MongoDB raw driver decision, because what you ruled out is a query path to what you actually use. It doesn't just know you chose MongoDB, it knows why you rejected Mongoose, so it never suggests it again.
+
+**It retrieves what applies, not what's similar.** Your stack lives in a semantic neighborhood: Redis, TypeScript, Fastify, MongoDB all score similarly against each other. Similarity search returns everything nearby. Tenure uses alias-weighted term matching that returns exactly the belief that matches what you're actually asking about, not everything in the neighborhood.
+
+**It learns how you refer to things.** Call your cat "my baby" once and that phrase resolves correctly next time. The longer you use it, the more precisely it finds what you mean.
+
+**It knows how to talk to you.** Not just your preferences, but your communication patterns, whether you want clarifying questions before long responses, whether you process tradeoffs first or conclusions first. The same information, delivered the way it actually lands for you.
+
+**It catches up mid-session.** Say "actually, let's switch to Postgres" and Tenure handles it in two layers: your recent turns are always injected in full so the model sees the change immediately, and the extraction worker supersedes the old belief before your next session starts.
 
 ## Who This Is For
 
 Tenure is for anyone whose work compounds across sessions, because what you ruled out last week matters as much as what you decided this morning.
 
-- **Engineers**: No more re-explaining that you hate ORMs, use Vitest, and prefer explicit error returns over exceptions.
-- **Data Scientists**: Keep modeling decisions, ruled-out approaches, and dataset quirks in context across every experiment.
-- **Writers**: Keep character voices, world bibles, and open plot threads consistent across every session.
-- **Students & Researchers**: Never re-establish your thesis angle, ruled-out sources, or advisor feedback from scratch mid-project.
-- **Consultants**: Switch cleanly between client contexts, stack preferences, tone guides, and standing decisions, without re-briefing from scratch.
+- **Engineers**: Stop re-explaining that you hate ORMs, use Vitest, and prefer explicit error returns over exceptions.
+- **Writers**: Character voices, world bibles, and open plot threads stay consistent across every session.
+- **Data Scientists**: Modeling decisions, ruled-out approaches, and dataset quirks persist across every experiment.
+- **Students & Researchers**: Your thesis angle, ruled-out sources, and advisor feedback don't reset mid-project.
+- **Consultants**: Switch cleanly between client contexts without re-briefing from scratch.
 
 Works with chat clients, IDEs, and manual mode. See [docs/clients.md](docs/clients.md) for setup by client type.
 
@@ -110,46 +104,61 @@ See [docs/quickstart.md](docs/quickstart.md) for full setup instructions. The sh
 
    Your API token is printed to the terminal on first start and saved to `~/.tenure/token`.
 
-2. **Complete setup.** Open [http://localhost:5757/onboarding](http://localhost:5757/onboarding) in your browser. Connect a provider, pick a default model, and answer a few questions to seed your world model. See [docs/quickstart.md](docs/quickstart.md) for import and cold-start options.
+2. **Complete setup.** Open [http://localhost:5757/onboarding](http://localhost:5757/onboarding) in your browser. Connect a provider, pick a default model, and answer a few questions to seed your world model.
 
 3. **Point your client** at `http://localhost:5757/v1` with your bearer token. Open [http://localhost:5757/beliefs](http://localhost:5757/beliefs) to view and manage your world model.
 
+## Trust and Ownership
+
+- **Fully local.** Runs entirely on your machine. Your context never leaves `localhost`.
+- **Encrypted at rest.** Belief content is encrypted. See [docs/security.md](docs/security.md).
+- **No hidden profiles.** Every belief is visible, editable, and correctable at `/beliefs`. Pin what matters, correct what's wrong.
+- **Portable.** Export your entire world model as a passphrase-encrypted archive and restore it on any machine.
+- **Pausable.** Stop extraction globally from Settings, or per-session with `!extract off` directly in your chat.
+
 ## How It Works
 
-Tenure sits between any OpenAI-compatible client and upstream LLM providers. On every request:
+Tenure sits between your client and any upstream LLM provider. On every request:
 
 1. Assembles a **belief context**: a curated slice of your world model, budgeted within a token ceiling
-2. Injects both into the system prompt alongside a sidecar instruction, a structured metadata block the model writes back, which Tenure strips before returning the response to your client
+2. Injects it into the system prompt alongside a sidecar instruction, a structured metadata block the model writes back, which Tenure strips before returning the response to your client
 3. Forwards the call to the resolved provider (streaming or non-streaming)
-4. Returns a standard OpenAI-format response, so the client sees no difference
+4. Returns a standard OpenAI-format response, the client sees no difference
 
-Context assembly is local and fast. The belief extraction worker runs asynchronously after the response is returned, so it never blocks your session.
+Context assembly is local and fast. The belief extraction worker runs asynchronously after the response, so it never blocks your session.
 
-### Why curated beliefs, not conversation history
+### Your world model
 
-The naive approach is injecting raw conversation history into each new
-session. Tenure doesn't do this.
+Beliefs are organized into types: **Preferences**, **Decisions**, **Entities**, **Relations**, and **Open Questions**. Preferences carry an optional subtype: **Expertise** (depth calibration) or **Style** (communication patterns), and are scoped by domain so your engineering preferences don't bleed into creative sessions.
 
-Raw history grows linearly and gets injected on every turn. Dropping a
-transcript into context also asks the model to read it, infer what matters,
-and apply it to the current question, work that competes with the task at
-hand. Tenure extracts conclusions at write time, when the model already knows
-why something was decided. The model receives structured beliefs it can act
-on directly, not raw material to process first.
+Scoping is a three-level hierarchy:
 
-Retrieval works the same way. Your stack lives in a semantically related
-neighborhood: Redis, TypeScript, Fastify, MongoDB all score similarly against
-each other because they genuinely are related. Similarity search returns
-everything at similar scores. Tenure uses alias-weighted term matching that
-returns exactly what you named, not everything nearby.
+- **Universal** - communication style and engagement preferences. Surfaces everywhere.
+- **Domain** - how you work within a discipline (`domain:code`, `domain:writing`). Sub-domains narrow further: `domain:code/typescript` applies to all TypeScript work but not Python.
+- **Project** - facts specific to a named project. Your API's database choice doesn't bleed into your side project.
 
-Rejected alternatives are indexed too. Ask about Mongoose and Tenure surfaces
-your MongoDB raw driver decision, because what you ruled out is a query path
-to what you actually use.
+Tenure sets scope automatically from your first message. You can also set it explicitly:
 
-### Mid-session changes
+```
+!scope domain:writing
+!scope domain:code/typescript
+```
 
-When you change direction mid-session, say "actually, let's switch to Postgres" or "I've decided the narrator is unreliable", Tenure handles it in two layers. Within the session, your last several turns are always injected in full so the model sees what you just said immediately. Between sessions, the extraction worker has already superseded the old belief and written the new one before your next conversation starts.
+To pause extraction for a session without opening Settings:
+
+```
+!extract off          ← stops recording this session
+!extract on           ← resumes
+!extract global off   ← pauses everywhere
+```
+
+See [docs/beliefs.md](docs/beliefs.md) for the full walkthrough.
+
+### Token efficiency
+
+Tenure reduces token costs in two directions. On the supply side, beliefs are retrieved selectively, the belief store stays compact through continuous compaction, and prompt caching on the static and belief tiers means you pay for context injection once per session. On the demand side, a model that already knows to ask before executing prevents the most expensive failure mode: a long, confident response that went the wrong direction. A two-sentence clarifying question that costs 50 tokens and prevents a 5,000-token miss is a 99% reduction on that exchange.
+
+See [docs/prompt-caching.md](docs/prompt-caching.md) for details.
 
 ### Supported models
 
@@ -165,68 +174,17 @@ Belief extraction requires reliable structured output. Smaller or heavily quanti
 
 Any OpenAI-compatible endpoint serving one of these models works, including Bedrock gateways, LiteLLM, and similar setups.
 
-## Your World Model
+## Tradeoffs and The Ramp
 
-Beliefs are organized into types: **Preferences**, **Decisions**, **Entities**, **Relations**, and **Open Questions**. Preferences carry an optional subtype: **Expertise** (depth calibration) or **Style** (communication patterns). They're scoped by domain, so your engineering preferences don't bleed into creative sessions.
+Tenure is conservative by design. It would rather surface nothing than surface the wrong thing. If a belief isn't surfacing when you'd expect it, pinning it is the most direct fix. Retrieval quality improves over time as the system learns new ways you refer to things. See [docs/retrieval.md](docs/retrieval.md) for how retrieval works and how to get the most out of it.
 
-Every belief carries a `why_it_matters` field: not just "uses TypeScript with strict mode" but "shapes all code examples toward TypeScript with strict mode
-and no implicit any." The model receives instructions it can act on directly, not facts it has to figure out how to apply.
+The ramp depends on how you start. Import an existing skills file or run onboarding and the first session is already informed. Starting cold: the first session will be good, the tenth noticeably better, the fiftieth will feel like working with someone who actually knows you.
 
-Every belief is visible, editable, and auditable at `/beliefs`. See [docs/beliefs.md](docs/beliefs.md) for the full walkthrough.
-
-### Scoped context, no bleed
-
-Beliefs are organized into a three-level hierarchy:
-
-- **Universal** — communication style, how you want to be engaged. Surfaces everywhere.
-- **Domain** — how you work within a discipline (`domain:code`, `domain:writing`, `domain:teaching`). Your TypeScript error handling preference stays out of your novel sessions.
-- **Project** — facts specific to a named project. Your API's database choice doesn't bleed into your side project.
-
-Sub-domains narrow further when you need them: `domain:code/typescript` applies to all TypeScript work but not Python, while still surfacing in a general code session.
-
-Tenure sets your scope automatically from your first message. You can also set it explicitly:
-
-```
-!scope domain:writing
-!scope domain:code/typescript
-```
-
-Without scope, Tenure still works — it just retrieves across all your beliefs, which can introduce noise when your domains are very different from each other.
-
-To pause extraction for a session without opening Settings:
-
-```
-!extract off          ← stops recording this session
-!extract on           ← resumes
-!extract global off   ← pauses everywhere
-```
-
-## Token Efficiency
-
-Tenure reduces token costs in two directions. On the supply side, the belief store stays compact through continuous compaction, beliefs are retrieved selectively rather than injected in full, and prompt caching on the static and belief tiers means you pay for context injection once per session. On the demand side, a model that knows to ask before executing (because that preference is in your world model) prevents the most expensive failure mode: a long, confident response that went the wrong direction. A two-sentence clarifying question that costs 50 tokens and prevents a 5,000-token miss is a 99% reduction on that exchange.
-
-The system prompt is long by design: each instruction is written out explicitly
-so the model does not need to reason over it, protecting reasoning tokens for
-the actual task. Prompt caching means that length is paid for once per session
-rather than on every turn. See [docs/prompt-caching.md](docs/prompt-caching.md)
-for details on minimum token thresholds and how the static and belief tiers are
-structured to meet them.
+Multi-user support and belief sharing are not yet implemented. See [docs/roadmap.md](docs/roadmap.md) for what's coming.
 
 ## Reproducing the Evaluation
 
-The retrieval claims in the paper are reproducible from the repo.
-See [docs/eval.md](docs/eval.md) for instructions. Both backends
-run against the same committed seed corpus; Docker is the only
-prerequisite for the BM25 evaluation.
-
-## Tradeoffs
-
-Tenure is conservative by design. It would rather surface nothing than surface the wrong thing. Retrieval quality improves over time because every session teaches the system
-new ways you refer to things. Call your cat "my baby" once and that phrase resolves to the right belief next time. The longer you use it, the more precisely it finds what you mean. If a belief isn't surfacing when you'd expect it, pinning it is the most direct fix. See [docs/retrieval.md](docs/retrieval.md) for a full account of how retrieval works and how to get the most out of it. See [docs/compaction.md](docs/compaction.md) for compaction modes and how to configure them.
-
-The ramp depends on how you start. Import an existing skills file or run onboarding and the first session is already informed. Starting cold, the model builds your world model from extraction over time; the first session will be good, the tenth noticeably better, the fiftieth will feel like working with someone who actually knows you.
-
-Multi-user support and belief sharing across users are not yet implemented. See [docs/roadmap.md](docs/roadmap.md) for what's coming.
+The retrieval claims in the paper are reproducible from the repo. See [docs/eval.md](docs/eval.md) for instructions. Docker is the only prerequisite for the BM25 evaluation.
 
 ## Contributing
 
@@ -235,7 +193,3 @@ See [docs/contributing.md](docs/contributing.md).
 ## License
 
 MIT
-
-```
-
-```
