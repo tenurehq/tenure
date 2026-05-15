@@ -8,6 +8,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.0.5] - 2026-05-15
 
+### Changed
+
+- **`docker-compose.yml`**: Add missing creds.
+
+---
+
+## [1.0.5] - 2026-05-15
+
 ### Added
 
 - **`!inject` commands documented in settings.md**: The Injection section has been added to `settings.md`, covering all four `!inject` commands (`!inject off`, `!inject on`, `!inject global off`, `!inject global on`), their effects, and the interaction with `!extract off` for fully clean sessions.
