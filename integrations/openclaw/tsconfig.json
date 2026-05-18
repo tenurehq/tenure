@@ -8,12 +8,18 @@
     "strict": true,
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": false,
+    "sourceMap": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
     "types": ["node"]
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "exclude": [
+    "dist",
+    "node_modules",
+    "**/*.test.ts",
+    "**/__fixtures__/**",
+    "**/__mocks__/**"
+  ]
 }
