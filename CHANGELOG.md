@@ -6,6 +6,27 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.9] - 2026-05-18
+
+### Added
+
+- **`*.tgz` added to `.gitignore`** .
+- **Type export added to OpenClaw plugin `package.json`**: The `exports` map now includes a `types` condition pointing to `./dist/index.d.ts`, and a top-level `types` field has been added alongside it.
+- **Source maps enabled in `tsconfig.json`**: `sourceMap` flipped from `false` to `true`.
+
+### Changed
+
+- **`SKILL.md` metadata block converted from JSON to YAML**: The embedded `openclaw` metadata object has been reformatted from inline JSON to clean YAML. `curl` has also been added as a required binary alongside `docker`, and the Windows and Linux install entries have been removed.
+- **`resolveToken` simplified**: The multi-step fallback chain (token file, `.env` file, `TENURE_TOKEN` env var) has been removed. The function now throws an explicit error if no token is provided in config, directing the user to run `!tenure onboarding`.
+- **AVA `extensions` config changed from object to array**: The `extensions` field in `package.json` test config has been corrected from `{ "ts": "module" }` to `["ts"]`.
+- **`tsconfig.json` excludes tightened**: Test files (`**/*.test.ts`), fixtures (`**/__fixtures__/**`), and mocks (`**/__mocks__/**`) are now explicitly excluded from the TypeScript build.
+
+### Removed
+
+- **`resolveToken` env var fallback tests removed**: The `resolveToken falls back to TENURE_TOKEN env var` and `resolveToken returns empty string when nothing available` test cases have been dropped, reflecting the simplified token resolution logic.
+
+---
+
 ## [1.0.8] - 2026-05-18
 
 ### Changed

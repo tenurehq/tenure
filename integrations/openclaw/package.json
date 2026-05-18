@@ -19,8 +19,12 @@
   ],
   "type": "module",
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
+  "types": "./dist/index.d.ts",
   "files": [
     "dist",
     "skills",
@@ -63,9 +67,9 @@
     "files": [
       "src/**/*.test.ts"
     ],
-    "extensions": {
-      "ts": "module"
-    },
+    "extensions": [
+      "ts"
+    ],
     "nodeArguments": [
       "--import=tsx/esm"
     ],
