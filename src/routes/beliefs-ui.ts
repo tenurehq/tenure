@@ -141,7 +141,8 @@ let searchQuery  = "";
 let editId       = null;
 let historyData  = null;
 let deleteId     = null;
-let filterScope = "all";
+let createOpen   = false;
+let filterScope  = "all";
 let availableScopes = [];
 
 const app = document.getElementById("app");
@@ -225,6 +226,7 @@ function render() {
       </div>
       <div class="nav-right">
         <span class="count">\${beliefs.length} belief\${beliefs.length === 1 ? "" : "s"}</span>
+        <button class="btn btn-primary" data-action="open-create">New Belief</button>
         <button class="btn" data-action="set-type" data-value="import">Import</button>
       </div>
     </nav>
@@ -292,6 +294,7 @@ function renderModal() {
   let html = "";
   if (editId)      { const b = beliefs.find(x => x.id === editId);   if (b)  html = editModal(b); }
   else if (historyData) html = historyModal(historyData);
+  else if (createOpen) html = createModal();
   else if (deleteId) { const b = beliefs.find(x => x.id === deleteId); if (b) html = deleteModal(b); }
   if (!html) return;
 
@@ -300,6 +303,51 @@ function renderModal() {
   el.setAttribute("data-action", "close-modal");
   el.innerHTML = html;
   app.appendChild(el);
+}
+
+function createModal() {
+  return \`<div class="modal" onclick="event.stopPropagation()">
+    <h2>New belief</h2>
+    <div class="field">
+      <label>Type</label>
+      <select id="c-type">
+        <option value="preference">preference</option>
+        <option value="decision">decision</option>
+        <option value="entity">entity</option>
+        <option value="relation">relation</option>
+        <option value="open_question">open_question</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Canonical name <span style="opacity:.5;font-size:.75rem">snake_case</span></label>
+      <input id="c-name" type="text" placeholder="e.g. prefers_explicit_errors">
+    </div>
+    <div class="field">
+      <label>Content</label>
+      <textarea id="c-content" style="min-height:72px" placeholder="What is true about this user?"></textarea>
+    </div>
+    <div class="field">
+      <label>Why it matters</label>
+      <input id="c-why" type="text" placeholder="One sentence: what future responses this shapes">
+    </div>
+    <div class="field">
+      <label>Scope <span style="opacity:.5;font-size:.75rem">e.g. user:universal, domain:work</span></label>
+      <input id="c-scope" type="text" placeholder="user:universal" value="user:universal">
+      <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem;line-height:1.4">
+        Use <code>user:universal</code> for beliefs that should surface in all contexts.
+        Use <code>domain:work</code> or similar to pin to a specific scope.
+      </div>
+    </div>
+    <div class="field">
+      <label>Aliases <span style="opacity:.5;font-size:.75rem">comma-separated, 1-2 words each</span></label>
+      <input id="c-aliases" type="text" placeholder="e.g. error_returns, no_exceptions">
+    </div>
+    <div id="c-error" style="color:var(--danger);font-size:.8rem;margin-bottom:.5rem;display:none"></div>
+    <div class="modal-footer">
+      <button class="btn" data-action="close-modal">Cancel</button>
+      <button class="btn btn-primary" data-action="submit-create">Create</button>
+    </div>
+  </div>\`;
 }
 
 function editModal(b) {
@@ -367,7 +415,53 @@ function setSearch(q) { searchQuery = q; render(); }
 
 function openEdit(id)    { editId = id; historyData = null; deleteId = null; render(); }
 function openDelete(id)  { deleteId = id; editId = null; historyData = null; render(); }
-function closeModal()    { editId = null; historyData = null; deleteId = null; render(); }
+function closeModal()    { editId = null; historyData = null; deleteId = null; createOpen = false; render(); }
+
+function openCreate() {
+  createOpen = true;
+  editId = null;
+  historyData = null;
+  deleteId = null;
+  render();
+}
+
+async function submitCreate() {
+  const type       = document.getElementById("c-type")?.value;
+  const name       = document.getElementById("c-name")?.value?.trim();
+  const content    = document.getElementById("c-content")?.value?.trim();
+  const why        = document.getElementById("c-why")?.value?.trim();
+  const scopeRaw   = document.getElementById("c-scope")?.value?.trim() || "user:universal";
+  const aliasesRaw = document.getElementById("c-aliases")?.value?.trim();
+  const errEl      = document.getElementById("c-error");
+
+  const showErr = (msg) => {
+    if (errEl) { errEl.textContent = msg; errEl.style.display = "block"; }
+  };
+
+  if (!name)    return showErr("Canonical name is required.");
+  if (!content) return showErr("Content is required.");
+  if (!why)     return showErr("Why it matters is required.");
+
+  const scope   = scopeRaw.split(",").map(s => s.trim()).filter(Boolean);
+  const aliases = aliasesRaw
+    ? aliasesRaw.split(",").map(s => s.trim()).filter(Boolean)
+    : [];
+
+  try {
+    const res = await apiFetch("POST", "/v1/beliefs", {
+      type, canonical_name: name, content, why_it_matters: why,
+      scope, aliases
+    });
+    const data = await res.json();
+    if (!res.ok) return showErr(data?.error?.message ?? \`HTTP \${res.status}\`);
+    if (data.belief) beliefs.unshift(data.belief);
+    createOpen = false;
+    render();
+    toast("Belief created", "ok");
+  } catch (e) {
+    showErr(e.message);
+  }
+}
 
 async function saveEdit() {
   if (!editId) return;
@@ -487,6 +581,8 @@ document.addEventListener("click", e => {
     case "confirm-delete": confirmDelete(); break;
     case "token-submit":   handleToken(); break;
     case "retry":          init(); break;
+    case "open-create":   openCreate(); break;
+    case "submit-create": submitCreate(); break;
   }
 });
 
