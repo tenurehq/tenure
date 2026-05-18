@@ -286,31 +286,6 @@ test("resolveToken prefers provided token over env", (t) => {
   delete process.env.TENURE_TOKEN;
 });
 
-test("resolveToken falls back to TENURE_TOKEN env var", (t) => {
-  const fakeTenureHome = join(tmpdir(), `tenure-test-${randomUUID()}`);
-  mkdirSync(fakeTenureHome, { recursive: true });
-  process.env.TENURE_HOME = fakeTenureHome;
-  process.env.TENURE_TOKEN = "env-token";
-
-  const result = resolveToken(undefined);
-  t.is(result, "env-token");
-
-  delete process.env.TENURE_TOKEN;
-  delete process.env.TENURE_HOME;
-});
-
-test("resolveToken returns empty string when nothing available", (t) => {
-  const fakeTenureHome = join(tmpdir(), `tenure-test-${randomUUID()}`);
-  mkdirSync(fakeTenureHome, { recursive: true });
-  process.env.TENURE_HOME = fakeTenureHome;
-  delete process.env.TENURE_TOKEN;
-
-  const result = resolveToken(undefined);
-  t.is(result, "");
-
-  delete process.env.TENURE_HOME;
-});
-
 test("sessionAgentMap only writes on first encounter", (t) => {
   const map = new Map<string, string>();
   const MAX = 500;

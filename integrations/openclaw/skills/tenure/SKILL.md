@@ -6,45 +6,23 @@ description: >
 version: 1.0.0
 user-invocable: true
 metadata:
-  {
-    "openclaw":
-      {
-        "emoji": "🧠",
-        "homepage": "https://github.com/jeffreyflynt/tenure",
-        "requires": { "bins": ["docker"] },
-        "primaryEnv": "TENURE_TOKEN",
-        "envVars":
-          [
-            {
-              "name": "TENURE_TOKEN",
-              "required": false,
-              "description": "Bearer token for Tenure. Auto-populated during install via ~/.tenure/token.",
-            },
-          ],
-        "install":
-          [
-            {
-              "kind": "brew",
-              "os": ["darwin"],
-              "formula": "docker",
-              "bins": ["docker"],
-              "label": "Install Docker Desktop (macOS)",
-            },
-            {
-              "kind": "download",
-              "os": ["win32"],
-              "url": "https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe",
-              "label": "Install Docker Desktop (Windows)",
-            },
-            {
-              "kind": "download",
-              "os": ["linux"],
-              "url": "https://docs.docker.com/engine/install/",
-              "label": "Install Docker Engine (Linux)",
-            },
-          ],
-      },
-  }
+  openclaw:
+    emoji: "🧠"
+    homepage: "https://github.com/jeffreyflynt/tenure"
+    requires:
+      bins:
+        - docker
+        - curl
+    primaryEnv: TENURE_TOKEN
+    envVars:
+      - name: TENURE_TOKEN
+        required: false
+        description: "Bearer token for Tenure. Auto-populated during install via ~/.tenure/token."
+    install:
+      - kind: brew
+        formula: docker
+        bins: [docker]
+        label: "Install Docker Desktop (macOS)"
 ---
 
 # Tenure — Persistent Memory for OpenClaw

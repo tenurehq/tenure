@@ -25,38 +25,12 @@ export interface TenureHealth {
   ok: boolean;
 }
 
-/**
- * Resolves the Tenure bearer token using the following priority:
- *
- * 1. Explicit value passed in plugin config
- * 2. ~/.tenure/token  — bare token file written by Tenure on first boot
- * 3. ~/.tenure/.env   — TENURE_TOKEN= line (manual / legacy installs)
- * 4. TENURE_TOKEN environment variable
- */
 export function resolveToken(configToken: string | undefined): string {
-  if (configToken) return configToken;
-
-  const tokenDir = process.env.TENURE_HOME ?? join(homedir(), ".tenure");
-  const tokenFile = join(tokenDir, "token");
-  try {
-    const contents = readFileSync(tokenFile, "utf8").trim();
-    if (contents) return contents;
-  } catch {}
-
-  const envFile = join(homedir(), ".tenure", ".env");
-  try {
-    const contents = readFileSync(envFile, "utf8");
-    for (const line of contents.split("\n")) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith("TENURE_TOKEN=")) {
-        return trimmed.slice("TENURE_TOKEN=".length).trim();
-      }
-    }
-  } catch {}
-
-  if (process.env.TENURE_TOKEN) return process.env.TENURE_TOKEN;
-
-  return "";
+  if (!configToken)
+    throw new Error(
+      "TENURE_TOKEN is not configured. Run !tenure onboarding to set up.",
+    );
+  return configToken;
 }
 
 export function createTenureClient(cfg: TenureConfig) {
