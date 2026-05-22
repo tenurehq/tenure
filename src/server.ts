@@ -83,7 +83,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.register(fastifyStatic, { root: path.join(__dirname, "static") });
 
   app.addHook("onRequest", async (req, reply) => {
-    if (req.url.startsWith("/v1/")) {
+    const requiresAuth =
+      req.url.startsWith("/v1/") ||
+      (req.url.startsWith("/admin/") && req.url !== "/admin/");
+
+    if (requiresAuth) {
       const auth = req.headers.authorization;
       if (auth !== `Bearer ${liveToken}`) {
         return reply.code(401).send({ error: { message: "unauthorized" } });

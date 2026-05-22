@@ -78,6 +78,8 @@ interface ChatBody {
     role: string;
     content: string | ContentPart[];
     name?: string;
+    tool_call_id?: string;
+    tool_calls?: unknown[];
   }>;
   stream?: boolean;
   temperature?: number;
@@ -516,10 +518,23 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
     const conversationMessages: Message[] = [
       ...messages
         .filter(
-          (m): m is typeof m & { role: "user" | "assistant" } =>
-            m.role === "user" || m.role === "assistant",
+          (
+            m,
+          ): m is typeof m & {
+            role: "user" | "assistant" | "developer" | "tool" | "function";
+          } =>
+            m.role === "user" ||
+            m.role === "assistant" ||
+            m.role === "developer" ||
+            m.role === "tool" ||
+            m.role === "function",
         )
-        .map((m) => ({ role: m.role, content: m.content })),
+        .map((m) => ({
+          role: m.role,
+          content: m.content,
+          ...(m.tool_call_id !== undefined && { tool_call_id: m.tool_call_id }),
+          ...(m.tool_calls !== undefined && { tool_calls: m.tool_calls }),
+        })),
     ];
 
     const normalizedReq = {
@@ -756,20 +771,24 @@ async function handleStreamingResponse(
     ],
   });
 
+  const abortController = new AbortController();
+  raw.on("close", () => abortController.abort());
+
   const heartbeat = setInterval(() => {
-    if (!raw.writableEnded && !clientDisconnected) {
+    if (!raw.writableEnded && !abortController.signal.aborted) {
       raw.write(": keep-alive\n\n");
     }
   }, 15_000);
 
-  let clientDisconnected = false;
-  raw.on("close", () => {
-    clientDisconnected = true;
-  });
+  const abortableReq = {
+    ...normalizedReq,
+    abortSignal: abortController.signal,
+  };
 
   try {
     for await (const event of adapter.callStream(normalizedReq, systemPrompt)) {
-      if (clientDisconnected) break;
+      if (abortController.signal.aborted) break;
+
       if (event.type === "content_delta" && event.delta) {
         fullContent += event.delta;
 
@@ -823,6 +842,11 @@ async function handleStreamingResponse(
       }
     }
   } catch (err) {
+    if (abortController.signal.aborted) {
+      raw.end();
+      return;
+    }
+
     const message = (err as Error).message;
 
     ctx.deps.errorLogger
@@ -860,6 +884,11 @@ async function handleStreamingResponse(
     return;
   } finally {
     clearInterval(heartbeat);
+  }
+
+  if (abortController.signal.aborted) {
+    raw.end();
+    return;
   }
 
   if (!sidecarDetected && flushedIdx < fullContent.length) {
@@ -924,7 +953,9 @@ async function handleStreamingResponse(
 }
 
 async function writeSSE(raw: ServerResponse, data: unknown): Promise<void> {
-  const ok = raw.write(`data: ${JSON.stringify(data)}\n\n`);
+  const record = data as Record<string, unknown>;
+  const idLine = typeof record.id === "string" ? `id: ${record.id}\n` : "";
+  const ok = raw.write(`${idLine}data: ${JSON.stringify(data)}\n\n`);
   if (!ok) {
     await new Promise<void>((resolve) => raw.once("drain", resolve));
   }
