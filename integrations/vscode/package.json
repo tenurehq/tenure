@@ -2,7 +2,7 @@
   "name": "tenure-vscode",
   "displayName": "Tenure",
   "description": "Persistent AI memory that follows you across every tool, session, and interface. Fully local.",
-  "version": "1.0.16",
+  "version": "1.0.18",
   "publisher": "tenureai",
   "license": "MIT",
   "icon": "resources/tenure-logo-icon.png",
@@ -11,7 +11,7 @@
     "url": "https://github.com/tenurehq/tenure"
   },
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.110.0"
   },
   "categories": [
     "AI",
@@ -54,46 +54,27 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "languageModelChatProviders": [
+      {
+        "vendor": "tenure",
+        "displayName": "Tenure",
+        "when": "tenure.tokenConfigured"
+      }
+    ],
     "walkthroughs": [
       {
         "id": "tenure.setup",
         "title": "Get started with Tenure",
         "description": "Set up persistent memory for your AI coding sessions.",
+        "openOnInstall": true,
         "steps": [
           {
-            "id": "tenure.setup.token",
-            "title": "Set your API token",
-            "description": "Paste your Tenure token to connect the extension to your local proxy.\n[Set Token](command:tenure.setToken)",
+            "id": "tenure.setup.start",
+            "title": "Set up Tenure",
+            "description": "Tenure handles the full setup from the sidebar — install Docker, connect a provider, pick a model, and seed your world model.\n[Open Setup](command:tenure.runOnboarding)",
             "completionEvents": [
               "onContext:tenure.tokenConfigured"
-            ],
-            "media": {
-              "markdown": "media/walkthrough/token.md"
-            }
-          },
-          {
-            "id": "tenure.setup.client",
-            "title": "Point your IDE at Tenure",
-            "description": "Set your AI client's base URL to ``http://localhost:5757/v1``.\n[Copy URL](command:tenure.copyBaseUrl)",
-            "media": {
-              "markdown": "media/walkthrough/client.md"
-            }
-          },
-          {
-            "id": "tenure.setup.scope",
-            "title": "Understand project scope",
-            "description": "Tenure isolates memory by project. Add a ``.tenure`` file to override automatic detection.\n[Open Docs](command:tenure.openBeliefs)",
-            "media": {
-              "markdown": "media/walkthrough/scope.md"
-            }
-          },
-          {
-            "id": "tenure.setup.beliefs",
-            "title": "View your beliefs",
-            "description": "See everything Tenure has learned about you.\n[Open Dashboard](command:tenure.openBeliefs)",
-            "media": {
-              "markdown": "media/walkthrough/beliefs.md"
-            }
+            ]
           }
         ]
       }
@@ -131,16 +112,15 @@
         "title": "Tenure: Record Project Belief"
       },
       {
-        "command": "tenure.recordBeliefFromSelection",
-        "title": "Tenure: Record Belief from Selection"
+        "command": "tenure.runOnboarding",
+        "title": "Tenure: Run Setup"
       }
     ],
     "menus": {
-      "editor/context": [
+      "commandPalette": [
         {
-          "command": "tenure.recordBeliefFromSelection",
-          "when": "editorHasSelection && tenure.tokenConfigured",
-          "group": "9_cutcopypaste"
+          "command": "tenure.runOnboarding",
+          "when": "tenure.tokenConfigured"
         }
       ]
     },
@@ -158,8 +138,7 @@
         {
           "type": "webview",
           "id": "tenure.beliefsView",
-          "name": "Active Beliefs",
-          "when": "tenure.tokenConfigured"
+          "name": "Tenure"
         }
       ]
     }
@@ -179,7 +158,7 @@
     "@types/jest": "^30.0.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "25.9.1",
-    "@types/vscode": "1.85.0",
+    "@types/vscode": "1.110.0",
     "@typescript/native-preview": "^7.0.0-dev.20260519.1",
     "@vscode/test-cli": "^0.0.11",
     "@vscode/test-electron": "^2.5.2",

@@ -45,6 +45,7 @@ import type { ErrorLogger } from "../errors/logger.js";
 import { parseClient, type ParsedClient } from "../helpers/clientDetector.js";
 import type { WorkspaceStateCache } from "../workspace/stateCache.js";
 import { buildIdeSidecarInstructions } from "../sidecar/idePrompt.js";
+import { inspect } from "node:util";
 
 export interface ChatDeps {
   sessions: SessionManager;
@@ -833,6 +834,39 @@ async function handleStreamingResponse(
             flushedIdx = safeEnd;
           }
         }
+      }
+
+      if (event.type === "tool_call_delta") {
+        writeSSE(raw, {
+          id: sseId,
+          object: "chat.completion.chunk",
+          created: ts(),
+          model,
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: event.toolCallIndex,
+                    ...(event.toolCallId
+                      ? { id: event.toolCallId, type: "function" }
+                      : {}),
+                    function: {
+                      ...(event.toolCallName
+                        ? { name: event.toolCallName }
+                        : {}),
+                      ...(event.toolCallArguments !== undefined
+                        ? { arguments: event.toolCallArguments }
+                        : {}),
+                    },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        });
       }
 
       if (event.type === "stream_end") {

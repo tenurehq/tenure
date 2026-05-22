@@ -63,11 +63,20 @@ export interface ModelInfo {
 }
 
 export interface StreamEvent {
-  type: "content_delta" | "stream_end";
+  type: "content_delta" | "tool_call_delta" | "stream_end";
   delta?: string;
+  toolCallIndex?: number;
+  toolCallId?: string | undefined;
+  toolCallName?: string | undefined;
+  toolCallArguments?: string | undefined;
   model?: string;
   finish_reason?: string;
   usage?: { input_tokens: number; output_tokens: number };
+  toolCalls?: Array<{
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }>;
 }
 
 export interface SystemPromptParts {

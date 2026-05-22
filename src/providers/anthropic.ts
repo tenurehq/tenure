@@ -84,6 +84,8 @@ export class AnthropicAdapter implements ProviderAdapter {
     const stream = this.client.messages.stream(base);
 
     try {
+      let currentToolIndex = -1;
+
       for await (const event of stream) {
         if (
           event.type === "content_block_delta" &&
@@ -91,13 +93,37 @@ export class AnthropicAdapter implements ProviderAdapter {
         ) {
           yield { type: "content_delta", delta: event.delta.text };
         }
-        // input_json_delta (tool call argument chunks) are intentionally not
-        // yielded here — tool calls are surfaced in full via the stream_end
-        // event below, assembled from finalMessage(). If you need streaming
-        // tool call deltas, handle event.delta.type === "input_json_delta" here.
-      }
 
+        if (
+          event.type === "content_block_start" &&
+          event.content_block.type === "tool_use"
+        ) {
+          currentToolIndex++;
+          yield {
+            type: "tool_call_delta" as const,
+            toolCallIndex: currentToolIndex,
+            toolCallId: event.content_block.id,
+            toolCallName: event.content_block.name,
+            toolCallArguments: "",
+          };
+        }
+
+        if (
+          event.type === "content_block_delta" &&
+          event.delta.type === "input_json_delta"
+        ) {
+          yield {
+            type: "tool_call_delta" as const,
+            toolCallIndex: currentToolIndex,
+            toolCallId: undefined,
+            toolCallName: undefined,
+            toolCallArguments: event.delta.partial_json,
+          };
+        }
+      }
       const final = await stream.finalMessage();
+      const { toolCalls } = extractResponseParts(final.content);
+
       yield {
         type: "stream_end",
         model: final.model,
@@ -106,6 +132,15 @@ export class AnthropicAdapter implements ProviderAdapter {
           input_tokens: final.usage.input_tokens,
           output_tokens: final.usage.output_tokens,
         },
+        ...(toolCalls.length
+          ? {
+              toolCalls: toolCalls as Array<{
+                id: string;
+                type: "function";
+                function: { name: string; arguments: string };
+              }>,
+            }
+          : {}),
       };
     } catch (e) {
       throw mapError(e);
@@ -227,8 +262,8 @@ function toAnthropicMessage(msg: Message): Anthropic.MessageParam {
       typeof msg.content === "string"
         ? msg.content
         : msg.content
-          ? textOnly(msg.content as ContentPart[])
-          : "";
+        ? textOnly(msg.content as ContentPart[])
+        : "";
     if (textContent) blocks.push({ type: "text", text: textContent });
 
     for (const tc of msg.tool_calls as Array<{
@@ -287,7 +322,9 @@ function toContentBlock(part: ContentPart): Anthropic.ContentBlockParam {
 
       if (!validatedType) {
         console.warn(
-          `[AnthropicAdapter] Unsupported file MIME type "${rawType}" for "${name ?? "unknown"}"; dropping file.`,
+          `[AnthropicAdapter] Unsupported file MIME type "${rawType}" for "${
+            name ?? "unknown"
+          }"; dropping file.`,
         );
         return {
           type: "text",
@@ -307,7 +344,9 @@ function toContentBlock(part: ContentPart): Anthropic.ContentBlockParam {
     }
 
     console.warn(
-      `[AnthropicAdapter] Non-data-URL file reference dropped: "${name ?? url}"`,
+      `[AnthropicAdapter] Non-data-URL file reference dropped: "${
+        name ?? url
+      }"`,
     );
     return {
       type: "text",

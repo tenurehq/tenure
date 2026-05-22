@@ -3,6 +3,7 @@ import { resolveGitRemote } from "./gitResolver.js";
 import type { TokenStore } from "./tokenStore.js";
 import { readTenureConfig } from "./tenureConfig.js";
 import { TenureBeliefsViewProvider } from "./beliefsViewProvider.js";
+import type { TenureLmProvider } from "./lmProvider.js";
 import path, { basename } from "node:path";
 import { createHash } from "node:crypto";
 
@@ -22,14 +23,16 @@ export class WorkspaceSync {
   private cachedGitRemote: string | null = null;
   private workspaceResolved = false;
 
+  private onboardingPromptShown = false;
+
   constructor(
     private readonly tokenStore: TokenStore,
     private readonly context: vscode.ExtensionContext,
     private readonly statusBar?: vscode.StatusBarItem,
     private readonly beliefsProvider?: TenureBeliefsViewProvider,
+    private readonly lmProvider?: TenureLmProvider,
   ) {
-    this.lastSyncedState =
-      this.context.workspaceState.get<string>("tenure.lastSyncedState") ?? null;
+    this.lastSyncedState = null;
 
     this.beliefsProvider?.setOnConnectedCallback(() => {
       this.invalidateCache();
@@ -47,10 +50,6 @@ export class WorkspaceSync {
     this.workspaceResolved = false;
     this.cachedProjectName = null;
     this.cachedGitRemote = null;
-    void this.context.workspaceState.update(
-      "tenure.lastSyncedState",
-      undefined,
-    );
   }
 
   invalidateManifestCache(): void {
@@ -84,9 +83,11 @@ export class WorkspaceSync {
       active_language: activeLanguage,
     });
 
-    vscode.workspace.fs.stat(fileUri).then((stat) => {
-      this.beliefsProvider?.sendFileMeta(activeFile, stat.size);
-    });
+    if (fileUri.scheme === "file") {
+      vscode.workspace.fs.stat(fileUri).then((stat) => {
+        this.beliefsProvider?.sendFileMeta(activeFile, stat.size);
+      });
+    }
   }
 
   async sync(): Promise<void> {
@@ -132,7 +133,9 @@ export class WorkspaceSync {
     };
 
     const stateKey = JSON.stringify(state);
-    if (stateKey === this.lastSyncedState) return;
+    if (stateKey === this.lastSyncedState) {
+      return;
+    }
 
     const baseUrl = cfg.get<string>("baseUrl", "http://localhost:5757");
 
@@ -149,10 +152,6 @@ export class WorkspaceSync {
     }
 
     this.lastSyncedState = stateKey;
-    await this.context.workspaceState.update(
-      "tenure.lastSyncedState",
-      stateKey,
-    );
 
     if (this.statusBar) {
       this.statusBar.text = `$(symbol-misc) Tenure: ${this.cachedProjectName}`;
@@ -163,10 +162,103 @@ export class WorkspaceSync {
       await this.beliefsProvider.ensureConnected();
       this.beliefsProvider.sendWorkspaceState(state);
     }
+
+    await this.checkAndPromptOnboarding(baseUrl, token);
+    await this.checkAndPromptTenureFile(workspaceFolder.uri);
   }
 
   dispose(): void {
     if (this.syncTimer) clearTimeout(this.syncTimer);
+  }
+
+  private async checkAndPromptOnboarding(
+    baseUrl: string,
+    token: string,
+  ): Promise<void> {
+    if (this.onboardingPromptShown) return;
+
+    try {
+      const [providersRes, cfgRes] = await Promise.all([
+        fetch(`${baseUrl}/admin/providers`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(10_000),
+        }),
+        fetch(`${baseUrl}/admin/config`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(10_000),
+        }),
+      ]);
+
+      if (!providersRes.ok || !cfgRes.ok) return;
+
+      const [providersData, cfg] = await Promise.all([
+        providersRes.json() as Promise<{
+          providers: Array<{ configured: boolean }>;
+        }>,
+        cfgRes.json() as Promise<{
+          default_model: string | null;
+          openai_configured: boolean;
+          anthropic_configured: boolean;
+          [key: string]: unknown;
+        }>,
+      ]);
+
+      const hasProvider = providersData.providers.some((p) => p.configured);
+      const hasModel = cfg.default_model != null;
+
+      if (!hasProvider) {
+        this.beliefsProvider?.showOnboardingPrompt();
+        this.onboardingPromptShown = true;
+
+        const alreadyDismissed = this.context.globalState.get<boolean>(
+          "tenure.onboardingNudgeDismissed",
+        );
+        if (!alreadyDismissed) {
+          const action = await vscode.window.showInformationMessage(
+            "Tenure: No provider configured. Run setup to connect an LLM and enable memory injection.",
+            "Set up Tenure",
+            "Dismiss",
+          );
+          if (action === "Set up Tenure") {
+            vscode.commands.executeCommand("tenure.runOnboarding");
+          } else if (action === "Dismiss") {
+            await this.context.globalState.update(
+              "tenure.onboardingNudgeDismissed",
+              true,
+            );
+          }
+        }
+        return;
+      }
+
+      if (!hasModel) {
+        this.onboardingPromptShown = true;
+
+        const alreadyDismissed = this.context.globalState.get<boolean>(
+          "tenure.onboardingNudgeDismissed",
+        );
+        if (!alreadyDismissed) {
+          const action = await vscode.window.showInformationMessage(
+            "Tenure: Provider is connected but no model has been selected. Run setup to finish.",
+            "Run Setup",
+            "Dismiss",
+          );
+          if (action === "Run Setup") {
+            vscode.commands.executeCommand("tenure.runOnboarding");
+          } else if (action === "Dismiss") {
+            await this.context.globalState.update(
+              "tenure.onboardingNudgeDismissed",
+              true,
+            );
+          }
+        }
+        return;
+      }
+
+      this.lmProvider?.refresh();
+      this.onboardingPromptShown = true;
+      this.beliefsProvider?.resetAndReconnect();
+    } catch {}
   }
 
   private async resolveWorkspaceLevel(rootUri: vscode.Uri): Promise<void> {
@@ -181,6 +273,61 @@ export class WorkspaceSync {
       getLocalFallbackSlug(rootUri.fsPath);
 
     this.workspaceResolved = true;
+  }
+
+  private async checkAndPromptTenureFile(
+    workspaceRoot: vscode.Uri,
+  ): Promise<void> {
+    const alreadyPrompted = this.context.globalState.get<boolean>(
+      "tenure.tenureFilePromptShown",
+    );
+    if (alreadyPrompted) return;
+
+    const tenureFileUri = vscode.Uri.joinPath(workspaceRoot, ".tenure");
+
+    try {
+      await vscode.workspace.fs.stat(tenureFileUri);
+      await this.context.globalState.update(
+        "tenure.tenureFilePromptShown",
+        true,
+      );
+      return;
+    } catch {}
+
+    await this.context.globalState.update("tenure.tenureFilePromptShown", true);
+
+    const action = await vscode.window.showInformationMessage(
+      "Tenure: No `.tenure` file found. Create one to enable project-scoped memory?",
+      "Create `.tenure`",
+      "Remind me later",
+    );
+
+    if (action !== "Create `.tenure`") return;
+
+    const inferredName =
+      this.cachedProjectName ?? slugify(path.basename(workspaceRoot.fsPath));
+
+    const contents = [
+      `[project]`,
+      `name = "${inferredName}"`,
+      `# description = "What this project does"`,
+      ``,
+      `[context]`,
+      `# stack = ["typescript", "node"]`,
+      `# ignore = ["dist/**", "*.generated.ts"]`,
+      ``,
+    ].join("\n");
+
+    await vscode.workspace.fs.writeFile(
+      tenureFileUri,
+      Buffer.from(contents, "utf8"),
+    );
+
+    const doc = await vscode.workspace.openTextDocument(tenureFileUri);
+    await vscode.window.showTextDocument(doc);
+
+    this.invalidateManifestCache();
+    this.scheduleSync();
   }
 
   private async migrateScope(
@@ -219,16 +366,10 @@ function slugify(name: string): string {
 }
 
 function toRelativeFile(fileUri: vscode.Uri): string | null {
-  // 1. Pass 'true' to exclude the workspace folder name in multi-root setups.
-  // This ensures a file in 'src/main.js' always returns 'src/main.js'.
   const relative = vscode.workspace.asRelativePath(fileUri, true);
-
-  // 2. VS Code returns a path with forward slashes. On Windows, path.isAbsolute()
-  // handles forward slashes perfectly fine to determine if it's an absolute fallback.
   if (path.isAbsolute(relative)) {
-    return null; // File is outside any open workspace folder
+    return null;
   }
-
   return relative;
 }
 
