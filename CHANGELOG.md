@@ -1,8 +1,43 @@
 # Changelog
 
-All notable changes to OrgForge will be documented here.
+All notable changes to Tenure will be documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+---
+
+## [1.0.17] - 2026-05-22
+
+### Added
+
+- **Streaming tool call deltas in Anthropic adapter** (`src/providers/anthropic.ts`): The Anthropic streaming path now yields `tool_call_delta` events as tool use blocks begin and accumulate argument chunks. Each `content_block_start` of type `tool_use` emits an initial delta with the tool ID and name; subsequent `input_json_delta` events stream partial JSON arguments. Final tool calls are also extracted from the completed message and attached to the `stream_end` event.
+- **Streaming tool call deltas in OpenAI adapter** (`src/providers/openai.ts`): The streaming path now yields `tool_call_delta` events for each tool call chunk, surfacing index, ID, name, and argument fragments inline alongside existing content deltas.
+- **`tool_call_delta` event type on `StreamEvent`** (`src/providers/types.ts`): The `StreamEvent` union now includes `"tool_call_delta"` as a valid type, with optional fields `toolCallIndex`, `toolCallId`, `toolCallName`, `toolCallArguments`, and a `toolCalls` array on `stream_end`.
+- **SSE forwarding of tool call deltas in chat route** (`src/routes/chat.ts`): `handleStreamingResponse` now handles `tool_call_delta` events and writes them as `chat.completion.chunk` SSE frames with a `tool_calls` delta, matching the OpenAI streaming wire format.
+- **`passThrough` spread in OpenAI adapter requests** (`src/providers/openai.ts`): Both the non-streaming `call` and streaming `callStream` paths now spread `req.passThrough` into the request body, allowing callers to inject arbitrary provider-specific parameters.
+
+### Changed
+
+- **`composeRequest` refactored to use `result` variable** (`src/providers/openai.ts`): The `switch` statement now assigns to a local `result` variable before returning, making the control flow more explicit and consistent.
+- **Log message formatting in `toContentBlock`** (`src/providers/anthropic.ts`): Two `console.warn` strings with long interpolations have been reformatted across multiple lines for readability.
+
+---
+
+## [1.0.16] - 2026-05-22
+
+### Added
+
+- **`abortSignal` on `NormalizedRequest`** (`src/providers/types.ts`): Requests can now carry an `AbortSignal` that is combined with the existing 120-second timeout via `AbortSignal.any(...)`, allowing callers to cancel in-flight provider calls early.
+- **Client-disconnect abort in streaming** (`src/routes/chat.ts`): An `AbortController` now tracks HTTP connection closure during streaming responses. The heartbeat, stream loop, and post-stream side effects all check `abortController.signal.aborted` instead of a bare boolean flag, ensuring a clean early exit when the client disconnects.
+- **SSE `id:` line in `writeSSE`** (`src/routes/chat.ts`): Server-sent events now emit an `id:` line when the event object carries a string `id` field, improving client-side reconnection support.
+
+### Changed
+
+- **OpenAI adapter abort handling** (`src/providers/openai.ts`): Both the non-streaming `call` and streaming `callStream` paths now pass a combined `AbortSignal.any([timeout, req.abortSignal])` when `req.abortSignal` is present, propagating caller cancellation through to the upstream fetch.
+- **Message role types expanded** (`src/providers/types.ts`, `src/routes/chat.ts`): `Message.role` now accepts `"developer"` and `"function"` in addition to the existing values. The chat route conversation filter and mapping are updated to pass these roles along with `tool_call_id` and `tool_calls` through to the provider.
+- **WebSocket beliefs endpoint moved** (`src/routes/beliefs-ws.ts`): Route changed from `/v1/beliefs/ws` to `/v1/ws/beliefs`.
+- **Admin route auth enforced** (`src/server.ts`): The `onRequest` auth hook now also applies to `/admin/*` paths (excluding `/admin/` itself), which previously required authentication only for `/v1/*` routes.
+- **`tool_call_id` and `tool_calls` forwarded in chat messages** (`src/routes/chat.ts`): These fields are now conditionally spread onto outgoing `Message` objects so tool-call round-trips are preserved end-to-end.
 
 ---
 

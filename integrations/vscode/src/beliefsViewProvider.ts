@@ -94,6 +94,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
     | null = null;
 
   private noWorkspace = false;
+  private onboardingMode = false;
 
   constructor(
     private readonly tokenStore: TokenStore,
@@ -124,8 +125,9 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
       if (msg.command === "ready") {
         if (this.noWorkspace) {
           this.showNoWorkspace();
-        } else {
+        } else if (this.currentScope) {
           this.pushState();
+          this.ensureConnected().catch(() => {});
         }
       }
       if (msg.command === "recordBelief") {
@@ -134,9 +136,20 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
           : ["user:universal"];
         this.recordBelief(msg.content, msg.why, scope, msg.beliefType);
       }
+      if (msg.command === "openOnboarding") {
+        vscode.commands.executeCommand("tenure.runOnboarding");
+      }
+      if (msg.command === "clientAction") {
+        vscode.commands.executeCommand(
+          "tenure.handleClientAction",
+          msg.clientId,
+          msg.action,
+        );
+      }
+      if (msg.command === "openInstall") {
+        vscode.commands.executeCommand("tenure.startInstall");
+      }
     });
-
-    this.ensureConnected();
   }
 
   async refresh(projectName: string, activeFile: string | null): Promise<void> {
@@ -232,12 +245,32 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  updateClientStatus(rows: import("./clientStatusPanel.js").ClientRow[]): void {
+    this.view?.webview.postMessage({ type: "client_status", rows });
+  }
+
   showNoWorkspace(): void {
     this.view?.webview.postMessage({ type: "no_workspace" });
   }
 
   showDisconnected(): void {
+    if (this.onboardingMode) return;
     this.view?.webview.postMessage({ type: "disconnected" });
+  }
+
+  showOnboardingPrompt(): void {
+    this.onboardingMode = true;
+    this.view?.webview.postMessage({ type: "onboarding_prompt" });
+  }
+
+  resetAndReconnect(): void {
+    this.onboardingMode = false;
+    this.reconnectAttempt = 0;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.ensureConnected().catch(() => {});
   }
 
   sendFetchFileBeliefs(
@@ -258,12 +291,10 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    const token = await this.tokenStore.get();
-    if (!token) return;
-
     const cfg = vscode.workspace.getConfiguration("tenure");
     const baseUrl = cfg.get<string>("baseUrl", "http://localhost:5757");
-    this.openSocket(baseUrl, token);
+    const token = await this.tokenStore.get();
+    this.openSocket(baseUrl, token ?? "");
   }
 
   dispose(): void {
@@ -275,7 +306,9 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
   private openSocket(baseUrl: string, token: string): void {
     if (this.disposed) return;
 
-    const wsUrl = baseUrl.replace(/^http/, "ws") + "/v1/beliefs/ws";
+    this.showDisconnected();
+
+    const wsUrl = baseUrl.replace(/^http/, "ws") + "/v1/ws/beliefs";
 
     const socket = new WebSocket(wsUrl, {
       headers: { Authorization: `Bearer ${token}` },
@@ -283,17 +316,26 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
     this.socket = socket;
 
     socket.on("open", () => {
-      this.reconnectAttempt = 0;
-      this.onConnectedCallback?.();
-      this.pendingWorkspaceState = null;
-      if (this.currentScope) {
-        this.send({ type: "subscribe", scope: this.currentScope });
-        this.send({
-          type: "fetch_beliefs",
-          scope: this.currentScope,
-          active_file: this.currentActiveFile,
-        });
-      }
+      this.tokenStore.get().then((currentToken) => {
+        if (!currentToken) {
+          this.view?.webview.postMessage({ type: "no_token" });
+          this.closeSocket();
+          this.scheduleReconnect();
+          return;
+        }
+        this.reconnectAttempt = 0;
+        this.onboardingMode = false;
+        this.onConnectedCallback?.();
+        this.pendingWorkspaceState = null;
+        if (this.currentScope) {
+          this.send({ type: "subscribe", scope: this.currentScope });
+          this.send({
+            type: "fetch_beliefs",
+            scope: this.currentScope,
+            active_file: this.currentActiveFile,
+          });
+        }
+      });
     });
 
     socket.on("message", (raw) => {
@@ -309,9 +351,13 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
     socket.on("close", () => {
       if (this.socket === socket) this.socket = null;
       if (!this.disposed) {
-        if (!this.currentScope) {
-          this.showDisconnected();
-        }
+        this.tokenStore.get().then((currentToken) => {
+          if (!currentToken) {
+            this.view?.webview.postMessage({ type: "no_token" });
+          } else {
+            this.showDisconnected();
+          }
+        });
         this.scheduleReconnect();
       }
     });
@@ -322,10 +368,8 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
   private handleMessage(msg: ServerMessage): void {
     switch (msg.type) {
       case "beliefs_snapshot": {
-        if (msg.beliefs.length > 0) {
-          this.beliefs = msg.beliefs;
-          this.pushState();
-        }
+        this.beliefs = msg.beliefs;
+        this.pushState();
         break;
       }
       case "belief_upserted": {
@@ -385,10 +429,6 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  /**
-   * Pushes the current beliefs array and scope label to the webview.
-   * The webview script owns all DOM updates from this point on.
-   */
   private pushState(): void {
     this.view?.webview.postMessage({
       type: "state",
@@ -432,10 +472,6 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
     }, delay);
   }
 
-  /**
-   * The static HTML shell. Set once in resolveWebviewView and never replaced.
-   * All updates arrive via postMessage and are applied with DOM operations.
-   */
   private buildShell(): string {
     return `<!DOCTYPE html>
 <html>
@@ -457,11 +493,51 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
   .type { font-size: 10px; color: var(--vscode-descriptionForeground); }
   .empty { color: var(--vscode-descriptionForeground); padding: 16px 0; text-align: center; }
   .link { color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: underline; }
+  .onboarding-banner {
+    background: var(--vscode-editor-inactiveSelectionBackground);
+    border: 1px solid var(--vscode-panel-border);
+    border-left: 3px solid var(--vscode-button-background);
+    border-radius: 4px;
+    padding: 10px 10px 10px 12px;
+    margin-bottom: 12px;
+  }
+  .onboarding-banner p { font-size: 11px; line-height: 1.5; margin-bottom: 8px; }
+  .onboarding-banner button {
+    width: 100%;
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none;
+    font-family: inherit;
+    font-size: 11px;
+    padding: 5px;
+    cursor: pointer;
+    border-radius: 3px;
+  }
+  .onboarding-banner button:hover { opacity: 0.85; }
+  /* Client status panel */
+  .clients-section { margin-top: 12px; border-top: 1px solid var(--vscode-panel-border); padding-top: 10px; }
+  .clients-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--vscode-descriptionForeground); margin-bottom: 8px; }
+  .client-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 11px; }
+  .client-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .client-dot.connected { background: var(--vscode-testing-iconPassed); }
+  .client-dot.disconnected { background: var(--vscode-descriptionForeground); opacity: 0.4; }
+  .client-label { flex: 1; }
+  .client-action { font-size: 10px; color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: underline; white-space: nowrap; }
 </style>
 </head>
 <body>
   <div class="scope" id="scope-label">Connecting…</div>
+  <div id="onboarding-banner" class="onboarding-banner" style="display:none">
+    <p>Tenure needs a provider configured before it can inject memory into your AI sessions.</p>
+    <button onclick="post('openOnboarding')">Set up Tenure →</button>
+  </div>
   <div id="beliefs-list"></div>
+  <div id="clients-section" class="clients-section" style="display:none">
+    <div class="clients-title" id="clients-toggle" onclick="toggleClients()" style="cursor:pointer;user-select:none;">
+      Connected clients <span id="clients-chevron" style="float:right;font-size:9px;">▶</span>
+    </div>
+    <div id="clients-list" style="display:none"></div>
+  </div>
   <div id="record-panel" style="display:none">
     <div style="border-top:1px solid var(--vscode-panel-border);margin-top:8px;padding-top:8px;">
       <div style="font-size:11px;font-weight:600;margin-bottom:8px;">Record Belief</div>
@@ -488,7 +564,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
       </div>
     </div>
   </div>
-  <div style="border-top:1px solid var(--vscode-panel-border);margin-top:8px;padding-top:8px;">
+  <div id="record-belief-bar" style="display:none; border-top:1px solid var(--vscode-panel-border);margin-top:8px;padding-top:8px;">
     <button onclick="openForm()" id="open-form-btn"
       style="width:100%;background:var(--vscode-button-secondaryBackground);border:none;color:var(--vscode-button-secondaryForeground);font-family:inherit;font-size:11px;padding:5px;cursor:pointer;border-radius:3px;">
       + Record Belief
@@ -534,7 +610,6 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
         const html = beliefHtml(b);
 
         if (existing) {
-   
           if (existing.dataset.hash !== hashBelief(b)) {
             existing.outerHTML = html;
           }
@@ -585,6 +660,14 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
       document.getElementById("r-content").focus();
     }
 
+    function toggleClients() {
+      const list = document.getElementById("clients-list");
+      const chevron = document.getElementById("clients-chevron");
+      const isOpen = list.style.display !== "none";
+      list.style.display = isOpen ? "none" : "block";
+      chevron.textContent = isOpen ? "▶" : "▼";
+    }
+
     function closeForm() {
       document.getElementById("record-panel").style.display = "none";
       document.getElementById("open-form-btn").style.display = "block";
@@ -627,22 +710,51 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
       switch (data.type) {
         case "state":
           renderBeliefs(data.scope, data.beliefs);
+          document.getElementById("record-belief-bar").style.display = "block";
           break;
         case "no_workspace":
           renderEmpty("No workspace open", "Open a folder to start", "Tenure tracks beliefs per project");
+          document.getElementById("record-belief-bar").style.display = "none";
           break;
         case "disconnected":
-          renderEmpty("Not connected", "Tenure proxy is unreachable", "Check that your local proxy is running");
+          renderEmpty("Not connected", "Tenure isn\\'t running", "<span class=\\"link\\" onclick=\\"post('openInstall')\\">Set up Tenure</span> or start it manually");
+          document.getElementById("record-belief-bar").style.display = "none";
+          break;
+        case "no_token":
+          renderEmpty("Not configured", "Set your Tenure token to get started", null);
+          document.getElementById("record-belief-bar").style.display = "none";
           break;
         case "error":
-          console.warn("[Tenure WS] server error on " + data.request_type + ": " + data.message);
           break;
         case "open_form":
           openForm();
           break;
+        case "onboarding_prompt":
+          document.getElementById("onboarding-banner").style.display = "block";
+          document.getElementById("scope-label").textContent = "Setup required";
+          document.getElementById("beliefs-list").innerHTML = "";
+          document.getElementById("record-belief-bar").style.display = "none";
+          break;
+        case "client_status": {
+          const section = document.getElementById("clients-section");
+          const list = document.getElementById("clients-list");
+          if (!section || !list || !data.rows?.length) break;
+          section.style.display = "block";
+          // List stays collapsed by default — user expands if they want it
+          list.innerHTML = data.rows.map(row => {
+            const dotClass = row.connected ? "connected" : "disconnected";
+            let actionHtml = "";
+            if (!row.connected && row.action) {
+              const labels = { auto_config: "Set up", copy_url: "Copy URL", copy_token: "Copy token", docs: "View docs" };
+              const label = labels[row.action] ?? "Configure";
+              actionHtml = \`<span class="client-action" onclick="post('clientAction', {clientId:'\${esc(row.id)}',action:'\${esc(row.action)}'})">\${label}</span>\`;
+            }
+            return \`<div class="client-row"><div class="client-dot \${dotClass}"></div><span class="client-label">\${esc(row.label)}</span>\${actionHtml}</div>\`;
+          }).join("");
+          break;
+        }
       }
     });
-
 
     post("ready");
   </script>

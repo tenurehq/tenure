@@ -64,6 +64,7 @@ export class OpenAIAdapter implements ProviderAdapter {
         temperature: req.temperature,
         max_tokens: req.max_tokens,
         stream: false,
+        ...req.passThrough,
         ...extraBody,
       }),
       signal: req.abortSignal
@@ -137,6 +138,7 @@ export class OpenAIAdapter implements ProviderAdapter {
         max_tokens: req.max_tokens,
         stream: true,
         stream_options: { include_usage: true },
+        ...req.passThrough,
         ...extraBody,
       }),
       signal: req.abortSignal
@@ -195,6 +197,14 @@ export class OpenAIAdapter implements ProviderAdapter {
           if (tc.id) acc.id = tc.id;
           if (tc.function?.name) acc.name = tc.function.name;
           if (tc.function?.arguments) acc.arguments += tc.function.arguments;
+
+          yield {
+            type: "tool_call_delta",
+            toolCallIndex: tc.index,
+            toolCallId: tc.id,
+            toolCallName: tc.function?.name,
+            toolCallArguments: tc.function?.arguments,
+          };
         }
       }
 
@@ -284,14 +294,20 @@ export class OpenAIAdapter implements ProviderAdapter {
     req: NormalizedRequest,
     systemPrompt: SystemPrompt,
   ): { messages: Message[]; body: Record<string, unknown> } {
+    let result: { messages: Message[]; body: Record<string, unknown> };
+
     switch (this.flavor) {
       case "bedrock-access-gateway":
-        return this.composeForBAG(req, systemPrompt);
+        result = this.composeForBAG(req, systemPrompt);
+        break;
       case "litellm":
-        return this.composeForLiteLLM(req, systemPrompt);
+        result = this.composeForLiteLLM(req, systemPrompt);
+        break;
       default:
-        return this.composeGeneric(req, systemPrompt);
+        result = this.composeGeneric(req, systemPrompt);
     }
+
+    return result;
   }
 
   private composeGeneric(
