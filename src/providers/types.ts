@@ -4,6 +4,7 @@ export interface NormalizedRequest {
   temperature?: number;
   max_tokens?: number;
   passThrough?: Record<string, unknown>;
+  abortSignal?: AbortSignal;
 }
 
 export interface NormalizedResponse {
@@ -47,7 +48,7 @@ export interface FilePart {
 export type ContentPart = TextPart | ImageUrlPart | FilePart;
 
 export interface Message {
-  role: "system" | "user" | "assistant" | "tool";
+  role: "system" | "user" | "assistant" | "tool" | "developer" | "function";
   content: string | ContentPart[];
   name?: string;
   tool_call_id?: string;

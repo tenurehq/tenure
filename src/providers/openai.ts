@@ -66,7 +66,9 @@ export class OpenAIAdapter implements ProviderAdapter {
         stream: false,
         ...extraBody,
       }),
-      signal: AbortSignal.timeout(120_000),
+      signal: req.abortSignal
+        ? AbortSignal.any([AbortSignal.timeout(120_000), req.abortSignal])
+        : AbortSignal.timeout(120_000),
     });
 
     if (!res.ok) {
@@ -137,7 +139,9 @@ export class OpenAIAdapter implements ProviderAdapter {
         stream_options: { include_usage: true },
         ...extraBody,
       }),
-      signal: AbortSignal.timeout(120_000),
+      signal: req.abortSignal
+        ? AbortSignal.any([AbortSignal.timeout(120_000), req.abortSignal])
+        : AbortSignal.timeout(120_000),
     });
 
     if (!res.ok) {

@@ -122,7 +122,7 @@ export function registerBeliefsWsRoute(
 ): void {
   const { beliefs: col, fileMeta, userId, beliefWriter } = deps;
 
-  app.get("/v1/beliefs/ws", { websocket: true }, (socket: WebSocket, _req) => {
+  app.get("/v1/ws/beliefs", { websocket: true }, (socket: WebSocket, _req) => {
     let currentScope: string | null = null;
 
     registry.add(userId, socket);
