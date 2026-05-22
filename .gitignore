@@ -16,3 +16,4 @@ coverage/
 out/
 *.vsix
 .changeset
+.tenure
