@@ -235,14 +235,20 @@ function parseSSE(body: string): { frames: SSEFrame[]; done: boolean } {
   const frames: SSEFrame[] = [];
   let done = false;
   for (const chunk of body.split("\n\n")) {
-    const line = chunk.trim();
-    if (!line.startsWith("data: ")) continue;
-    const payload = line.slice(6);
-    if (payload === "[DONE]") {
+    const lines = chunk.trim().split("\n");
+    let dataPayload: string | null = null;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("data: ")) {
+        dataPayload = trimmed.slice(6);
+      }
+    }
+    if (dataPayload === null) continue;
+    if (dataPayload === "[DONE]") {
       done = true;
       continue;
     }
-    frames.push(JSON.parse(payload) as SSEFrame);
+    frames.push(JSON.parse(dataPayload) as SSEFrame);
   }
   return { frames, done };
 }
