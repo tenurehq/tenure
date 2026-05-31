@@ -206,6 +206,7 @@ function makeReader(
     listPinnedOpenQuestions: sinon.stub().resolves(questions),
     listAlwaysOn: sinon.stub().resolves([]),
     listByScope: sinon.stub().resolves([]),
+    expandRelationParticipants: sinon.stub().resolves([]),
   };
   return stub as unknown as BeliefsReader;
 }

@@ -222,6 +222,7 @@ function render() {
       <div class="nav-links">
         <a class="nav-link active" href="/beliefs">World Model</a>
         <a class="nav-link" href="/admin">Settings</a>
+        <a class="nav-link" href="/audit">Audit</a> 
         <a class="nav-link" href="/onboarding">Onboarding</a>
       </div>
       <div class="nav-right">

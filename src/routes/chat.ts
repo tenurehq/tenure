@@ -3,31 +3,16 @@ import type { FastifyInstance, FastifyReply, FastifyBaseLogger } from "fastify";
 import type { ServerResponse } from "node:http";
 
 import { SessionManager, type Session } from "../session/manager.js";
-import { HistoryManager, type TurnSignal } from "../history/manager.js";
-import {
-  splitSidecar,
-  parseSidecar,
-  SIDECAR_BEGIN,
-} from "../sidecar/splitter.js";
-import { buildSidecarInstructions } from "../sidecar/prompt.js";
-import {
-  ContextBuilder,
-  type BuiltContext,
-} from "../context/contextBuilder.js";
+import { splitSidecar, SIDECAR_BEGIN } from "../sidecar/splitter.js";
+import { ContextBuilder, EMPTY_CONTEXT } from "../context/contextBuilder.js";
 import {
   ProviderRegistry,
   ProviderNotConfiguredError,
 } from "../providers/registry.js";
 import { ExtractionJobQueue } from "../jobs/queue.js";
-import type {
-  ContentPart,
-  Message,
-  NormalizedResponse,
-  ProviderAdapter,
-  SystemPrompt,
-  SystemPromptParts,
-} from "../providers/types.ts";
-import { extractText, hasBinary, hasCodeBlock } from "../helpers/content.js";
+import type { ContentPart, Message, SystemPrompt } from "../providers/types.js";
+import type { OpenAIAdapter } from "../providers/openai.js";
+import { extractLatestUserText, extractText } from "../helpers/content.js";
 import { deriveSessionId } from "../session/derivation.js";
 import { checkModelTier, listSupportedFamilies } from "../providers/tiers.js";
 import type { ExtractionWorkerLike } from "../extraction/worker.js";
@@ -44,12 +29,12 @@ import {
 import type { ErrorLogger } from "../errors/logger.js";
 import { parseClient, type ParsedClient } from "../helpers/clientDetector.js";
 import type { WorkspaceStateCache } from "../workspace/stateCache.js";
-import { buildIdeSidecarInstructions } from "../sidecar/idePrompt.js";
-import { inspect } from "node:util";
+import { buildSystemPrompt } from "../context/systemPromptBuilder.js";
+import { runSideEffects } from "./shared/sideEffects.js";
+import type { InjectionAuditLogger } from "../audit/injectionAuditLogger.js";
 
 export interface ChatDeps {
   sessions: SessionManager;
-  history: HistoryManager;
   context: ContextBuilder;
   providers: ProviderRegistry;
   jobs: ExtractionJobQueue;
@@ -59,6 +44,7 @@ export interface ChatDeps {
   scopeDetector?: ScopeDetectorDeps;
   errorLogger: ErrorLogger;
   workspaceState?: WorkspaceStateCache;
+  injectionAudit?: InjectionAuditLogger;
 }
 
 interface ResolveScopeArgs {
@@ -88,41 +74,6 @@ interface ChatBody {
   user?: string;
   metadata?: { session_id?: string; scope?: string[] };
   [key: string]: unknown;
-}
-
-interface SidecarFlags {
-  hasNewBeliefs: boolean;
-  hasOpenQuestion: boolean;
-}
-
-const EMPTY_CONTEXT: BuiltContext = {
-  personaPrelude: "",
-  pinnedFactsJson: "[]",
-  expandedQuery: "",
-  queryWasNoisy: false,
-  relevantBeliefsJson: "[]",
-  openQuestionsJson: "[]",
-  beliefCount: 0,
-  questionCount: 0,
-  truncated: false,
-  searchScores: [],
-};
-
-function readSidecarFlags(sidecarRaw: string | null): SidecarFlags {
-  if (!sidecarRaw) {
-    return { hasNewBeliefs: false, hasOpenQuestion: false };
-  }
-  const parsed = parseSidecar(sidecarRaw);
-  if (!parsed) {
-    return { hasNewBeliefs: false, hasOpenQuestion: false };
-  }
-  return {
-    hasNewBeliefs:
-      Array.isArray(parsed.new_beliefs) && parsed.new_beliefs.length > 0,
-    hasOpenQuestion:
-      Array.isArray(parsed.new_open_questions) &&
-      parsed.new_open_questions.length > 0,
-  };
 }
 
 export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
@@ -156,9 +107,12 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       ? `Model "${requestedModel}" is not in a verified tier. Sidecar extraction may be unreliable.`
       : null;
 
-    let adapter: ProviderAdapter;
+    let adapter: OpenAIAdapter;
     try {
-      adapter = deps.providers.detectFromModel(requestedModel, "openai");
+      adapter = deps.providers.detectFromModel(
+        requestedModel,
+        "openai",
+      ) as unknown as OpenAIAdapter;
     } catch (e) {
       if (e instanceof ProviderNotConfiguredError) {
         return reply.code(502).send({
@@ -181,6 +135,12 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       metadata,
       ...passThrough
     } = body;
+
+    const adapterBody: Record<string, unknown> = {
+      ...passThrough,
+      ...(temperature !== undefined && { temperature }),
+      ...(max_tokens !== undefined && { max_tokens }),
+    };
 
     let sessionId: string;
     try {
@@ -210,10 +170,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
           model: requestedModel,
         });
         if (updated?.providerId && updated?.model) {
-          session = updated as Session & {
-            providerId: string;
-            model: string;
-          };
+          session = updated as Session & { providerId: string; model: string };
         }
       } else {
         session = raw as Session & { providerId: string; model: string };
@@ -229,7 +186,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       ? metadata.scope
       : session?.activeScope ?? [];
 
-    const turnId = randomUUID();
+    const requestId = randomUUID();
     const rawContent: string | ContentPart[] = messages.at(-1)?.content ?? "";
     const latestUserMessage = extractLatestUserText(messages);
 
@@ -293,24 +250,21 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
     if (intercepted) {
       if (tierWarning) reply.header("x-tenure-warning", tierWarning);
       return reply.send({
-        id: `chatcmpl-${turnId}`,
+        id: `chatcmpl-${requestId}`,
         object: "chat.completion",
         created: Math.floor(Date.now() / 1000),
         model: requestedModel,
         choices: [
           {
             index: 0,
-            message: {
-              role: "assistant",
-              content: intercepted.message,
-            },
+            message: { role: "assistant", content: intercepted.message },
             finish_reason: "stop",
           },
         ],
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
         tenure: {
           session_id: sessionId,
-          turn_id: turnId,
+          request_id: requestId,
           scope: intercepted.newScope,
           parse_status: "missing",
           degraded: false,
@@ -330,24 +284,21 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
     if (extractIntercepted) {
       if (tierWarning) reply.header("x-tenure-warning", tierWarning);
       return reply.send({
-        id: `chatcmpl-${turnId}`,
+        id: `chatcmpl-${requestId}`,
         object: "chat.completion",
         created: Math.floor(Date.now() / 1000),
         model: requestedModel,
         choices: [
           {
             index: 0,
-            message: {
-              role: "assistant",
-              content: extractIntercepted.message,
-            },
+            message: { role: "assistant", content: extractIntercepted.message },
             finish_reason: "stop",
           },
         ],
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
         tenure: {
           session_id: sessionId,
-          turn_id: turnId,
+          request_id: requestId,
           scope,
           parse_status: "missing",
           degraded: false,
@@ -367,7 +318,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
     if (injectIntercepted) {
       if (tierWarning) reply.header("x-tenure-warning", tierWarning);
       return reply.send({
-        id: `chatcmpl-${turnId}`,
+        id: `chatcmpl-${requestId}`,
         object: "chat.completion",
         created: Math.floor(Date.now() / 1000),
         model: requestedModel,
@@ -381,7 +332,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
         tenure: {
           session_id: sessionId,
-          turn_id: turnId,
+          request_id: requestId,
           scope,
           parse_status: "missing",
           degraded: false,
@@ -390,10 +341,6 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       });
     }
 
-    // Resolve scope per-turn. Agent identity (from OpenClaw or any client that
-    // sends x-agent-id) is authoritative and wins unconditionally. For clients
-    // without agent identity, fall back to session-persisted scope, then to
-    // first-turn auto-detection.
     scope = await resolveScope({
       ocAgentId,
       sessionScope: scope,
@@ -410,9 +357,6 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       req.headers["x-tenure-no-extract"] === "true" ||
       req.headers["x-tenure-no-extract"] === "1";
 
-    // When an OpenClaw agent is bootstrapping, BOOTSTRAP.md exists in the
-    // workspace. The plugin sets this header to suppress extraction and
-    // injection until the ritual completes and the file is removed.
     const bootstrapInProgress =
       req.headers["x-tenure-bootstrapping"] === "1" ||
       req.headers["x-tenure-bootstrapping"] === "true";
@@ -439,18 +383,12 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
 
     const agentId = ocAgentId && ocAgentId !== "main" ? ocAgentId : null;
 
-    const [beliefCtx] = await Promise.all([
-      injectionEnabled
-        ? deps.context
-            .build(userId, scope, latestUserMessage, agentId)
-            .catch((err) => {
-              req.log.warn({ err }, "context assembly failed");
-              return EMPTY_CONTEXT;
-            })
-        : Promise.resolve(EMPTY_CONTEXT),
-    ]);
-
-    let systemPrompt: SystemPrompt;
+    const beliefCtx = await deps.context
+      .build(userId, scope, latestUserMessage, agentId)
+      .catch((err) => {
+        req.log.warn({ err }, "context assembly failed");
+        return EMPTY_CONTEXT;
+      });
 
     const incomingSystem = messages.find((m) => m.role === "system")?.content;
     const incomingSystemText =
@@ -464,8 +402,6 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       projectScope: string | null;
       languageScope: string | null;
     } | null = null;
-
-    let activePackage: string | null = null;
 
     if (isIdeTurn) {
       const headerProject = req.headers["x-tenure-project"] as
@@ -496,10 +432,11 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       }
     }
 
+    let systemPrompt: SystemPrompt;
     try {
       systemPrompt = buildSystemPrompt({
         incomingSystem: incomingSystemText,
-        beliefCtx,
+        beliefCtx: injectionEnabled ? beliefCtx : EMPTY_CONTEXT,
         extractionEnabled,
         injectionEnabled,
         activeScope: scope[0],
@@ -516,49 +453,41 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       systemPrompt = typeof fallback === "string" ? fallback : "";
     }
 
-    const conversationMessages: Message[] = [
-      ...messages
-        .filter(
-          (
-            m,
-          ): m is typeof m & {
-            role: "user" | "assistant" | "developer" | "tool" | "function";
-          } =>
-            m.role === "user" ||
-            m.role === "assistant" ||
-            m.role === "developer" ||
-            m.role === "tool" ||
-            m.role === "function",
-        )
-        .map((m) => ({
-          role: m.role,
-          content: m.content,
-          ...(m.tool_call_id !== undefined && { tool_call_id: m.tool_call_id }),
-          ...(m.tool_calls !== undefined && { tool_calls: m.tool_calls }),
-        })),
-    ];
+    if (deps.injectionAudit && beliefCtx.beliefCount > 0) {
+      deps.injectionAudit
+        .log({
+          userId,
+          sessionId,
+          requestId,
+          userQuery: latestUserMessage,
+          expandedQuery: beliefCtx.expandedQuery,
+          scope,
+          agentId,
+          injected: injectionEnabled,
+          beliefCtx,
+        })
+        .catch((err) =>
+          req.log.warn({ err, requestId }, "injection audit write failed"),
+        );
+    }
 
-    const normalizedReq = {
-      model: requestedModel,
-      messages: conversationMessages,
-      ...(temperature !== undefined && { temperature }),
-      ...(max_tokens !== undefined && { max_tokens }),
-      passThrough,
-    };
+    const passMessages = messages.filter(
+      (m) => m.role !== "system",
+    ) as Message[];
 
     const ideLanguageScope = ideScope?.languageScope ?? null;
     const ideActiveFile = deps.workspaceState?.get(userId)?.active_file ?? null;
 
-    if (stream && adapter.callStream) {
+    if (stream && (adapter as { callStream?: unknown }).callStream) {
       return handleStreamingResponse(
         reply,
-        adapter as typeof adapter & {
-          callStream: NonNullable<ProviderAdapter["callStream"]>;
-        },
-        normalizedReq,
+        adapter,
+        requestedModel,
         systemPrompt,
+        passMessages,
+        adapterBody,
         {
-          turnId,
+          requestId,
           sessionId,
           userId,
           requestedModel,
@@ -567,26 +496,28 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
           scope,
           deps,
           session,
-          beliefCtx,
           adapter,
           tierWarning,
           logger: req.log,
           extractionEnabled,
-          injectionEnabled,
           client,
           agentId,
           extractionMode,
           ideProjectScope: ideScope?.projectScope ?? null,
-          activePackage,
           ideLanguageScope,
           ideActiveFile,
         },
       );
     }
 
-    let providerResp: NormalizedResponse;
+    let providerResp: Awaited<ReturnType<OpenAIAdapter["call"]>>;
     try {
-      providerResp = await adapter.call(normalizedReq, systemPrompt);
+      providerResp = await adapter.call(
+        requestedModel,
+        systemPrompt,
+        passMessages,
+        adapterBody,
+      );
     } catch (e) {
       const reason = (e as Error).message;
 
@@ -598,36 +529,13 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
           error: e instanceof Error ? e : new Error(reason),
           user_id: userId,
           session_id: sessionId,
-          turn_id: turnId,
+          request_id: requestId,
           provider: adapter.id,
           model: requestedModel,
           user_impacted: true,
           passthrough_succeeded: false,
         })
         .catch(() => {});
-
-      await deps.history
-        .appendTurn({
-          sessionId,
-          userId,
-          turnId,
-          userMessage: latestUserMessage,
-          assistantMessage: "",
-          hasBinaryContent: hasBinary(rawContent),
-          hasCodeBlock: hasCodeBlock(latestUserMessage),
-          turnSignal: "substantive",
-          hasOpenQuestion: false,
-          hasNewBeliefs: false,
-          scope,
-          status: "provider_failed",
-          failureReason: reason.slice(0, 500),
-        })
-        .catch((err) =>
-          req.log.error(
-            { err, sessionId, turnId },
-            "provider-failed turn persistence failed",
-          ),
-        );
 
       return reply.code(502).send({
         error: { message: (e as Error).message, type: "provider_error" },
@@ -637,12 +545,11 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
     const { visible, sidecarRaw, parseStatus } = splitSidecar(
       providerResp.content ?? "",
     );
-    const turnSignal = tryReadTurnSignal(sidecarRaw);
 
     if (tierWarning) reply.header("x-tenure-warning", tierWarning);
 
     reply.send({
-      id: `chatcmpl-${turnId}`,
+      id: `chatcmpl-${requestId}`,
       object: "chat.completion",
       created: Math.floor(Date.now() / 1000),
       model: providerResp.model,
@@ -652,9 +559,6 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
           message: {
             role: "assistant",
             content: visible,
-            ...(providerResp.toolCalls?.length && {
-              tool_calls: providerResp.toolCalls,
-            }),
           },
           finish_reason: providerResp.finish_reason,
         },
@@ -672,7 +576,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
         deps,
         userId,
         sessionId,
-        turnId,
+        requestId,
         latestUserMessage,
         visible,
         rawContent,
@@ -681,7 +585,6 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
         scope,
         adapter,
         model: providerResp.model,
-        turnSignal,
         session,
         logger: req.log,
         extractionEnabled,
@@ -689,13 +592,12 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
         agentId,
         extractionMode,
         ideProjectScope: ideScope?.projectScope ?? null,
-        activePackage,
         ideLanguageScope: ideScope?.languageScope ?? null,
         ideActiveFile: deps.workspaceState?.get(userId)?.active_file ?? null,
       });
     } catch (err) {
       req.log.error(
-        { err, sessionId, turnId },
+        { err, sessionId, requestId },
         "side effects failed — response still delivered",
       );
     }
@@ -703,7 +605,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
 }
 
 interface StreamingCtx {
-  turnId: string;
+  requestId: string;
   sessionId: string;
   userId: string;
   requestedModel: string;
@@ -712,51 +614,47 @@ interface StreamingCtx {
   scope: string[];
   deps: ChatDeps;
   session: (Session & { providerId: string; model: string }) | null;
-  beliefCtx: BuiltContext;
-  adapter: ProviderAdapter;
+  adapter: OpenAIAdapter;
   tierWarning: string | null;
   logger: FastifyBaseLogger;
   extractionEnabled: boolean;
-  injectionEnabled: boolean;
   client: ParsedClient;
   agentId: string | null;
   extractionMode: "standard" | "ide";
   ideProjectScope: string | null;
-  activePackage: string | null;
   ideLanguageScope: string | null;
   ideActiveFile: string | null;
 }
 
 async function handleStreamingResponse(
   reply: FastifyReply,
-  adapter: ProviderAdapter & {
-    callStream: NonNullable<ProviderAdapter["callStream"]>;
-  },
-  normalizedReq: Parameters<ProviderAdapter["call"]>[0],
+  adapter: OpenAIAdapter,
+  model: string,
   systemPrompt: SystemPrompt,
+  messages: Message[],
+  body: Record<string, unknown>,
   ctx: StreamingCtx,
 ): Promise<void> {
   reply.hijack();
   const raw = reply.raw;
 
-  const responseHeaders: Record<string, string> = {
+  raw.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
     connection: "keep-alive",
     "transfer-encoding": "chunked",
     ...(ctx.tierWarning ? { "x-tenure-warning": ctx.tierWarning } : {}),
-  };
-  raw.writeHead(200, responseHeaders);
+  });
 
-  const sseId = `chatcmpl-${ctx.turnId}`;
+  const sseId = `chatcmpl-${ctx.requestId}`;
   const HOLDBACK = SIDECAR_BEGIN.length;
 
   let fullContent = "";
   let flushedIdx = 0;
   let sidecarDetected = false;
-  let model = ctx.requestedModel;
-  let finishReason = "stop";
-  let usage = { input_tokens: 0, output_tokens: 0 };
+  let resolvedModel = model;
+  let streamFinishReason = "stop";
+  let streamUsage = { input_tokens: 0, output_tokens: 0 };
 
   writeSSE(raw, {
     id: sseId,
@@ -781,98 +679,65 @@ async function handleStreamingResponse(
     }
   }, 15_000);
 
-  const abortableReq = {
-    ...normalizedReq,
-    abortSignal: abortController.signal,
-  };
-
   try {
-    for await (const event of adapter.callStream(normalizedReq, systemPrompt)) {
+    for await (const event of adapter.callStream(
+      model,
+      systemPrompt,
+      messages,
+      body,
+      abortController.signal,
+    )) {
       if (abortController.signal.aborted) break;
 
-      if (event.type === "content_delta" && event.delta) {
-        fullContent += event.delta;
-
-        if (sidecarDetected) continue;
-
-        const markerIdx = fullContent.indexOf(SIDECAR_BEGIN);
-        if (markerIdx !== -1) {
-          const remaining = fullContent.slice(flushedIdx, markerIdx);
-          if (remaining) {
-            writeSSE(raw, {
-              id: sseId,
-              object: "chat.completion.chunk",
-              created: ts(),
-              model,
-              choices: [
-                {
-                  index: 0,
-                  delta: { content: remaining },
-                  finish_reason: null,
-                },
-              ],
-            });
-          }
-          flushedIdx = markerIdx;
-          sidecarDetected = true;
-        } else {
-          const safeEnd = fullContent.length - HOLDBACK;
-          if (safeEnd > flushedIdx) {
-            writeSSE(raw, {
-              id: sseId,
-              object: "chat.completion.chunk",
-              created: ts(),
-              model,
-              choices: [
-                {
-                  index: 0,
-                  delta: { content: fullContent.slice(flushedIdx, safeEnd) },
-                  finish_reason: null,
-                },
-              ],
-            });
-            flushedIdx = safeEnd;
-          }
-        }
-      }
-
-      if (event.type === "tool_call_delta") {
-        writeSSE(raw, {
-          id: sseId,
-          object: "chat.completion.chunk",
-          created: ts(),
-          model,
-          choices: [
-            {
-              index: 0,
-              delta: {
-                tool_calls: [
-                  {
-                    index: event.toolCallIndex,
-                    ...(event.toolCallId
-                      ? { id: event.toolCallId, type: "function" }
-                      : {}),
-                    function: {
-                      ...(event.toolCallName
-                        ? { name: event.toolCallName }
-                        : {}),
-                      ...(event.toolCallArguments !== undefined
-                        ? { arguments: event.toolCallArguments }
-                        : {}),
-                    },
-                  },
-                ],
-              },
-              finish_reason: null,
-            },
-          ],
-        });
-      }
-
       if (event.type === "stream_end") {
-        if (event.model) model = event.model;
-        if (event.finish_reason) finishReason = event.finish_reason;
-        if (event.usage) usage = event.usage;
+        resolvedModel = event.model ?? model;
+        streamFinishReason = event.finish_reason ?? "stop";
+        streamUsage = event.usage ?? streamUsage;
+        continue;
+      }
+
+      fullContent += event.delta;
+
+      if (sidecarDetected) continue;
+
+      const markerIdx = fullContent.indexOf(SIDECAR_BEGIN);
+      if (markerIdx !== -1) {
+        const remaining = fullContent.slice(flushedIdx, markerIdx);
+        if (remaining) {
+          writeSSE(raw, {
+            id: sseId,
+            object: "chat.completion.chunk",
+            created: ts(),
+            model,
+            choices: [
+              {
+                index: 0,
+                delta: { content: remaining },
+                finish_reason: null,
+              },
+            ],
+          });
+        }
+        flushedIdx = markerIdx;
+        sidecarDetected = true;
+      } else {
+        const safeEnd = fullContent.length - HOLDBACK;
+        if (safeEnd > flushedIdx) {
+          writeSSE(raw, {
+            id: sseId,
+            object: "chat.completion.chunk",
+            created: ts(),
+            model,
+            choices: [
+              {
+                index: 0,
+                delta: { content: fullContent.slice(flushedIdx, safeEnd) },
+                finish_reason: null,
+              },
+            ],
+          });
+          flushedIdx = safeEnd;
+        }
       }
     }
   } catch (err) {
@@ -891,7 +756,7 @@ async function handleStreamingResponse(
         error: err instanceof Error ? err : new Error(message),
         user_id: ctx.userId,
         session_id: ctx.sessionId,
-        turn_id: ctx.turnId,
+        request_id: ctx.requestId,
         provider: ctx.adapter.id,
         model: ctx.requestedModel,
         user_impacted: true,
@@ -903,16 +768,14 @@ async function handleStreamingResponse(
       {
         err,
         sessionId: ctx.sessionId,
-        turnId: ctx.turnId,
+        requestId: ctx.requestId,
         userId: ctx.userId,
         partialContent: fullContent,
         partialLength: fullContent.length,
       },
       "streaming provider error — no turn persisted",
     );
-    writeSSE(raw, {
-      error: { message, type: "provider_error" },
-    });
+    writeSSE(raw, { error: { message, type: "provider_error" } });
     raw.write("data: [DONE]\n\n");
     raw.end();
     return;
@@ -930,7 +793,7 @@ async function handleStreamingResponse(
       id: sseId,
       object: "chat.completion.chunk",
       created: ts(),
-      model,
+      model: resolvedModel,
       choices: [
         {
           index: 0,
@@ -945,25 +808,25 @@ async function handleStreamingResponse(
     id: sseId,
     object: "chat.completion.chunk",
     created: ts(),
-    model,
-    choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
+    model: resolvedModel,
+    choices: [{ index: 0, delta: {}, finish_reason: streamFinishReason }],
     usage: {
-      prompt_tokens: usage.input_tokens,
-      completion_tokens: usage.output_tokens,
-      total_tokens: usage.input_tokens + usage.output_tokens,
+      prompt_tokens: streamUsage.input_tokens,
+      completion_tokens: streamUsage.output_tokens,
+      total_tokens: streamUsage.input_tokens + streamUsage.output_tokens,
     },
   });
+
   raw.write("data: [DONE]\n\n");
   raw.end();
 
   const { visible, sidecarRaw, parseStatus } = splitSidecar(fullContent);
-  const turnSignal = tryReadTurnSignal(sidecarRaw);
 
   runSideEffects({
     deps: ctx.deps,
     userId: ctx.userId,
     sessionId: ctx.sessionId,
-    turnId: ctx.turnId,
+    requestId: ctx.requestId,
     latestUserMessage: ctx.latestUserMessage,
     visible,
     rawContent: ctx.rawContent,
@@ -972,7 +835,6 @@ async function handleStreamingResponse(
     scope: ctx.scope,
     adapter: ctx.adapter,
     model,
-    turnSignal,
     session: ctx.session,
     logger: ctx.logger,
     extractionEnabled: ctx.extractionEnabled,
@@ -980,7 +842,6 @@ async function handleStreamingResponse(
     agentId: ctx.agentId,
     extractionMode: ctx.extractionMode,
     ideProjectScope: ctx.ideProjectScope,
-    activePackage: ctx.activePackage,
     ideLanguageScope: ctx.ideLanguageScope,
     ideActiveFile: ctx.ideActiveFile,
   });
@@ -997,240 +858,6 @@ async function writeSSE(raw: ServerResponse, data: unknown): Promise<void> {
 
 function ts(): number {
   return Math.floor(Date.now() / 1000);
-}
-
-interface SideEffectInput {
-  deps: ChatDeps;
-  userId: string;
-  agentId: string | null;
-  sessionId: string;
-  turnId: string;
-  latestUserMessage: string;
-  visible: string;
-  rawContent: string | ContentPart[];
-  sidecarRaw: string | null;
-  parseStatus: string;
-  scope: string[];
-  adapter: ProviderAdapter;
-  model: string;
-  turnSignal: TurnSignal;
-  session: (Session & { providerId: string; model: string }) | null;
-  logger: FastifyBaseLogger;
-  extractionEnabled: boolean;
-  client: ParsedClient;
-  extractionMode: "standard" | "ide";
-  activePackage: string | null;
-  ideProjectScope: string | null;
-  ideLanguageScope: string | null;
-  ideActiveFile: string | null;
-}
-
-async function runSideEffects(input: SideEffectInput): Promise<void> {
-  const flags = readSidecarFlags(input.sidecarRaw);
-
-  try {
-    await input.deps.history.appendTurn({
-      sessionId: input.sessionId,
-      userId: input.userId,
-      turnId: input.turnId,
-      userMessage: input.latestUserMessage,
-      assistantMessage: input.visible,
-      hasBinaryContent: hasBinary(input.rawContent),
-      hasCodeBlock:
-        hasCodeBlock(input.latestUserMessage) || hasCodeBlock(input.visible),
-      turnSignal: input.turnSignal,
-      hasOpenQuestion: flags.hasOpenQuestion,
-      hasNewBeliefs: flags.hasNewBeliefs,
-      topics: [],
-      scope: input.scope,
-    });
-  } catch (err) {
-    input.logger.error(
-      { err, sessionId: input.sessionId, turnId: input.turnId },
-      "history append failed — skipping job enqueue to avoid orphaned jobs",
-    );
-    return;
-  }
-
-  if (input.extractionEnabled) {
-    try {
-      const workspaceContext =
-        input.ideProjectScope || input.activePackage
-          ? ({
-              project_scope: input.ideProjectScope,
-              language_scope: input.ideLanguageScope,
-              active_file: input.ideActiveFile,
-            } as const)
-          : undefined;
-
-      const jobId = await input.deps.jobs.enqueue({
-        userId: input.userId,
-        sessionId: input.sessionId,
-        turnId: input.turnId,
-        userMessage: input.latestUserMessage,
-        assistantMessage: input.visible,
-        sidecarRaw: input.sidecarRaw,
-        parseStatus: input.parseStatus as "parsed" | "needs_repair" | "missing",
-        scope: input.scope,
-        sourceModel: `${input.adapter.id}:${input.model}`,
-        clientCategory: input.client.category,
-        agentId: input.agentId,
-        extractionMode: input.extractionMode,
-        ...(workspaceContext !== undefined && { workspaceContext }),
-      });
-      input.deps.extractionWorker
-        .processById(jobId)
-        .catch((err) =>
-          input.logger.warn(
-            { err, jobId, sessionId: input.sessionId },
-            "inline extraction failed — sweep will retry",
-          ),
-        );
-    } catch (err) {
-      input.logger.error(
-        { err, sessionId: input.sessionId, turnId: input.turnId },
-        "job enqueue failed — turn persisted but extraction will not run",
-      );
-    }
-  }
-
-  if (input.session) {
-    input.deps.sessions
-      .touch(input.sessionId, input.userId)
-      .catch((err) =>
-        input.logger.warn(
-          { err, sessionId: input.sessionId },
-          "session touch failed",
-        ),
-      );
-  }
-}
-
-function extractLatestUserText(
-  messages: Array<{ role: string; content: string | ContentPart[] }>,
-): string {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "user") {
-      const content = messages[i].content;
-      if (typeof content === "string") return content;
-      return extractText(content);
-    }
-  }
-  return "";
-}
-
-interface BuildSystemPromptArgs {
-  incomingSystem: string | undefined;
-  beliefCtx: BuiltContext;
-  extractionEnabled: boolean;
-  injectionEnabled: boolean;
-  activeScope: string | undefined;
-  scopeAutoDetect: boolean;
-  extractionMode?: "standard" | "ide";
-  ideScope?: {
-    projectScope: string | null;
-    languageScope: string | null;
-  } | null;
-}
-
-function buildSystemPrompt(args: BuildSystemPromptArgs): SystemPromptParts {
-  const staticParts: string[] = [];
-
-  if (args.extractionEnabled) {
-    staticParts.push(
-      "You have a secondary task: after your visible response, emit a hidden " +
-        "metadata block recording beliefs about this user. While responding, " +
-        "note facts the user would be frustrated to re-establish next session: " +
-        "their preferences, decisions, project commitments, working principles, " +
-        "and how they think and engage. " +
-        "Respond fully first; the extraction format follows.",
-    );
-
-    if (args.extractionMode === "ide" && args.ideScope) {
-      staticParts.push(
-        buildIdeSidecarInstructions({
-          activeScope: args.activeScope,
-          scopeAutoDetect: args.scopeAutoDetect,
-          projectScope: args.ideScope.projectScope,
-          languageScope: args.ideScope.languageScope,
-        }),
-      );
-    } else {
-      staticParts.push(
-        buildSidecarInstructions({
-          activeScope: args.activeScope,
-          scopeAutoDetect: args.scopeAutoDetect,
-        }),
-      );
-    }
-  }
-
-  if (args.injectionEnabled) {
-    if (args.beliefCtx.personaPrelude) {
-      staticParts.push(
-        "<persona>",
-        args.beliefCtx.personaPrelude,
-        "</persona>",
-      );
-    }
-
-    staticParts.push(
-      [
-        "You have persistent memory of this user.",
-        "The <persona> block above describes who they are and how they want to be engaged — standing context, not facts to quote.",
-        "",
-        "<pinned_facts> are standing constraints — treat them as hard requirements that shape every answer.",
-        "<relevant_beliefs> are query-surfaced context — use them to disambiguate and inform, not as hard constraints.",
-        "",
-        "For each belief, the why_it_matters field is the primary action directive: it tells you what to change in your response.",
-        "Beliefs with epistemic_status 'inferred' are system hypotheses — hold them loosely.",
-        "Beliefs with epistemic_status 'exploratory' are unresolved — do not treat them as settled.",
-        "Beliefs with confidence below 0.65 are low-certainty — weight them accordingly.",
-        "Treat open questions as unresolved; do not invent closure.",
-      ].join("\n"),
-    );
-  }
-
-  const staticSection = staticParts.join("\n\n");
-
-  const beliefsSection = args.injectionEnabled
-    ? [
-        "<pinned_facts>",
-        args.beliefCtx.pinnedFactsJson,
-        "</pinned_facts>",
-      ].join("\n")
-    : "";
-
-  const dynamicParts: string[] = [];
-
-  if (args.injectionEnabled) {
-    dynamicParts.push(
-      [
-        "<relevant_beliefs>",
-        args.beliefCtx.relevantBeliefsJson,
-        "</relevant_beliefs>",
-        "",
-        "### Open Questions",
-        args.beliefCtx.openQuestionsJson,
-      ].join("\n"),
-    );
-  }
-
-  if (args.incomingSystem) {
-    dynamicParts.push(args.incomingSystem.trim());
-  }
-
-  dynamicParts.push(
-    args.extractionEnabled
-      ? "--- Respond to the user's message. After your complete, visible response, append the sidecar block. ---"
-      : "--- Respond to the user's message. ---",
-  );
-
-  return {
-    static: staticSection,
-    beliefs: beliefsSection,
-    dynamic: dynamicParts.join("\n\n"),
-  };
 }
 
 async function resolveScope(args: ResolveScopeArgs): Promise<string[]> {
@@ -1257,12 +884,10 @@ async function resolveScope(args: ResolveScopeArgs): Promise<string[]> {
     }
   }
 
-  // 2. Session already has a persisted scope (set by a prior turn or agent).
   if (sessionScope.length > 0) {
     return sessionScope;
   }
 
-  // 3. First-turn auto-detection for non-agent clients.
   const isFirstTurn =
     (session?.turnCounter ?? 0) === 0 &&
     deps.scopeDetector != null &&
@@ -1301,23 +926,4 @@ async function resolveScope(args: ResolveScopeArgs): Promise<string[]> {
   }
 
   return sessionScope;
-}
-
-function tryReadTurnSignal(sidecarRaw: string | null): TurnSignal {
-  if (!sidecarRaw) return "substantive";
-  try {
-    const parsed = JSON.parse(sidecarRaw) as { turn_signal?: TurnSignal };
-    const s = parsed.turn_signal;
-    if (
-      s === "substantive" ||
-      s === "acknowledgment" ||
-      s === "clarification" ||
-      s === "correction"
-    ) {
-      return s;
-    }
-  } catch {
-    /* malformed — worker will repair */
-  }
-  return "substantive";
 }

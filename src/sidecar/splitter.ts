@@ -1,3 +1,5 @@
+import type { TurnSignal } from "../history/manager.js";
+
 export const SIDECAR_BEGIN = "<<<SIDECAR_JSON>>>";
 export const SIDECAR_END = "<<<END_SIDECAR>>>";
 
@@ -76,4 +78,21 @@ export function parseSidecar(raw: string | null): SidecarPayload | null {
   } catch {
     return null;
   }
+}
+
+export function tryReadTurnSignal(sidecarRaw: string | null): TurnSignal {
+  if (!sidecarRaw) return "substantive";
+  try {
+    const parsed = JSON.parse(sidecarRaw) as { turn_signal?: TurnSignal };
+    const s = parsed.turn_signal;
+    if (
+      s === "substantive" ||
+      s === "acknowledgment" ||
+      s === "clarification" ||
+      s === "correction"
+    ) {
+      return s;
+    }
+  } catch {}
+  return "substantive";
 }

@@ -215,7 +215,9 @@ function buildExtractionPrompt(
         category === "project_seed" && projectScope
           ? [...base, projectScope]
           : base;
-      return `[scope: ${JSON.stringify(scope)}]\nQ: ${a.question}\nA: ${a.answer}`;
+      return `[scope: ${JSON.stringify(scope)}]\nQ: ${a.question}\nA: ${
+        a.answer
+      }`;
     })
     .join("\n\n");
 
@@ -360,7 +362,7 @@ export function registerOnboardingRoutes(
             supported: tier.supported,
             family: tier.family,
             tier: tier.tier,
-            reason: tier.supported ? null : (tier.reason ?? "unknown family"),
+            reason: tier.supported ? null : tier.reason ?? "unknown family",
           };
         });
         return { models: annotated, supports_listing: true };
@@ -403,13 +405,13 @@ export function registerOnboardingRoutes(
       }
 
       try {
-        await adapter.call(
-          {
-            model: model_id,
-            messages: [{ role: "user", content: "ok" }],
-            max_tokens: 1,
-          },
+        const internalAdapter =
+          adapter as unknown as import("../providers/types.js").InternalLLMCaller;
+        await internalAdapter.call(
+          model_id,
           "",
+          [{ role: "user", content: "ok" }],
+          { max_tokens: 1 },
         );
         await deps.runtimeStore.set("default_model", model_id);
         return { ok: true, tier_check: tier };
@@ -477,19 +479,18 @@ export function registerOnboardingRoutes(
 
       let extractionRaw: string;
       try {
-        const resp = await adapter.call(
-          {
-            model: modelId,
-            messages: [
-              {
-                role: "user",
-                content: buildExtractionPrompt(filled, projectScope),
-              },
-            ],
-            temperature: 0.1,
-            max_tokens: 4000,
-          },
+        const internalAdapter =
+          adapter as unknown as import("../providers/types.js").InternalLLMCaller;
+        const resp = await internalAdapter.call(
+          modelId,
           EXTRACTION_SYSTEM_PROMPT,
+          [
+            {
+              role: "user",
+              content: buildExtractionPrompt(filled, projectScope),
+            },
+          ],
+          { temperature: 0.1, max_tokens: 4000 },
         );
         extractionRaw = resp.content;
       } catch (err) {
@@ -654,7 +655,11 @@ const COMPLETE_URL = "/v1/onboarding/complete";
 const COMMIT_URL = "/v1/onboarding/commit";
 const SKIP_URL = "/v1/onboarding/skip";
 
-let token = ${embeddedToken ? JSON.stringify(embeddedToken) : 'new URLSearchParams(location.search).get("token") || localStorage.getItem(STORAGE_KEY) || ""'};
+let token = ${
+    embeddedToken
+      ? JSON.stringify(embeddedToken)
+      : 'new URLSearchParams(location.search).get("token") || localStorage.getItem(STORAGE_KEY) || ""'
+  };
 let questions = [];
 let answers = [];
 let idx = 0;

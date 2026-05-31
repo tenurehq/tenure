@@ -44,6 +44,9 @@ export interface BuiltContext {
   questionCount: number;
   truncated: boolean;
   searchScores: BeliefScore[];
+  rawPinnedFacts: Belief[];
+  rawRelevantBeliefs: Belief[];
+  rawOpenQuestions: Belief[];
 }
 
 export interface PersonaLookup {
@@ -52,6 +55,22 @@ export interface PersonaLookup {
     per_scope?: Record<string, string>;
   } | null>;
 }
+
+export const EMPTY_CONTEXT: BuiltContext = {
+  personaPrelude: "",
+  pinnedFactsJson: "[]",
+  expandedQuery: "",
+  queryWasNoisy: false,
+  relevantBeliefsJson: "[]",
+  openQuestionsJson: "[]",
+  beliefCount: 0,
+  questionCount: 0,
+  truncated: false,
+  searchScores: [],
+  rawPinnedFacts: [],
+  rawRelevantBeliefs: [],
+  rawOpenQuestions: [],
+};
 
 export class ContextBuilder {
   private readonly budget: ContextBudget;
@@ -92,17 +111,42 @@ export class ContextBuilder {
 
     const pinnedIds = new Set(pinnedFacts.map((b) => b._id));
 
-    const rawSearchResults = expandedQuery
-      ? await this.reader.searchText(userId, expandedQuery, scope, {
-          limit: this.budget.maxBeliefs,
-          minScore: 3,
-          scoreDetails: this.budget.scoreDetails,
-          excludeIds: pinnedIds,
-          agentId,
-        })
-      : ([] as ScoredBelief[]);
+    const rawSearchResults =
+      expandedQuery && this.budget.maxBeliefs > 0
+        ? await this.reader.searchText(userId, expandedQuery, scope, {
+            limit: this.budget.maxBeliefs,
+            minScore: 3,
+            scoreDetails: this.budget.scoreDetails,
+            excludeIds: pinnedIds,
+            agentId,
+          })
+        : ([] as ScoredBelief[]);
 
-    const searchScores: BeliefScore[] = rawSearchResults.map((b) => ({
+    const relationExpansions =
+      rawSearchResults.length > 0
+        ? await this.reader.expandRelationParticipants(
+            userId,
+            rawSearchResults,
+            scope,
+            {
+              excludeIds: new Set([
+                ...pinnedIds,
+                ...rawSearchResults.map((b) => b._id),
+              ]),
+              agentId,
+            },
+          )
+        : [];
+
+    const allRelevant: ScoredBelief[] = [
+      ...rawSearchResults,
+      ...relationExpansions.map((b) => ({
+        ...b,
+        _searchScore: 0,
+      })),
+    ];
+
+    const searchScores: BeliefScore[] = allRelevant.map((b) => ({
       id: b._id as string,
       score: b._searchScore,
       ...(b._scoreDetails != null ? { scoreDetails: b._scoreDetails } : {}),
@@ -113,7 +157,7 @@ export class ContextBuilder {
       this.budget.maxPersonaChars,
     );
 
-    const combined = [...pinnedFacts, ...rawSearchResults];
+    const combined = [...pinnedFacts, ...allRelevant];
     const cap = this.budget.maxBeliefs;
     const truncated = combined.length > cap;
     const capped = combined.slice(0, cap);
@@ -126,7 +170,7 @@ export class ContextBuilder {
         ? this.projectRich.bind(this)
         : this.projectLean.bind(this);
 
-    const searchResultIds = new Set(rawSearchResults.map((b) => b._id));
+    const searchResultIds = new Set(allRelevant.map((b) => b._id));
 
     return {
       expandedQuery,
@@ -149,6 +193,9 @@ export class ContextBuilder {
       questionCount: questions.length,
       truncated,
       searchScores,
+      rawPinnedFacts: cappedPinned,
+      rawRelevantBeliefs: cappedRelevant,
+      rawOpenQuestions: questions,
     };
   }
 

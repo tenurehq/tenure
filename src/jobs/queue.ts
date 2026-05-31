@@ -6,7 +6,7 @@ export interface EnqueueParams {
   userId: string;
   agentId?: string | null;
   sessionId: string;
-  turnId: string;
+  requestId: string;
   userMessage: string;
   assistantMessage: string;
   sidecarRaw: string | null;
@@ -51,7 +51,7 @@ export class ExtractionJobQueue {
       type: "extract_beliefs",
       user_id: params.userId,
       session_id: params.sessionId,
-      turn_id: params.turnId,
+      turn_id: params.requestId,
       agent_id: params.agentId ?? null,
       status: "pending",
       attempts: 0,

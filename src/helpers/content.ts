@@ -17,3 +17,16 @@ export function hasCodeBlock(content: string | ContentPart[]): boolean {
   const text = typeof content === "string" ? content : extractText(content);
   return /```[\s\S]*?```/.test(text);
 }
+
+export function extractLatestUserText(
+  messages: Array<{ role: string; content: string | ContentPart[] }>,
+): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
+      const content = messages[i].content;
+      if (typeof content === "string") return content;
+      return extractText(content);
+    }
+  }
+  return "";
+}

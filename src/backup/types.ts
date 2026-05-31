@@ -1,3 +1,5 @@
+import type { InjectionAuditRecord } from "../types/injectionAudit.js";
+
 export interface TenureExport {
   version: 1;
   exported_at: string;
@@ -7,6 +9,7 @@ export interface TenureExport {
   persona_cache: ExportedPersonaDoc | null;
   compaction_log: ExportedCompactionEntry[];
   sessions: ExportedSession[];
+  injection_audit: ExportedAuditRecord[];
 }
 
 export interface ExportedBelief {
@@ -45,6 +48,10 @@ export interface ExportedBelief {
   created_at: string;
   updated_at: string;
 }
+
+export type ExportedAuditRecord = Omit<InjectionAuditRecord, "created_at"> & {
+  created_at: string;
+};
 
 export interface ExportedRuntimeConfig {
   default_provider: string;

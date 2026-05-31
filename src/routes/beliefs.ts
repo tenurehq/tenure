@@ -12,6 +12,7 @@ import {
 } from "../extraction/importPrompt.js";
 import { extractJsonBlock } from "../extraction/extractJson.js";
 import type { BeliefWriter } from "../extraction/beliefWriter.js";
+import type { InternalLLMCaller } from "../providers/types.js";
 
 export interface BeliefsDeps {
   beliefs: Collection<Belief>;
@@ -211,7 +212,9 @@ export function registerBeliefsRoutes(
     if (!VALID_TYPES.has(body.type)) {
       return reply.code(400).send({
         error: {
-          message: `invalid type: ${body.type}. Must be one of: ${[...VALID_TYPES].join(", ")}`,
+          message: `invalid type: ${body.type}. Must be one of: ${[
+            ...VALID_TYPES,
+          ].join(", ")}`,
         },
       });
     }
@@ -323,22 +326,19 @@ export function registerBeliefsRoutes(
             );
 
       try {
-        const resp = await adapter.call(
-          {
-            model: cfg.default_model,
-            messages: [
-              {
-                role: "user",
-                content: buildImportExtractionPrompt(
-                  text.trim(),
-                  source_label ?? "manual import",
-                ),
-              },
-            ],
-            temperature: 0.1,
-            max_tokens: 8000,
-          },
+        const resp = await (adapter as unknown as InternalLLMCaller).call(
+          cfg.default_model,
           systemPrompt,
+          [
+            {
+              role: "user",
+              content: buildImportExtractionPrompt(
+                text.trim(),
+                source_label ?? "manual import",
+              ),
+            },
+          ],
+          { temperature: 0.1, max_tokens: 8000 },
         );
         extractionRaw = resp.content;
       } catch (err) {

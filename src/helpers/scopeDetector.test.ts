@@ -390,8 +390,7 @@ test("detectScopeFromMessage truncates very long messages before sending", async
   };
   const longMessage = "x".repeat(2000);
   await detectScopeFromMessage(longMessage, [], deps, NOOP_LOGGER);
-  const sentContent = call.firstCall.args[0].messages[0].content as string;
-  t.true(sentContent.length <= 600);
+  t.true(call.firstCall.args[2][0].content.length <= 514);
 });
 
 test("detectScopeFromMessage includes existing scopes in prompt when provided", async (t) => {
@@ -413,7 +412,7 @@ test("detectScopeFromMessage includes existing scopes in prompt when provided", 
     deps,
     NOOP_LOGGER,
   );
-  const sentContent = call.firstCall.args[0].messages[0].content as string;
+  const sentContent = call.firstCall.args[2][0].content as string;
   t.true(sentContent.includes("domain:code"));
   t.true(sentContent.includes("domain:writing"));
 });
@@ -432,7 +431,7 @@ test("detectScopeFromMessage uses low temperature for determinism", async (t) =>
     modelId: "gpt-4o-mini",
   };
   await detectScopeFromMessage("any message", [], deps, NOOP_LOGGER);
-  t.is(call.firstCall.args[0].temperature, 0);
+  t.is(call.firstCall.args[3].temperature, 0);
 });
 
 test("detectScopeFromMessage uses configured modelId", async (t) => {
@@ -449,7 +448,7 @@ test("detectScopeFromMessage uses configured modelId", async (t) => {
     modelId: "gpt-4o-mini",
   };
   await detectScopeFromMessage("any message", [], deps, NOOP_LOGGER);
-  t.is(call.firstCall.args[0].model, "gpt-4o-mini");
+  t.is(call.firstCall.args[0], "gpt-4o-mini");
 });
 
 test("tryInterceptScopeCommand expands sub-domain scope to include parent", async (t) => {

@@ -39,6 +39,9 @@ import {
 import fastifyWebsocket from "@fastify/websocket";
 import { registerBeliefsWsRoute } from "./routes/beliefs-ws.js";
 import { startBeliefChangeStream } from "./db/beliefChangeStream.js";
+import { InjectionAuditLogger } from "./audit/injectionAuditLogger.js";
+import { registerAuditRoutes, type AuditDeps } from "./routes/audit.js";
+import { registerAuditUiRoute } from "./routes/audit-ui.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -153,7 +156,6 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   const chatDeps: ChatDeps = {
     sessions: deps.sessions,
-    history: deps.history,
     context: deps.context,
     providers: deps.providers,
     jobs: deps.jobs,
@@ -162,6 +164,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     runtimeStore: deps.runtimeStore,
     errorLogger: deps.errorLogger,
     workspaceState: deps.workspaceState,
+    injectionAudit: new InjectionAuditLogger(deps.cols.injection_audit),
   };
   registerChatRoute(app, chatDeps);
 
@@ -200,6 +203,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   registerBeliefsUiRoute(app);
   registerAdminUiRoute(app);
+  registerAuditUiRoute(app);
 
   const backupDeps: BackupDeps = {
     db: deps.db,
@@ -223,6 +227,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     workspaceState: deps.workspaceState,
   };
   registerWorkspaceRoutes(app, workspaceDeps);
+
+  const auditDeps: AuditDeps = {
+    injectionAudit: deps.cols.injection_audit,
+    userId: deps.userId,
+  };
+  registerAuditRoutes(app, auditDeps);
 
   await app.register(fastifyWebsocket);
 

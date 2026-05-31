@@ -1,29 +1,29 @@
 import Anthropic from "@anthropic-ai/sdk";
+
 import type {
-  NormalizedRequest,
-  NormalizedResponse,
   ProviderAdapter,
   StreamEvent,
   ModelInfo,
   Message,
-  ContentPart,
-  TextPart,
   SystemPrompt,
 } from "./types.ts";
 
-interface OAIFunctionTool {
-  type: "function";
-  function: {
-    name: string;
-    description?: string;
-    parameters?: Record<string, unknown>;
-  };
+export interface AnthropicCallRequest {
+  model: string;
+  messages: Message[];
+  temperature?: number;
+  max_tokens?: number;
+  passThrough?: Record<string, unknown>;
+  abortSignal?: AbortSignal;
 }
-type OAIToolChoice =
-  | "auto"
-  | "none"
-  | "required"
-  | { type: "function"; function: { name: string } };
+
+export interface AnthropicCallResponse {
+  content: string;
+  model: string;
+  finish_reason: string;
+  usage: { input_tokens: number; output_tokens: number };
+  toolCalls?: unknown[];
+}
 
 export class AnthropicAdapter implements ProviderAdapter {
   readonly id = "anthropic";
@@ -34,9 +34,9 @@ export class AnthropicAdapter implements ProviderAdapter {
   }
 
   async call(
-    req: NormalizedRequest,
+    req: AnthropicCallRequest,
     systemPrompt: SystemPrompt,
-  ): Promise<NormalizedResponse> {
+  ): Promise<AnthropicCallResponse> {
     if (!req.model) {
       throw new Error(
         "No model specified — select a model in your client settings.",
@@ -60,7 +60,6 @@ export class AnthropicAdapter implements ProviderAdapter {
     return {
       content: text,
       model: response.model,
-      provider: "anthropic",
       finish_reason: mapStopReason(response.stop_reason),
       usage: {
         input_tokens: response.usage.input_tokens,
@@ -71,7 +70,7 @@ export class AnthropicAdapter implements ProviderAdapter {
   }
 
   async *callStream(
-    req: NormalizedRequest,
+    req: AnthropicCallRequest,
     systemPrompt: SystemPrompt,
   ): AsyncGenerator<StreamEvent> {
     if (!req.model) {
@@ -81,7 +80,10 @@ export class AnthropicAdapter implements ProviderAdapter {
     }
 
     const base = this.buildCallParams(req, systemPrompt);
-    const stream = this.client.messages.stream(base);
+    const stream = this.client.messages.stream({
+      ...base,
+      ...(req.abortSignal ? { signal: req.abortSignal } : {}),
+    } as unknown as Parameters<typeof this.client.messages.stream>[0]);
 
     try {
       let currentToolIndex = -1;
@@ -92,6 +94,15 @@ export class AnthropicAdapter implements ProviderAdapter {
           event.delta.type === "text_delta"
         ) {
           yield { type: "content_delta", delta: event.delta.text };
+        }
+
+        if (
+          event.type === "content_block_start" &&
+          event.content_block.type === "text"
+        ) {
+          yield {
+            type: "text_block_start" as const,
+          };
         }
 
         if (
@@ -147,6 +158,39 @@ export class AnthropicAdapter implements ProviderAdapter {
     }
   }
 
+  async callPositional(
+    model: string,
+    systemPrompt: SystemPrompt,
+    messages: Message[],
+    body: Record<string, unknown>,
+    abortSignal?: AbortSignal,
+  ): Promise<{
+    content: string;
+    model: string;
+    finish_reason: string;
+    usage: { input_tokens: number; output_tokens: number };
+  }> {
+    const req: AnthropicCallRequest = {
+      model,
+      messages,
+      ...(body.temperature !== undefined && {
+        temperature: body.temperature as number,
+      }),
+      ...(body.max_tokens !== undefined && {
+        max_tokens: body.max_tokens as number,
+      }),
+      passThrough: body,
+      ...(abortSignal !== undefined && { abortSignal }),
+    };
+
+    const resp = await this.call(req, systemPrompt);
+    return {
+      content: resp.content,
+      model: resp.model,
+      finish_reason: resp.finish_reason,
+      usage: resp.usage,
+    };
+  }
   async listModels(): Promise<ModelInfo[]> {
     try {
       const page = await this.client.models.list({ limit: 100 });
@@ -157,22 +201,19 @@ export class AnthropicAdapter implements ProviderAdapter {
         owned_by: "anthropic",
       }));
     } catch (e) {
-      // Surface auth failures so the user knows their key is wrong rather
-      // than silently returning an empty model list with no feedback.
       if (e instanceof Anthropic.AuthenticationError) throw mapError(e);
       return [];
     }
   }
 
-  private buildCallParams(req: NormalizedRequest, systemPrompt: SystemPrompt) {
-    const existingSystem = extractSystemText(req.messages);
-
+  private buildCallParams(
+    req: AnthropicCallRequest,
+    systemPrompt: SystemPrompt,
+  ) {
     let system: string | Anthropic.TextBlockParam[] | undefined;
 
     if (typeof systemPrompt === "string") {
-      system =
-        [systemPrompt, existingSystem].filter(Boolean).join("\n\n") ||
-        undefined;
+      system = (systemPrompt as string).trim() || undefined;
     } else {
       const blocks: Anthropic.TextBlockParam[] = [];
 
@@ -184,9 +225,7 @@ export class AnthropicAdapter implements ProviderAdapter {
         });
       }
 
-      const beliefText = [systemPrompt.beliefs, existingSystem]
-        .filter(Boolean)
-        .join("\n\n");
+      const beliefText = systemPrompt.beliefs;
       if (beliefText) {
         blocks.push({
           type: "text",
@@ -205,16 +244,15 @@ export class AnthropicAdapter implements ProviderAdapter {
       system = blocks.length > 0 ? blocks : undefined;
     }
 
-    const conversation = req.messages
-      .filter((m) => m.role !== "system")
-      .map(toAnthropicMessage);
+    const conversation = req.messages.filter(
+      (m) => m.role !== "system",
+    ) as unknown as Anthropic.MessageParam[];
 
-    const pt = req.passThrough ?? {};
-    const tools = translateTools(pt.tools as OAIFunctionTool[] | undefined);
-    const toolChoice = translateToolChoice(
-      pt.tool_choice as OAIToolChoice | undefined,
-      tools,
-    );
+    const {
+      temperature: _t,
+      max_tokens: _m,
+      ...nativeFields
+    } = req.passThrough ?? {};
 
     return {
       model: req.model,
@@ -224,190 +262,9 @@ export class AnthropicAdapter implements ProviderAdapter {
       ...(req.temperature !== undefined
         ? { temperature: req.temperature }
         : {}),
-      ...(pt.top_p !== undefined ? { top_p: pt.top_p as number } : {}),
-      ...(pt.stop
-        ? {
-            stop_sequences: Array.isArray(pt.stop)
-              ? (pt.stop as string[])
-              : [pt.stop as string],
-          }
-        : {}),
-      ...(tools?.length ? { tools } : {}),
-      ...(toolChoice ? { tool_choice: toolChoice } : {}),
+      ...nativeFields,
     };
   }
-}
-
-function toAnthropicMessage(msg: Message): Anthropic.MessageParam {
-  if (msg.role === "tool") {
-    return {
-      role: "user",
-      content: [
-        {
-          type: "tool_result",
-          tool_use_id: msg.tool_call_id ?? "",
-          content:
-            typeof msg.content === "string"
-              ? msg.content
-              : textOnly(msg.content),
-        },
-      ],
-    };
-  }
-
-  if (msg.role === "assistant" && msg.tool_calls?.length) {
-    const blocks: Anthropic.ContentBlockParam[] = [];
-
-    const textContent =
-      typeof msg.content === "string"
-        ? msg.content
-        : msg.content
-        ? textOnly(msg.content as ContentPart[])
-        : "";
-    if (textContent) blocks.push({ type: "text", text: textContent });
-
-    for (const tc of msg.tool_calls as Array<{
-      id: string;
-      function: { name: string; arguments: string };
-    }>) {
-      blocks.push({
-        type: "tool_use",
-        id: tc.id,
-        name: tc.function.name,
-        input: safeParseJson(tc.function.arguments),
-      });
-    }
-
-    return { role: "assistant", content: blocks };
-  }
-
-  const role = msg.role as "user" | "assistant";
-
-  if (typeof msg.content === "string") {
-    return { role, content: msg.content };
-  }
-
-  return { role, content: (msg.content as ContentPart[]).map(toContentBlock) };
-}
-
-function toContentBlock(part: ContentPart): Anthropic.ContentBlockParam {
-  if (part.type === "text") {
-    return { type: "text", text: part.text };
-  }
-
-  if (part.type === "image_url") {
-    const { url } = part.image_url;
-
-    if (url.startsWith("data:")) {
-      const [header, data] = url.split(",");
-      const rawType = header.split(":")[1]?.split(";")[0] ?? "image/jpeg";
-      const mediaType = validateImageMediaType(rawType);
-      return {
-        type: "image",
-        source: { type: "base64", media_type: mediaType, data },
-      };
-    }
-
-    return { type: "image", source: { type: "url", url } };
-  }
-
-  if (part.type === "file") {
-    const { url, name } = part.file;
-
-    if (url.startsWith("data:")) {
-      const [header, data] = url.split(",");
-      const rawType =
-        header.split(":")[1]?.split(";")[0] ?? "application/octet-stream";
-      const validatedType = mapToAnthropicDocumentType(rawType);
-
-      if (!validatedType) {
-        console.warn(
-          `[AnthropicAdapter] Unsupported file MIME type "${rawType}" for "${
-            name ?? "unknown"
-          }"; dropping file.`,
-        );
-        return {
-          type: "text",
-          text: name ? `[unsupported file: ${name}]` : "[unsupported file]",
-        };
-      }
-
-      return {
-        type: "document",
-        source: {
-          type: "base64",
-          media_type: validatedType,
-          data,
-        },
-        ...(name ? { title: name } : {}),
-      } as Anthropic.ContentBlockParam;
-    }
-
-    console.warn(
-      `[AnthropicAdapter] Non-data-URL file reference dropped: "${
-        name ?? url
-      }"`,
-    );
-    return {
-      type: "text",
-      text: name ? `[file reference: ${name}]` : "[file reference]",
-    };
-  }
-
-  return { type: "text", text: "[unsupported content part]" };
-}
-
-function mapToAnthropicDocumentType(mimeType: string): string | null {
-  const supported = [
-    "application/pdf",
-    "text/plain",
-    "text/html",
-    "text/css",
-    "text/javascript",
-    "application/javascript",
-    "text/typescript",
-    "text/markdown",
-    "text/csv",
-    "application/json",
-    "application/xml",
-    "text/xml",
-  ];
-
-  if (supported.includes(mimeType)) return mimeType;
-  if (mimeType.startsWith("text/")) return mimeType;
-  return null;
-}
-
-function translateTools(
-  tools: OAIFunctionTool[] | undefined,
-): Anthropic.Tool[] | undefined {
-  if (!tools?.length) return undefined;
-  return tools
-    .filter((t) => t.type === "function")
-    .map((t) => ({
-      name: t.function.name,
-      ...(t.function.description !== undefined
-        ? { description: t.function.description }
-        : {}),
-      input_schema: (t.function.parameters ?? {
-        type: "object",
-        properties: {},
-      }) as Anthropic.Tool["input_schema"],
-    }));
-}
-
-function translateToolChoice(
-  choice: OAIToolChoice | undefined,
-  tools: Anthropic.Tool[] | undefined,
-): Anthropic.ToolChoice | undefined {
-  if (!choice || !tools?.length) return undefined;
-  if (choice === "auto") return { type: "auto" };
-  if (choice === "required") return { type: "any" };
-  if (choice === "none") return undefined;
-  if (typeof choice === "object" && choice.type === "function") {
-    return { type: "tool", name: choice.function.name };
-  }
-  return undefined;
 }
 
 function extractResponseParts(blocks: Anthropic.ContentBlock[]): {
@@ -463,41 +320,4 @@ function mapError(e: unknown): Error {
     return new Error(`Anthropic API error ${e.status}: ${e.message}`);
   }
   return e instanceof Error ? e : new Error(String(e));
-}
-
-function extractSystemText(messages: Message[]): string {
-  const sys = messages.find((m) => m.role === "system");
-  if (!sys) return "";
-  return typeof sys.content === "string"
-    ? sys.content
-    : textOnly(sys.content as ContentPart[]);
-}
-
-function textOnly(parts: ContentPart[]): string {
-  return parts
-    .filter((p): p is TextPart => p.type === "text")
-    .map((p) => p.text)
-    .join("\n");
-}
-
-function validateImageMediaType(
-  raw: string,
-): Anthropic.Base64ImageSource["media_type"] {
-  const allowed = [
-    "image/jpeg",
-    "image/png",
-    "image/gif",
-    "image/webp",
-  ] as const;
-  return (allowed as readonly string[]).includes(raw)
-    ? (raw as Anthropic.Base64ImageSource["media_type"])
-    : "image/jpeg";
-}
-
-function safeParseJson(s: string): Record<string, unknown> {
-  try {
-    return JSON.parse(s) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
 }

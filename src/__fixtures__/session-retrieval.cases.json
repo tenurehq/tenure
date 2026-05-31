@@ -113,7 +113,7 @@
         "expect": {
           "openQuestions": { "mustInclude": ["b-auth-open-q"] },
           "relevantBeliefs": {
-            "shouldOnlyInclude": []
+            "shouldOnlyInclude": ["b-auth-depends-redis", "b-redis-code"]
           }
         }
       },

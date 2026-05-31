@@ -112,6 +112,17 @@ To pause memory for a session, type `!extract off` in your chat.
 
 Details: [docs/security.md](docs/security.md)
 
+## Audit trail
+
+Tenure logs every context injection: which beliefs were retrieved and
+injected into each request, and which would have been injected in
+observation mode. The full trail is available at `/audit`.
+
+Use it to understand what your AI knows at any given moment, verify that
+memory is behaving as expected, and debug unexpected responses.
+
+Details: [docs/audit.md](docs/audit.md)
+
 ## The ramp
 
 The first session will be good. The tenth noticeably better. By the fiftieth, it feels like working with someone who actually knows you.
