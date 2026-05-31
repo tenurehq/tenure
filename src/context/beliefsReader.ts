@@ -147,9 +147,6 @@ export class BeliefsReader {
       });
     }
 
-    // Agent isolation: beliefs must belong to this agent or the shared pool.
-    // Uses a compound should with minimumShouldMatch:1 to express OR within
-    // the Atlas Search filter context (which does not support top-level $or).
     if (agentId) {
       filterClauses.push({
         compound: {
@@ -226,6 +223,8 @@ export class BeliefsReader {
     };
     if (scoreDetails) addFields._scoreDetails = { $meta: "searchScoreDetails" };
 
+    if (limit <= 0) return [];
+
     const pipeline: object[] = [
       { $search: searchStage },
       { $addFields: addFields },
@@ -234,6 +233,43 @@ export class BeliefsReader {
     ];
 
     return this.col.aggregate<ScoredBelief>(pipeline).toArray();
+  }
+
+  async expandRelationParticipants(
+    userId: string,
+    relationBeliefs: ScoredBelief[],
+    scope?: string[],
+    opts: { excludeIds?: Set<string>; agentId?: string | null } = {},
+  ): Promise<Belief[]> {
+    const relations = relationBeliefs.filter((b) => b.type === "relation");
+    if (relations.length === 0) return [];
+
+    const participantIds = new Set<string>();
+    for (const rel of relations) {
+      const parts = (rel as unknown as { participants?: string[] })
+        .participants;
+      if (parts) {
+        for (const id of parts) {
+          if (!opts.excludeIds?.has(id)) participantIds.add(id);
+        }
+      }
+    }
+
+    if (participantIds.size === 0) return [];
+
+    const base: Record<string, unknown> = {
+      user_id: userId,
+      _id: { $in: [...participantIds] },
+      resolved_at: null,
+      superseded_by: null,
+      type: { $ne: "open_question" },
+    };
+
+    if (scope?.length) base.scope = { $in: scope };
+
+    const filter = this.mergeFilter(base, opts.agentId);
+
+    return this.col.find(filter).toArray();
   }
 
   async listPinnedOpenQuestions(

@@ -49,7 +49,7 @@ async function main(): Promise<void> {
     unknown
   >[];
   console.log(`Embedding ${raw.length} beliefs from ${INPUT}`);
-  console.log(`Model: ${process.env.OLLAMA_EMBED_MODEL ?? "nomic-embed-text"}`);
+  console.log(`Model: ${process.env.OLLAMA_EMBED_MODEL ?? "qwen3-embedding"}`);
   console.log(
     `Ollama: ${process.env.OLLAMA_URL ?? "http://localhost:11434"}\n`,
   );
@@ -66,7 +66,12 @@ async function main(): Promise<void> {
   writeFileSync(OUTPUT, JSON.stringify(embedded, null, 2));
   console.log(`\nWrote ${OUTPUT}`);
   console.log(
-    `Dimensions: ${(embedded[0] as Record<string, unknown>).embedding ? ((embedded[0] as Record<string, unknown>).embedding as number[]).length : "unknown"}`,
+    `Dimensions: ${
+      (embedded[0] as Record<string, unknown>).embedding
+        ? ((embedded[0] as Record<string, unknown>).embedding as number[])
+            .length
+        : "unknown"
+    }`,
   );
 }
 

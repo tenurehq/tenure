@@ -27,6 +27,7 @@ import { getBeliefMasterKeyPath } from "./config/beliefEncryptionMasterKey.js";
 import { initBeliefEncryption } from "./config/beliefEncryption.js";
 import { randomBytes } from "node:crypto";
 import { WorkspaceStateCache } from "./workspace/stateCache.js";
+import type { InternalLLMCaller } from "./providers/types.js";
 
 async function verifyEncryptionActive(
   db: Db,
@@ -147,11 +148,15 @@ export async function buildApp(config: BootstrapConfig) {
     providers.register(new AnthropicAdapter(runtimeConfig.anthropic_api_key));
   }
 
-  const resolveAdapter = () => {
-    if (providers.listRegistered().includes("anthropic"))
-      return providers.resolve("anthropic");
+  const resolveAdapter = (): InternalLLMCaller => {
+    if (providers.listRegistered().includes("anthropic")) {
+      const a = providers.resolve(
+        "anthropic",
+      ) as unknown as import("./providers/anthropic.js").AnthropicAdapter;
+      return { call: a.callPositional.bind(a) };
+    }
     if (providers.listRegistered().includes("openai"))
-      return providers.resolve("openai");
+      return providers.resolve("openai") as unknown as InternalLLMCaller;
     throw new Error("No provider configured, add credentials in the UI");
   };
 

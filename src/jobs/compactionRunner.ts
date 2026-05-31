@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Collection, Filter } from "mongodb";
 import type { Belief, ExpertiseDepth, OriginContext } from "../types/belief.js";
-import type { ProviderAdapter } from "../providers/types.js";
+import type { InternalLLMCaller } from "../providers/types.js";
 import type { PersonaCache } from "../context/personaCache.js";
 
 const ACTIVE_FILTER = { resolved_at: null, superseded_by: null };
@@ -217,7 +217,7 @@ export class BeliefCompactionRunner {
     private readonly beliefs: Collection<Belief>,
     private readonly compactionLog: Collection<CompactionLogEntry>,
     private readonly contradictions: Collection<BeliefContradiction>,
-    private readonly resolveAdapter: () => ProviderAdapter,
+    private readonly resolveAdapter: () => InternalLLMCaller,
     private readonly modelId: string | null,
     private readonly personaCache: PersonaCache,
     private readonly personaSummary: {
@@ -414,13 +414,10 @@ export class BeliefCompactionRunner {
     }));
 
     const resp = await this.resolveAdapter().call(
-      {
-        model: this.modelId ?? "",
-        messages: [{ role: "user", content: JSON.stringify(payload) }],
-        temperature: 0.1,
-        max_tokens: 20000,
-      },
+      this.modelId ?? "",
       prompt,
+      [{ role: "user", content: JSON.stringify(payload) }],
+      { temperature: 0.1, max_tokens: 20000 },
     );
 
     const parsed = JSON.parse(this.extractJson(resp.content)) as {
@@ -605,13 +602,10 @@ export class BeliefCompactionRunner {
     }));
 
     const resp = await this.resolveAdapter().call(
-      {
-        model: this.modelId ?? "",
-        messages: [{ role: "user", content: JSON.stringify(payload) }],
-        temperature: 0.1,
-        max_tokens: 5000,
-      },
+      this.modelId ?? "",
       EXPERTISE_SYNTHESIS_PROMPT,
+      [{ role: "user", content: JSON.stringify(payload) }],
+      { temperature: 0.1, max_tokens: 5000 },
     );
 
     const parsed = JSON.parse(this.extractJson(resp.content)) as {

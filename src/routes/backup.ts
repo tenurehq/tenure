@@ -62,8 +62,6 @@ export function registerBackupRoutes(
       });
     }
 
-    // The archive is sent as the raw body with passphrase in a header,
-    // or as multipart. For simplicity, accept base64-encoded archive in body.
     const archiveField = (req.body as Record<string, unknown>).archive;
     if (!archiveField || typeof archiveField !== "string") {
       return reply.code(400).send({

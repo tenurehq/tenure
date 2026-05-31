@@ -25,7 +25,7 @@ export interface ErrorLog {
   stack_trace: string | null;
   user_id: string;
   session_id: string | null;
-  turn_id: string | null;
+  request_id: string | null;
   provider: string | null;
   model: string | null;
   context: Record<string, unknown>;

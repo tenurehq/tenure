@@ -10,17 +10,14 @@ import { HistoryManager } from "../history/manager.js";
 import { ContextBuilder } from "../context/contextBuilder.js";
 import { ProviderRegistry } from "../providers/registry.js";
 import { ExtractionJobQueue } from "../jobs/queue.js";
-import type {
-  NormalizedResponse,
-  ProviderAdapter,
-  StreamEvent,
-} from "../providers/types.ts";
+import type { ProviderAdapter, StreamEvent } from "../providers/types.ts";
 import { SIDECAR_BEGIN, SIDECAR_END } from "../sidecar/splitter.js";
 import { ExtractionWorker } from "../extraction/worker.js";
 import { RuntimeConfigStore } from "../config/runtime.ts";
 import { ErrorLogger } from "../errors/logger.ts";
 import { Session } from "../types/session.ts";
 import { WorkspaceStateCache } from "../workspace/stateCache.js";
+import { OpenAIAdapter } from "../providers/openai.ts";
 
 const test = anyTest.serial as TestFn;
 
@@ -63,25 +60,28 @@ const SESSION_ID = "session-integration";
 const PROVIDER_ID = "anthropic";
 const MODEL = "claude-haiku-4-5-20251001";
 
+type ProviderResponse = Awaited<ReturnType<OpenAIAdapter["call"]>>;
+
 function makeProviderResponse(
   content: string,
-  overrides: Partial<NormalizedResponse> = {},
-): NormalizedResponse {
+  overrides: Partial<ProviderResponse> = {},
+): ProviderResponse {
   return {
     content,
     model: MODEL,
-    provider: PROVIDER_ID,
     finish_reason: "stop",
     usage: { input_tokens: 10, output_tokens: 20 },
     ...overrides,
   };
 }
 
-function makeStubAdapter(response: NormalizedResponse): ProviderAdapter {
+function makeStubAdapter(response: ProviderResponse): OpenAIAdapter {
   return {
     id: PROVIDER_ID,
     call: sinon.stub().resolves(response),
-  };
+    callStream: sinon.stub(),
+    listModels: sinon.stub().resolves([]),
+  } as unknown as OpenAIAdapter;
 }
 
 function makeSidecar(turnSignal = "substantive", extras: object = {}): string {
@@ -95,15 +95,15 @@ function makeSidecar(turnSignal = "substantive", extras: object = {}): string {
 }
 
 async function buildApp(
-  adapterOrResponse: ProviderAdapter | NormalizedResponse,
+  adapterOrResponse: OpenAIAdapter | ProviderResponse,
 ): Promise<{
   app: FastifyInstance;
   deps: ChatDeps;
 }> {
   const adapter =
     "id" in adapterOrResponse
-      ? (adapterOrResponse as ProviderAdapter)
-      : makeStubAdapter(adapterOrResponse as NormalizedResponse);
+      ? (adapterOrResponse as OpenAIAdapter)
+      : makeStubAdapter(adapterOrResponse as ProviderResponse);
 
   const registry = new ProviderRegistry();
   registry.register(adapter);
@@ -130,7 +130,7 @@ async function buildApp(
 
   const deps: ChatDeps = {
     sessions,
-    history,
+
     context,
     providers: registry,
     jobs,
@@ -187,20 +187,21 @@ function streamEvents(
   ];
 }
 
-function makeStreamAdapter(events: StreamEvent[]): ProviderAdapter {
+function makeStreamAdapter(events: StreamEvent[]): OpenAIAdapter {
   return {
     id: PROVIDER_ID,
     call: sinon.stub().resolves(makeProviderResponse("non-stream fallback")),
     async *callStream() {
       for (const e of events) yield e;
     },
-  };
+    listModels: sinon.stub().resolves([]),
+  } as unknown as OpenAIAdapter;
 }
 
 function failingStreamAdapter(
   preErrorDeltas: string[],
   error: Error,
-): ProviderAdapter {
+): OpenAIAdapter {
   return {
     id: PROVIDER_ID,
     call: sinon.stub().resolves(makeProviderResponse("non-stream fallback")),
@@ -210,7 +211,8 @@ function failingStreamAdapter(
       }
       throw error;
     },
-  };
+    listModels: sinon.stub().resolves([]),
+  } as unknown as OpenAIAdapter;
 }
 
 interface SSEFrame {
@@ -300,18 +302,6 @@ test("sidecar is stripped from visible content", async (t) => {
   t.false(body.choices[0].message.content.includes(SIDECAR_BEGIN));
 });
 
-test("turn is written to history after a successful call", async (t) => {
-  const { app } = await buildApp(makeProviderResponse("Stored."));
-  await post(app, { messages: [{ role: "user", content: "Remember this" }] });
-
-  const turn = await waitForDoc(db.collection("turns"), {
-    sessionId: SESSION_ID,
-    userMessage: "Remember this",
-  });
-  t.truthy(turn);
-  t.is(turn!.assistantMessage, "Stored.");
-});
-
 test("extraction job is enqueued after a successful call", async (t) => {
   const { app } = await buildApp(makeProviderResponse("Queued."));
   await post(app, { messages: [{ role: "user", content: "Queue me" }] });
@@ -322,25 +312,6 @@ test("extraction job is enqueued after a successful call", async (t) => {
   t.truthy(job);
   t.is((job as any)!.payload.assistant_message, "Queued.");
   t.is(job!.status, "pending");
-});
-
-test("turn and job share the same turnId", async (t) => {
-  const { app } = await buildApp(makeProviderResponse("Linked."));
-  await post(app, {
-    messages: [{ role: "user", content: "Link" }],
-  });
-
-  const turn = await waitForDoc(db.collection("turns"), {
-    sessionId: SESSION_ID,
-    userMessage: "Link",
-  });
-  t.truthy(turn);
-
-  const job = await waitForDoc(db.collection("jobs"), {
-    turn_id: turn!._id as string,
-  });
-  t.truthy(job);
-  t.is(turn!._id, job!.turn_id);
 });
 
 test("session lastUsedAt is touched after a successful call", async (t) => {
@@ -360,63 +331,6 @@ test("session lastUsedAt is touched after a successful call", async (t) => {
 
   const after = (await sessions.get(SESSION_ID, USER_ID))!.lastUsedAt;
   t.true(after > before);
-});
-
-test("second turn gets turnIndex 1", async (t) => {
-  const { app } = await buildApp(makeProviderResponse("Reply."));
-  await post(app, { messages: [{ role: "user", content: "First" }] });
-  await post(app, { messages: [{ role: "user", content: "Second" }] });
-
-  await waitForDoc(db.collection("turns"), {
-    sessionId: SESSION_ID,
-    userMessage: "Second",
-  });
-
-  const turns = await db
-    .collection("turns")
-    .find({ sessionId: SESSION_ID })
-    .sort({ turnIndex: 1 })
-    .toArray();
-  t.is(turns.length, 2);
-  t.is(turns[0].turnIndex, 0);
-  t.is(turns[1].turnIndex, 1);
-});
-
-test("hasNewBeliefs is true when sidecar contains new_beliefs", async (t) => {
-  const sidecar = makeSidecar("substantive", {
-    new_beliefs: [
-      {
-        type: "FACT",
-        canonical_name: "x",
-        content: "y",
-        why_it_matters: "z",
-        scope: [],
-        confidence: 0.9,
-      },
-    ],
-  });
-  const { app } = await buildApp(makeProviderResponse(`Answer.\n${sidecar}`));
-  await post(app, { messages: [{ role: "user", content: "Tell me a fact" }] });
-
-  const turn = await waitForDoc(db.collection("turns"), {
-    sessionId: SESSION_ID,
-    hasNewBeliefs: true,
-  });
-  t.truthy(turn);
-});
-
-test("hasOpenQuestion is true when sidecar contains new_open_questions", async (t) => {
-  const sidecar = makeSidecar("substantive", {
-    new_open_questions: [{ canonical_name: "q", content: "What?", scope: [] }],
-  });
-  const { app } = await buildApp(makeProviderResponse(`Answer.\n${sidecar}`));
-  await post(app, { messages: [{ role: "user", content: "Any questions?" }] });
-
-  const turn = await waitForDoc(db.collection("turns"), {
-    sessionId: SESSION_ID,
-    hasOpenQuestion: true,
-  });
-  t.truthy(turn);
 });
 
 test("returns 400 when messages array is missing", async (t) => {
@@ -444,7 +358,7 @@ test("auto-binds unbound session and returns 200", async (t) => {
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
+
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -483,10 +397,10 @@ test("auto-binds unbound session and returns 200", async (t) => {
 });
 
 test("returns 502 when provider throws", async (t) => {
-  const failingAdapter: ProviderAdapter = {
+  const failingAdapter = {
     id: PROVIDER_ID,
     call: sinon.stub().rejects(new Error("upstream down")),
-  };
+  } as unknown as OpenAIAdapter;
   const { app } = await buildApp(failingAdapter);
   const res = await post(app, {
     messages: [{ role: "user", content: "Hi" }],
@@ -504,7 +418,7 @@ test("returns 502 when provider is not registered", async (t) => {
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
+
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -541,7 +455,6 @@ test("returns 502 when provider is not registered", async (t) => {
 
 test("response is still returned when side-effect writes fail", async (t) => {
   const { app, deps } = await buildApp(makeProviderResponse("Still works."));
-  sinon.stub(deps.history, "appendTurn").rejects(new Error("mongo down"));
   sinon.stub(deps.jobs, "enqueue").rejects(new Error("mongo down"));
 
   const res = await post(app, {
@@ -554,19 +467,6 @@ test("response is still returned when side-effect writes fail", async (t) => {
 test("response is still returned when context assembly fails", async (t) => {
   const { app, deps } = await buildApp(makeProviderResponse("Still works."));
   sinon.stub(deps.context, "build").rejects(new Error("beliefs db down"));
-
-  const res = await post(app, {
-    messages: [{ role: "user", content: "Hi" }],
-  });
-  t.is(res.statusCode, 200);
-  t.is(JSON.parse(res.body).choices[0].message.content, "Still works.");
-});
-
-test("response is still returned when history window fetch fails", async (t) => {
-  const { app, deps } = await buildApp(makeProviderResponse("Still works."));
-  sinon
-    .stub(deps.history, "getCompactedWindow")
-    .rejects(new Error("history down"));
 
   const res = await post(app, {
     messages: [{ role: "user", content: "Hi" }],
@@ -792,24 +692,6 @@ test("streaming: finish_reason length is propagated", async (t) => {
   t.is(last.choices![0].finish_reason, "length");
 });
 
-test("streaming: turn is persisted after stream completes", async (t) => {
-  const events = streamEvents(["Streamed answer."]);
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Stream me" }],
-  });
-
-  const turn = await waitForDoc(db.collection("turns"), {
-    sessionId: SESSION_ID,
-    userMessage: "Stream me",
-  });
-
-  t.truthy(turn);
-  t.is(turn!.assistantMessage, "Streamed answer.");
-});
-
 test("streaming: extraction job is enqueued after stream completes", async (t) => {
   const events = streamEvents(["Extracted."]);
   const { app } = await buildApp(makeStreamAdapter(events));
@@ -826,27 +708,6 @@ test("streaming: extraction job is enqueued after stream completes", async (t) =
   t.truthy(job);
   t.is((job as any).payload.assistant_message, "Extracted.");
   t.is(job!.status, "pending");
-});
-
-test("streaming: turn and job share the same turnId", async (t) => {
-  const events = streamEvents(["Linked."]);
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Link stream" }],
-  });
-
-  const turn = await waitForDoc(db.collection("turns"), {
-    sessionId: SESSION_ID,
-    userMessage: "Link stream",
-  });
-  t.truthy(turn);
-  const job = await waitForDoc(db.collection("jobs"), {
-    turn_id: turn!._id as string,
-  });
-  t.truthy(job);
-  t.is(turn!._id, job!.turn_id);
 });
 
 test("streaming: session lastUsedAt is touched after stream", async (t) => {
@@ -893,44 +754,6 @@ test("streaming: sidecar parse_status is captured on extraction job", async (t) 
 
   t.truthy(job);
   t.is((job as any)!.payload.parse_status, "parsed");
-});
-
-test("streaming: hasNewBeliefs flag set on turn when sidecar has beliefs", async (t) => {
-  const sidecar = makeSidecar("substantive", {
-    new_beliefs: [
-      {
-        type: "FACT",
-        canonical_name: "x",
-        content: "y",
-        why_it_matters: "z",
-        scope: [],
-        confidence: 0.9,
-      },
-    ],
-  });
-  const events: StreamEvent[] = [
-    { type: "content_delta", delta: `Answer.\n${sidecar}` },
-    {
-      type: "stream_end",
-      model: MODEL,
-      finish_reason: "stop",
-      usage: { input_tokens: 5, output_tokens: 15 },
-    },
-  ];
-
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Stream beliefs" }],
-  });
-
-  const turn = await waitForDoc(db.collection("turns"), {
-    userMessage: "Stream beliefs",
-  });
-
-  t.truthy(turn);
-  t.true(turn!.hasNewBeliefs as boolean);
 });
 
 test("streaming: provider error mid-stream emits error frame then [DONE]", async (t) => {
@@ -980,10 +803,10 @@ test("streaming: no turn or job written on provider error", async (t) => {
 });
 
 test("streaming: falls back to non-streaming when adapter lacks callStream", async (t) => {
-  const adapter: ProviderAdapter = {
+  const adapter = {
     id: PROVIDER_ID,
     call: sinon.stub().resolves(makeProviderResponse("Non-streamed.")),
-  };
+  } as unknown as OpenAIAdapter;
   const { app } = await buildApp(adapter);
 
   const res = await post(app, {
@@ -1084,25 +907,6 @@ test("no extraction job enqueued when extraction_enabled is false", async (t) =>
   t.is(job, null);
 });
 
-test("turn is still persisted when extraction_enabled is false", async (t) => {
-  const { app, deps } = await buildApp(makeProviderResponse("Still stored."));
-
-  (deps.runtimeStore.load as sinon.SinonStub).resolves({
-    extraction_enabled: false,
-  });
-
-  await post(app, {
-    messages: [{ role: "user", content: "Store me anyway" }],
-  });
-
-  const turn = await waitForDoc(db.collection("turns"), {
-    sessionId: SESSION_ID,
-    userMessage: "Store me anyway",
-  });
-  t.truthy(turn);
-  t.is(turn!.assistantMessage, "Still stored.");
-});
-
 test("streaming: extraction worker NOT called when extraction_enabled is false", async (t) => {
   const events = streamEvents(["No extract stream."]);
   const { app, deps } = await buildApp(makeStreamAdapter(events));
@@ -1123,27 +927,6 @@ test("streaming: extraction worker NOT called when extraction_enabled is false",
     spy.called,
     "processById not called on streaming when extraction disabled",
   );
-});
-
-test("streaming: turn still persisted when extraction_enabled is false", async (t) => {
-  const events = streamEvents(["Stored anyway."]);
-  const { app, deps } = await buildApp(makeStreamAdapter(events));
-
-  (deps.runtimeStore.load as sinon.SinonStub).resolves({
-    extraction_enabled: false,
-  });
-
-  await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Stream store me" }],
-  });
-
-  const turn = await waitForDoc(db.collection("turns"), {
-    sessionId: SESSION_ID,
-    userMessage: "Stream store me",
-  });
-  t.truthy(turn);
-  t.is(turn!.assistantMessage, "Stored anyway.");
 });
 
 test("response still returned when runtimeStore.load fails", async (t) => {
@@ -1194,7 +977,7 @@ test("!scope command updates session activeScope", async (t) => {
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
+
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -1350,7 +1133,7 @@ test("scope command mid-session changes scope for subsequent turn", async (t) =>
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
+
     context: { build: contextBuild } as any,
     providers: registry,
     jobs: new ExtractionJobQueue(db),
@@ -1438,7 +1221,7 @@ test("first-turn scope detection runs when scopeDetector is configured and activ
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
+
     context: { build: contextBuild } as any,
     providers: registry,
     jobs: new ExtractionJobQueue(db),
@@ -1507,7 +1290,7 @@ test("first-turn scope detection does not run when activeScope is already set", 
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
+
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -1563,7 +1346,7 @@ test("first-turn scope detection does not run when scopeDetector is not configur
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
+
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -1615,7 +1398,7 @@ test("first-turn scope detection failure degrades gracefully and still returns r
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
+
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -1678,7 +1461,7 @@ test("first-turn scope detection only fires on turnCounter 0", async (t) => {
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
+
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -1785,7 +1568,7 @@ test("!extract off sets extractionPaused on session", async (t) => {
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
+
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -1835,7 +1618,7 @@ test("!extract on clears extractionPaused on session", async (t) => {
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
+
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -1879,7 +1662,7 @@ test("!extract global off calls runtimeStore.set with extraction_enabled false",
   const app = Fastify();
   registerChatRoute(app, {
     sessions: new SessionManager(db),
-    history: new HistoryManager(db),
+
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -1945,7 +1728,6 @@ test("extraction worker NOT called on subsequent turn when session extractionPau
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -1976,60 +1758,6 @@ test("extraction worker NOT called on subsequent turn when session extractionPau
   t.is(res.statusCode, 200);
   await new Promise((r) => setTimeout(r, 100));
   t.false(extractionWorker.processById.called);
-});
-
-test("turn still persisted on subsequent turn when session extractionPaused is true", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-paused-persist", USER_ID);
-  await sessions.update("sess-paused-persist", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-    extractionPaused: true,
-  } as any);
-
-  const registry = new ProviderRegistry();
-  registry.register(makeStubAdapter(makeProviderResponse("Stored.")));
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-    history: new HistoryManager(db),
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon.stub().resolves({ extraction_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-  });
-  await app.ready();
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "Store this anyway" }] },
-    { "x-session-id": "sess-paused-persist" },
-  );
-
-  const turn = await waitForDoc(db.collection("turns"), {
-    sessionId: "sess-paused-persist",
-    userMessage: "Store this anyway",
-  });
-  t.truthy(turn);
-  t.is(turn!.assistantMessage, "Stored.");
 });
 
 test("streaming: !extract off returns non-streaming JSON even when stream:true", async (t) => {
@@ -2109,7 +1837,7 @@ test("!inject off sets injectionPaused on session", async (t) => {
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
+
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -2161,7 +1889,7 @@ test("!inject on clears injectionPaused on session", async (t) => {
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
+
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -2198,68 +1926,6 @@ test("!inject on clears injectionPaused on session", async (t) => {
   t.false((updated as any).injectionPaused);
 });
 
-test("!inject off: context.build is not called on subsequent turn", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-inject-no-build", USER_ID);
-  await sessions.update("sess-inject-no-build", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-    injectionPaused: true,
-  } as any);
-
-  const contextBuild = sinon.stub().resolves({
-    personaPrelude: "",
-    pinnedFactsJson: "[]",
-    expandedQuery: "",
-    queryWasNoisy: false,
-    relevantBeliefsJson: "[]",
-    openQuestionsJson: "[]",
-    beliefCount: 0,
-    questionCount: 0,
-    truncated: false,
-    searchScores: [],
-  });
-
-  const registry = new ProviderRegistry();
-  registry.register(makeStubAdapter(makeProviderResponse("No context.")));
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-    history: new HistoryManager(db),
-    context: { build: contextBuild } as any,
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon
-        .stub()
-        .resolves({ extraction_enabled: true, injection_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-  });
-  await app.ready();
-
-  const res = await post(
-    app,
-    { messages: [{ role: "user", content: "Normal question" }] },
-    { "x-session-id": "sess-inject-no-build" },
-  );
-
-  t.is(res.statusCode, 200);
-  t.false(
-    contextBuild.called,
-    "context.build should be skipped when injectionPaused",
-  );
-});
-
 test("!inject off: extraction still runs on subsequent turn", async (t) => {
   const sessions = new SessionManager(db);
   await sessions.getOrCreate("sess-inject-off-extract", USER_ID);
@@ -2279,7 +1945,7 @@ test("!inject off: extraction still runs on subsequent turn", async (t) => {
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
+
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -2330,7 +1996,7 @@ test("!inject global off calls runtimeStore.set with injection_enabled false", a
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
+
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -2397,7 +2063,7 @@ test("!extract off and !inject off are independent: both can be set simultaneous
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
+
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -2456,7 +2122,7 @@ test("!inject off does not affect extractionPaused field", async (t) => {
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
+
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -2510,7 +2176,7 @@ test("!extract off does not affect injectionPaused field", async (t) => {
   const app = Fastify();
   registerChatRoute(app, {
     sessions,
-    history: new HistoryManager(db),
+
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -2550,7 +2216,7 @@ test("!extract off does not affect injectionPaused field", async (t) => {
 });
 
 async function buildAppWithWorkspaceState(
-  adapterOrResponse: ProviderAdapter | NormalizedResponse,
+  adapterOrResponse: OpenAIAdapter | ProviderResponse,
   workspaceState?: WorkspaceStateCache,
 ): Promise<{
   app: FastifyInstance;
@@ -2558,8 +2224,8 @@ async function buildAppWithWorkspaceState(
 }> {
   const adapter =
     "id" in adapterOrResponse
-      ? (adapterOrResponse as ProviderAdapter)
-      : makeStubAdapter(adapterOrResponse as NormalizedResponse);
+      ? (adapterOrResponse as OpenAIAdapter)
+      : makeStubAdapter(adapterOrResponse as ProviderResponse);
 
   const registry = new ProviderRegistry();
   registry.register(adapter);
@@ -2586,7 +2252,7 @@ async function buildAppWithWorkspaceState(
 
   const deps: ChatDeps = {
     sessions,
-    history,
+
     context,
     providers: registry,
     jobs,
@@ -2787,7 +2453,7 @@ test("IDE turn: extraction is suppressed when ide_extraction_enabled is false", 
 
   const deps: ChatDeps = {
     sessions,
-    history,
+
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),

@@ -124,13 +124,6 @@ test("log persists session_id when provided", async (t) => {
   t.is(doc!.session_id, "sess-1");
 });
 
-test("log persists turn_id when provided", async (t) => {
-  const logger = new ErrorLogger(makeCollections());
-  await logger.log(makeInput({ turn_id: "turn-99" }));
-  const doc = await errorCol.findOne({});
-  t.is(doc!.turn_id, "turn-99");
-});
-
 test("log persists provider when provided", async (t) => {
   const logger = new ErrorLogger(makeCollections());
   await logger.log(makeInput({ provider: "anthropic" }));
@@ -186,13 +179,6 @@ test("log defaults session_id to null when not provided", async (t) => {
   await logger.log(makeInput());
   const doc = await errorCol.findOne({});
   t.is(doc!.session_id, null);
-});
-
-test("log defaults turn_id to null when not provided", async (t) => {
-  const logger = new ErrorLogger(makeCollections());
-  await logger.log(makeInput());
-  const doc = await errorCol.findOne({});
-  t.is(doc!.turn_id, null);
 });
 
 test("log defaults provider to null when not provided", async (t) => {

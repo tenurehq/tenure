@@ -9,6 +9,7 @@ import type {
   ExportedPersonaDoc,
 } from "./types.js";
 import { encryptArchive } from "./crypto.js";
+import type { InjectionAuditRecord } from "../types/injectionAudit.js";
 
 export interface ExporterDeps {
   db: Db;
@@ -32,17 +33,27 @@ export class BackupExporter {
   private async buildPayload(): Promise<TenureExport> {
     const { db, runtimeStore, userId } = this.deps;
 
-    const [beliefs, runtimeConfig, personaDoc, compactionLog, sessions] =
-      await Promise.all([
-        db.collection<Belief>("beliefs").find({ user_id: userId }).toArray(),
-        runtimeStore.load(),
-        db.collection<PersonaDoc>("persona_cache").findOne({ _id: userId }),
-        db
-          .collection<CompactionLogEntry>("compaction_log")
-          .find({ user_id: userId })
-          .toArray(),
-        db.collection("sessions").find({ userId }).toArray(),
-      ]);
+    const [
+      beliefs,
+      runtimeConfig,
+      personaDoc,
+      compactionLog,
+      sessions,
+      auditRecords,
+    ] = await Promise.all([
+      db.collection<Belief>("beliefs").find({ user_id: userId }).toArray(),
+      runtimeStore.load(),
+      db.collection<PersonaDoc>("persona_cache").findOne({ _id: userId }),
+      db
+        .collection<CompactionLogEntry>("compaction_log")
+        .find({ user_id: userId })
+        .toArray(),
+      db.collection("sessions").find({ userId }).toArray(),
+      db
+        .collection<InjectionAuditRecord>("injection_audit")
+        .find({ user_id: userId })
+        .toArray(),
+    ]);
 
     return {
       version: 1,
@@ -86,6 +97,10 @@ export class BackupExporter {
           (s.createdAt as Date)?.toISOString() ?? new Date().toISOString(),
         lastUsedAt:
           (s.lastUsedAt as Date)?.toISOString() ?? new Date().toISOString(),
+      })),
+      injection_audit: auditRecords.map((r) => ({
+        ...r,
+        created_at: r.created_at.toISOString(),
       })),
     };
   }

@@ -60,6 +60,8 @@ export interface Belief {
   expertise_depth?: ExpertiseDepth;
   expertise_evidence_count?: number;
   origin_context?: OriginContext | null;
+  participants?: string[];
+  relation_type?: string;
 }
 
 export interface OriginContext {

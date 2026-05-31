@@ -1,34 +1,3 @@
-export interface NormalizedRequest {
-  model: string;
-  messages: Message[];
-  temperature?: number;
-  max_tokens?: number;
-  passThrough?: Record<string, unknown>;
-  abortSignal?: AbortSignal;
-}
-
-export interface NormalizedResponse {
-  content: string;
-  model: string;
-  provider: string;
-  finish_reason: string;
-  usage: { input_tokens: number; output_tokens: number };
-  toolCalls?: unknown[];
-}
-
-export interface ProviderAdapter {
-  readonly id: string;
-  call(
-    req: NormalizedRequest,
-    systemPrompt: SystemPrompt,
-  ): Promise<NormalizedResponse>;
-  callStream?(
-    req: NormalizedRequest,
-    systemPrompt: SystemPrompt,
-  ): AsyncIterable<StreamEvent>;
-  listModels?(): Promise<ModelInfo[]>;
-}
-
 export interface TextPart {
   type: "text";
   text: string;
@@ -63,7 +32,7 @@ export interface ModelInfo {
 }
 
 export interface StreamEvent {
-  type: "content_delta" | "tool_call_delta" | "stream_end";
+  type: "content_delta" | "tool_call_delta" | "stream_end" | "text_block_start";
   delta?: string;
   toolCallIndex?: number;
   toolCallId?: string | undefined;
@@ -90,4 +59,32 @@ export type SystemPrompt = string | SystemPromptParts;
 export function flattenSystemPrompt(sp: SystemPrompt): string {
   if (typeof sp === "string") return sp;
   return [sp.static, sp.beliefs, sp.dynamic].filter(Boolean).join("\n\n");
+}
+
+/**
+ * Minimal shared interface. Only used for model listing and provider
+ * registration/detection. Route handlers call the concrete adapter type
+ * directly for call/callStream.
+ */
+export interface ProviderAdapter {
+  readonly id: string;
+  listModels?(): Promise<ModelInfo[]>;
+}
+
+/**
+ * Interface for internal callers (compaction, persona, scope detection)
+ * that need to make LLM calls with positional arguments.
+ */
+export interface InternalLLMCaller {
+  call(
+    model: string,
+    systemPrompt: SystemPrompt,
+    messages: Message[],
+    body: Record<string, unknown>,
+  ): Promise<{
+    content: string;
+    model: string;
+    finish_reason: string;
+    usage: { input_tokens: number; output_tokens: number };
+  }>;
 }

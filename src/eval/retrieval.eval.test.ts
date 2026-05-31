@@ -10,6 +10,10 @@ import {
   type PersonaLookup,
 } from "../context/contextBuilder.js";
 import type { Belief } from "../types/belief.js";
+import {
+  buildReportPayload,
+  type ReportSummaryOptions,
+} from "./buildRetrievalReport.js";
 
 interface PinnedFactsExpect {
   mustInclude?: string[];
@@ -40,6 +44,7 @@ interface QuestionsExpect {
 
 interface RetrievalCase {
   caseId: string;
+  category: string;
   description: string;
   userId?: string;
   scope: string[];
@@ -57,6 +62,7 @@ interface RetrievalCase {
 
 interface ReportEntry {
   caseId: string;
+  category: string;
   description: string;
   pinnedBeliefs: string[];
   relevantBeliefs: string[];
@@ -70,6 +76,7 @@ interface ReportEntry {
   questionRecall: number | null;
   passed: boolean;
   failures: string[];
+  retrievalLatencyMs: number;
 }
 
 interface ScoreClause {
@@ -113,7 +120,7 @@ const HOST_PORT = 27018;
 const MONGO_URI = `mongodb://localhost:${HOST_PORT}/?directConnection=true`;
 
 const READY_TIMEOUT_MS = 90_000;
-const READY_POLL_MS = 500;
+const READY_POLL_MS = 50;
 
 const USER_ID = "test-user";
 const FIXTURE_BELIEFS = resolve("src/__fixtures__/beliefs.seed.json");
@@ -191,9 +198,7 @@ function stopContainer(): void {
     execSync(`docker rm -f ${CONTAINER_NAME}`, { stdio: "pipe" });
     try {
       execSync(`docker volume rm ${CONTAINER_NAME}-data`, { stdio: "pipe" });
-    } catch {
-      // volume may not exist if container was run without one
-    }
+    } catch {}
   }
 }
 
@@ -257,6 +262,13 @@ let db: Db;
 let col: Collection<Belief>;
 let pinnedInSeed: Set<string>;
 const report: ReportEntry[] = [];
+
+let ingestionTimings: {
+  insertMs: number;
+  searchSyncMs: number;
+  totalReadyMs: number;
+  beliefCount: number;
+} = { insertMs: 0, searchSyncMs: 0, totalReadyMs: 0, beliefCount: 0 };
 
 test.before(async () => {
   startContainer();
@@ -390,7 +402,8 @@ test.before(async () => {
                   },
                 },
               },
-              content: { type: "string", analyzer: "lucene.english" },
+              participants: { type: "token" },
+              relation_type: { type: "token" },
               superseded_by: { type: "token" },
               resolved_at: { type: "date" },
               type: { type: "token" },
@@ -422,7 +435,11 @@ test.before(async () => {
     string,
     unknown
   >[];
+  const ingestionStart = performance.now();
   await col.insertMany(raw.map(coerceBelief));
+  const insertEnd = performance.now();
+  const ingestionMs = Math.round((insertEnd - ingestionStart) * 100) / 100;
+  const syncStart = performance.now();
 
   await retryUntilReady(
     async () => {
@@ -443,6 +460,15 @@ test.before(async () => {
     "waitForSearchSync",
     READY_TIMEOUT_MS,
   );
+  const syncEnd = performance.now();
+  const syncMs = Math.round((syncEnd - syncStart) * 100) / 100;
+
+  ingestionTimings = {
+    insertMs: ingestionMs,
+    searchSyncMs: syncMs,
+    totalReadyMs: Math.round((syncEnd - ingestionStart) * 100) / 100,
+    beliefCount: raw.length,
+  };
 
   const pinnedDocs = await col
     .find({ user_id: USER_ID, pinned: true }, { projection: { _id: 1 } })
@@ -451,8 +477,29 @@ test.before(async () => {
 });
 
 test.after.always(async () => {
+  const opts: ReportSummaryOptions = {
+    provider: "tenure",
+    entries: report,
+    caseCount: cases.length,
+    ingestion: {
+      beliefCount: ingestionTimings.beliefCount,
+      totalMs: ingestionTimings.totalReadyMs,
+      meanPerBeliefMs:
+        ingestionTimings.beliefCount > 0
+          ? Math.round(
+              (ingestionTimings.totalReadyMs / ingestionTimings.beliefCount) *
+                100,
+            ) / 100
+          : 0,
+      perBelief: [],
+    },
+  };
+
   mkdirSync(REPORT_DIR, { recursive: true });
-  writeFileSync(REPORT_PATH, JSON.stringify(report, null, 2));
+  writeFileSync(
+    REPORT_PATH,
+    JSON.stringify(buildReportPayload(opts, report), null, 2),
+  );
   await client?.close();
   stopContainer();
 });
@@ -468,7 +515,9 @@ for (const tc of cases) {
       ...tc.budget,
       scoreDetails: true,
     });
+    const buildStart = performance.now();
     const ctx = await builder.build(tc.userId ?? USER_ID, tc.scope, tc.query);
+    const buildEnd = performance.now();
 
     const pinned = JSON.parse(ctx.pinnedFactsJson) as Array<
       Record<string, unknown>
@@ -586,8 +635,8 @@ for (const tc of cases) {
       relevantIds.size === 0 && expectedRelevant.size === 0
         ? null
         : relevantIds.size === 0
-          ? null
-          : retrievalHits / relevantIds.size;
+        ? 0.0 //
+        : retrievalHits / relevantIds.size;
 
     const retrievalRecall =
       expectedRelevant.size === 0
@@ -617,6 +666,7 @@ for (const tc of cases) {
 
     report.push({
       caseId: tc.caseId,
+      category: tc.category,
       description: tc.description,
       expandedQuery: ctx.expandedQuery,
       pinnedBeliefs: [...pinnedIds],
@@ -636,6 +686,7 @@ for (const tc of cases) {
       questionRecall,
       passed: failures.length === 0,
       failures,
+      retrievalLatencyMs: Math.round((buildEnd - buildStart) * 100) / 100,
     });
 
     if (failures.length > 0) t.fail(failures.join("\n"));
