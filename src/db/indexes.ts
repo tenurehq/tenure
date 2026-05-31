@@ -129,6 +129,8 @@ const SEARCH_INDEXES: SearchIndexMeta[] = [
               },
             },
           },
+          participants: { type: "token" },
+          relation_type: { type: "token" },
           superseded_by: { type: "token" },
           resolved_at: { type: "date" },
           type: { type: "token" },
@@ -254,6 +256,19 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
     },
     { key: { user_id: 1 } },
   ]);
+
+  await cols.injection_audit.createIndexes([
+    { key: { user_id: 1, created_at: -1 }, name: "audit_user_recent" },
+    { key: { user_id: 1, scope: 1, created_at: -1 }, name: "audit_user_scope" },
+    {
+      key: { user_id: 1, "injected_beliefs.pinned_facts._id": 1 },
+      name: "audit_by_pinned_belief",
+    },
+    {
+      key: { user_id: 1, "injected_beliefs.relevant_beliefs._id": 1 },
+      name: "audit_by_relevant_belief",
+    },
+  ]);
 }
 
 export async function ensureSearchIndexes(db: Db): Promise<void> {
@@ -272,9 +287,7 @@ export async function ensureSearchIndexes(db: Db): Promise<void> {
         if (found && found.status === "READY") {
           continue;
         }
-      } catch {
-        // Fall through to recreation
-      }
+      } catch {}
     }
 
     try {

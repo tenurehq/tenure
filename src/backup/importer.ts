@@ -7,6 +7,7 @@ import type { PersonaDoc } from "../context/personaCache.js";
 import type { TenureExport, ExportedBelief } from "./types.js";
 import { decryptArchive } from "./crypto.js";
 import type { Session } from "../session/manager.js";
+import type { InjectionAuditRecord } from "../types/injectionAudit.js";
 
 export interface ImporterDeps {
   db: Db;
@@ -158,6 +159,19 @@ export class BackupImporter {
           merged_count: entry.merged_count,
         }),
       );
+
+      if (payload.injection_audit?.length > 0) {
+        const auditCol = db.collection<InjectionAuditRecord>("injection_audit");
+        const entries = payload.injection_audit.map((r) => ({
+          ...r,
+          user_id: targetUserId,
+          created_at: new Date(r.created_at),
+        }));
+
+        await auditCol.insertMany(entries, { ordered: false }).catch((err) => {
+          if (err.code !== 11000) throw err;
+        });
+      }
 
       await logCol.insertMany(entries, { ordered: false }).catch((err) => {
         if (err.code !== 11000) throw err;

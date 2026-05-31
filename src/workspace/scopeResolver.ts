@@ -18,7 +18,6 @@ export function resolveIdeScope(
   headers: Record<string, string | undefined>,
   systemPromptContent?: string,
 ): ResolvedScope {
-  // Priority 1: Extension state cache
   const projectFromExtension = workspaceState.resolveProjectScope(userId);
   if (projectFromExtension) {
     return {
@@ -28,7 +27,6 @@ export function resolveIdeScope(
     };
   }
 
-  // Priority 2: Header overrides
   const headerProject = headers["x-tenure-project"];
   const headerDomain = headers["x-tenure-domain"];
   if (headerProject) {
@@ -44,7 +42,6 @@ export function resolveIdeScope(
     };
   }
 
-  // Priority 3: First-turn payload parsing
   if (systemPromptContent) {
     const projectMatch = systemPromptContent.match(SYSTEM_PROMPT_PROJECT_RE);
     const fileMatch = systemPromptContent.match(SYSTEM_PROMPT_FILE_RE);

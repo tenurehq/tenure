@@ -9,7 +9,7 @@ export interface ErrorInput {
   error?: Error;
   user_id: string;
   session_id?: string;
-  turn_id?: string;
+  request_id?: string;
   provider?: string;
   model?: string;
   context?: Record<string, unknown>;
@@ -31,7 +31,7 @@ export class ErrorLogger {
       stack_trace: input.error?.stack ?? null,
       user_id: input.user_id,
       session_id: input.session_id ?? null,
-      turn_id: input.turn_id ?? null,
+      request_id: input.request_id ?? null,
       provider: input.provider ?? null,
       model: input.model ?? null,
       context: input.context ?? {},

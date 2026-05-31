@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Collection } from "mongodb";
 import type { Belief } from "../types/belief.js";
-import type { ProviderAdapter } from "../providers/types.js";
+import type { InternalLLMCaller } from "../providers/types.js";
 import type { PersonaCache, PersonaDoc } from "./personaCache.js";
 
 const UNIVERSAL_SCOPE = "user:universal";
@@ -25,7 +25,7 @@ Rules:
 export interface PersonaGeneratorDeps {
   beliefs: Collection<Belief>;
   cache: PersonaCache;
-  adapter: () => ProviderAdapter;
+  adapter: () => InternalLLMCaller;
   modelId: string;
 }
 
@@ -160,15 +160,11 @@ export class PersonaSummaryService {
 
     const adapter = this.deps.adapter();
     const resp = await adapter.call(
-      {
-        model: this.deps.modelId,
-        messages: [{ role: "user", content: JSON.stringify(payload) }],
-        temperature: 0.3,
-        max_tokens: 1200,
-      },
+      this.deps.modelId,
       PERSONA_PRELUDE_PROMPT,
+      [{ role: "user", content: JSON.stringify(payload) }],
+      { temperature: 0.3, max_tokens: 1200 },
     );
-
     const parsed = JSON.parse(this.extractJson(resp.content));
     return String(parsed.universal ?? "");
   }

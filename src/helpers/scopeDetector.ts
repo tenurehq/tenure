@@ -1,12 +1,12 @@
 import type { Db } from "mongodb";
-import type { ProviderAdapter } from "../providers/types.js";
+import type { InternalLLMCaller } from "../providers/types.js";
 import type { FastifyBaseLogger } from "fastify";
 import type { SessionPatch } from "../session/manager.js";
 import type { RuntimeConfig } from "../config/runtime.js";
 
 export interface ScopeDetectorDeps {
   db: Db;
-  adapter: () => ProviderAdapter;
+  adapter: () => InternalLLMCaller;
   modelId: string;
 }
 
@@ -62,7 +62,9 @@ export function validateCommandInput(
       return {
         valid: false,
         message:
-          `Invalid scope format: ${invalid.map((s) => `\`${s}\``).join(", ")}. ` +
+          `Invalid scope format: ${invalid
+            .map((s) => `\`${s}\``)
+            .join(", ")}. ` +
           `Use \`domain:code\`, \`domain:code/typescript\`, or \`project:my-project\`.`,
       };
     }
@@ -99,8 +101,6 @@ export function expandScopeHierarchy(scopes: string[]): string[] {
   return [...expanded];
 }
 
-// If you add or change commands here, update TENURE_COMMANDS in routes/commands.ts
-// to keep GET /v1/commands accurate.
 export function matchScopeCommand(content: string): string | null {
   const trimmed = content.trim();
   const lower = trimmed.toLowerCase();
@@ -191,20 +191,18 @@ export async function detectScopeFromMessage(
 ): Promise<string[]> {
   try {
     const userContent = existingScopes.length
-      ? `Existing scopes: ${existingScopes.join(", ")}\n\nUser message: ${message.slice(0, 500)}`
+      ? `Existing scopes: ${existingScopes.join(
+          ", ",
+        )}\n\nUser message: ${message.slice(0, 500)}`
       : `User message: ${message.slice(0, 500)}`;
 
     const adapter = deps.adapter();
     const resp = await adapter.call(
-      {
-        model: deps.modelId,
-        messages: [{ role: "user", content: userContent }],
-        temperature: 0,
-        max_tokens: 64,
-      },
+      deps.modelId,
       SCOPE_DETECT_PROMPT,
+      [{ role: "user", content: userContent }],
+      { temperature: 0, max_tokens: 64 },
     );
-
     const raw = (resp.content ?? "").trim();
     const clamped = raw.slice(0, 4_000);
     const match = clamped.match(/\[[\s\S]*?\]/);

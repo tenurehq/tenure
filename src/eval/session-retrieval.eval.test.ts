@@ -10,6 +10,10 @@ import {
 } from "../context/contextBuilder.js";
 import type { Belief } from "../types/belief.js";
 import type { Turn, TurnSignal } from "../history/manager.js";
+import {
+  buildReportPayload,
+  ReportSummaryOptions,
+} from "./buildRetrievalReport.js";
 
 interface BeliefsExpect {
   mustInclude?: string[];
@@ -66,6 +70,7 @@ interface SessionEvalCase {
 
 interface SessionReportEntry {
   caseId: string;
+  category: string;
   turnIndex: number;
   label: string;
   expandedQuery: string;
@@ -76,6 +81,9 @@ interface SessionReportEntry {
   passed: boolean;
   failures: string[];
   searchScores: FlatSearchScore[];
+  retrievalLatencyMs: number;
+  retrievalPrecision: number | null;
+  retrievalRecall: number | null;
 }
 
 interface ScoreClause {
@@ -270,6 +278,12 @@ let db: Db;
 let beliefsCol: Collection<Belief>;
 let turnsCol: Collection<Turn>;
 const sessionReport: SessionReportEntry[] = [];
+let ingestionTimings = {
+  insertMs: 0,
+  searchSyncMs: 0,
+  totalReadyMs: 0,
+  beliefCount: 0,
+};
 
 test.before(async () => {
   startContainer();
@@ -403,7 +417,8 @@ test.before(async () => {
                   },
                 },
               },
-              content: { type: "string", analyzer: "lucene.english" },
+              participants: { type: "token" },
+              relation_type: { type: "token" },
               superseded_by: { type: "token" },
               resolved_at: { type: "date" },
               type: { type: "token" },
@@ -434,8 +449,12 @@ test.before(async () => {
   const rawBeliefs = JSON.parse(
     readFileSync(FIXTURE_BELIEFS, "utf8"),
   ) as Record<string, unknown>[];
-  await beliefsCol.insertMany(rawBeliefs.map(coerceBelief));
 
+  const ingestionStart = performance.now();
+  await beliefsCol.insertMany(rawBeliefs.map(coerceBelief));
+  const insertEnd = performance.now();
+
+  const syncStart = performance.now();
   await retryUntilReady(
     async () => {
       const results = await beliefsCol
@@ -455,6 +474,14 @@ test.before(async () => {
     "waitForBeliefsSearchSync",
     READY_TIMEOUT_MS,
   );
+  const syncEnd = performance.now();
+
+  ingestionTimings = {
+    insertMs: Math.round((insertEnd - ingestionStart) * 100) / 100,
+    searchSyncMs: Math.round((syncEnd - syncStart) * 100) / 100,
+    totalReadyMs: Math.round((syncEnd - ingestionStart) * 100) / 100,
+    beliefCount: rawBeliefs.length,
+  };
 
   await turnsCol.drop().catch(() => {});
   await db.createCollection("turns");
@@ -495,8 +522,30 @@ test.before(async () => {
 });
 
 test.after.always(async () => {
+  const opts: ReportSummaryOptions = {
+    provider: "tenure",
+    entries: sessionReport,
+    caseCount: sessionCases.length,
+    turnCount: sessionReport.length,
+    ingestion: {
+      beliefCount: ingestionTimings.beliefCount,
+      totalMs: ingestionTimings.totalReadyMs,
+      meanPerBeliefMs:
+        ingestionTimings.beliefCount > 0
+          ? Math.round(
+              (ingestionTimings.totalReadyMs / ingestionTimings.beliefCount) *
+                100,
+            ) / 100
+          : 0,
+      perBelief: [],
+    },
+  };
+
   mkdirSync(REPORT_DIR, { recursive: true });
-  writeFileSync(REPORT_PATH, JSON.stringify(sessionReport, null, 2));
+  writeFileSync(
+    REPORT_PATH,
+    JSON.stringify(buildReportPayload(opts, sessionReport), null, 2),
+  );
   await client?.close();
   stopContainer();
 });
@@ -614,7 +663,9 @@ for (const sessionCase of sessionCases) {
         await waitForTurnsSearchSync(turnsCol, sessionId, turn.turnIndex);
       }
 
+      const buildStart = performance.now();
       const ctx = await builder.build(USER_ID, turn.scope, turn.userMessage);
+      const buildEnd = performance.now();
 
       const pinned = JSON.parse(ctx.pinnedFactsJson) as Array<
         Record<string, unknown>
@@ -715,8 +766,21 @@ for (const sessionCase of sessionCases) {
       const driftScore =
         totalSurfaced === 0 ? 0 : noiseBeliefIds.length / totalSurfaced;
 
+      const goldSet = rb?.shouldOnlyInclude
+        ? new Set(rb.shouldOnlyInclude)
+        : new Set(rb?.mustInclude ?? []);
+
+      const hits = [...goldSet].filter(
+        (id) => relevantIds.has(id) || pinnedIds.has(id),
+      ).length;
+
+      const retrievalRecall = goldSet.size === 0 ? null : hits / goldSet.size;
+      const retrievalPrecision =
+        relevantIds.size === 0 ? null : hits / relevantIds.size;
+
       sessionReport.push({
         caseId: sessionCase.caseId,
+        category: "Session-level noise isolation",
         turnIndex: turn.turnIndex,
         label: turn.label,
         expandedQuery: ctx.expandedQuery,
@@ -733,6 +797,9 @@ for (const sessionCase of sessionCases) {
             ? extractClauses(s.scoreDetails as ScoreNode, s.id)
             : [],
         })),
+        retrievalPrecision,
+        retrievalRecall,
+        retrievalLatencyMs: Math.round((buildEnd - buildStart) * 100) / 100,
       });
 
       if (failures.length > 0) {
@@ -809,7 +876,7 @@ for (const sessionCase of sessionCases) {
         const probeAlias =
           addAliases && addAliases.length > 0
             ? addAliases[0].trim().toLowerCase()
-            : (setCanonicalName ?? beliefId);
+            : setCanonicalName ?? beliefId;
 
         await retryUntilReady(
           async () => {

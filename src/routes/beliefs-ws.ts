@@ -123,7 +123,7 @@ export function registerBeliefsWsRoute(
   const { beliefs: col, fileMeta, userId, beliefWriter } = deps;
 
   app.get("/v1/ws/beliefs", { websocket: true }, (socket: WebSocket, _req) => {
-    let currentScope: string | null = null;
+    //let currentScope: string | null = null;
 
     registry.add(userId, socket);
 
@@ -143,10 +143,10 @@ export function registerBeliefsWsRoute(
       }
 
       switch (msg.type) {
-        case "subscribe": {
+        /* case "subscribe": {
           currentScope = msg.scope;
           break;
-        }
+        } */
 
         case "fetch_beliefs": {
           try {

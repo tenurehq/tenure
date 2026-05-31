@@ -6,6 +6,61 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.18] - 2026-05-31
+
+### Added
+
+- **Injection audit logging** (`src/routes/chat.ts`): A new optional `injectionAudit` field on `ChatDeps` accepts an `InjectionAuditLogger` instance. When configured and beliefs are present in the context (`beliefCtx.beliefCount > 0`), the chat route fires a non-blocking audit log entry per request recording the user ID, session ID, request ID, user query, expanded query, scope, agent ID, injection state, and the full belief context.
+- **Audit nav link in Beliefs UI** (`src/routes/beliefs-ui.ts`): A new "Audit" navigation link pointing to `/audit` has been added to the nav bar between "Settings" and "Onboarding".
+- **`InternalLLMCaller` type imported in beliefs route** (`src/routes/beliefs.ts`): The beliefs import route now casts the adapter to `InternalLLMCaller` before invoking the LLM, aligning with the new internal call signature.
+- **`expandRelationParticipants` method on `BeliefsReader`** (`src/context/beliefsReader.ts`): New async method that, given a set of scored beliefs, finds all `relation`-typed beliefs among them, collects their `participants` IDs, and fetches the corresponding participant beliefs from MongoDB. Applies standard active-belief filters (`resolved_at: null`, `superseded_by: null`, excludes `open_question`), optional scope restriction, and agent isolation via the existing `mergeFilter` helper. IDs already present in `excludeIds` are skipped to avoid returning duplicates.
+
+- **Relation participant expansion in `ContextBuilder.build`** (`src/context/contextBuilder.ts`): After the primary BM25 search, `expandRelationParticipants` is now called on the raw search results to fetch beliefs that are participants of any returned `relation` beliefs. The expanded participants are merged into `allRelevant` with a `_searchScore` of `0`, included in `searchScores`, and subject to the same cap and projection logic as directly-retrieved beliefs. Both the pinned ID set and the direct search result IDs are passed as `excludeIds` to prevent duplication.
+
+- **`rawPinnedFacts`, `rawRelevantBeliefs`, and `rawOpenQuestions` fields on `BuiltContext`** (`src/context/contextBuilder.ts`): The `BuiltContext` interface now exposes the raw `Belief[]` arrays for pinned facts, relevant beliefs, and open questions in addition to their JSON-serialized counterparts. These are populated from `cappedPinned`, `cappedRelevant`, and `questions` respectively.
+
+- **`EMPTY_CONTEXT` exported from `contextBuilder.ts`** (`src/context/contextBuilder.ts`): A fully populated `EMPTY_CONTEXT` constant (including the new `rawPinnedFacts`, `rawRelevantBeliefs`, and `rawOpenQuestions` empty arrays) is now exported from the module, replacing the previously inline-defined constant in `chat.ts`.
+
+- **Early return guard in `BeliefsReader.searchText`** (`src/context/beliefsReader.ts`): A `if (limit <= 0) return []` guard is added before the aggregation pipeline is constructed, short-circuiting the Atlas Search call entirely when the budget allows zero results.
+
+- **`expandRelationParticipants` stub in context builder test fixture** (`src/context/beliefsAndContext.test.ts`): The `makeReader` helper now includes a `sinon.stub().resolves([])` for `expandRelationParticipants` so the stub satisfies the updated `BeliefsReader` interface.
+
+### Changed
+
+- **`turnId` renamed to `requestId` throughout chat route** (`src/routes/chat.ts`): The per-request UUID previously named `turnId` is now `requestId` at all call sites, including SSE frame IDs (`chatcmpl-${requestId}`), error log fields, streaming context, `tenure` response envelope, and side effects input. The `tenure` response envelope field is correspondingly renamed from `turn_id` to `request_id`.
+- **`HistoryManager` removed from `ChatDeps` and all chat route wiring** (`src/routes/chat.ts`, `src/routes/chat-integration.test.ts`): The `history` field has been removed from `ChatDeps`. Turn persistence (`appendTurn`, `getCompactedWindow`) is no longer called from the chat route or its side effects. All test fixtures that previously passed `history: new HistoryManager(db)` have been updated accordingly.
+- **`runSideEffects` and `buildSystemPrompt` extracted to shared modules** (`src/routes/chat.ts`): Both functions, along with their associated interfaces (`SideEffectInput`, `BuildSystemPromptArgs`) and helpers (`readSidecarFlags`, `tryReadTurnSignal`, `extractLatestUserText`), have been removed from `chat.ts` and are now imported from `./shared/sideEffects.js` and `../context/systemPromptBuilder.js` respectively. `EMPTY_CONTEXT` is now imported from `../context/contextBuilder.js`.
+- **`ProviderAdapter` replaced with `OpenAIAdapter` as the concrete adapter type** (`src/routes/chat.ts`, `src/routes/chat-integration.test.ts`): The chat route and all test helpers now use `OpenAIAdapter` as the adapter type instead of the generic `ProviderAdapter` interface. `NormalizedResponse` is no longer imported; the response type is now inferred as `Awaited<ReturnType<OpenAIAdapter["call"]>>`, and the `provider` field has been dropped from stub responses.
+- **Provider adapter call signature updated to positional arguments** (`src/routes/chat.ts`, `src/routes/beliefs.ts`, `src/routes/onboarding.ts`): All `adapter.call(...)` and `adapter.callStream(...)` invocations have been updated from a single `NormalizedRequest` object to positional arguments `(model, systemPrompt, messages, body, [abortSignal])`, matching the new `InternalLLMCaller` / `OpenAIAdapter` interface. An `adapterBody` object is now assembled from `passThrough`, `temperature`, and `max_tokens` before the call.
+- **`context.build` is now always called** (`src/routes/chat.ts`): The `injectionEnabled` guard around `deps.context.build(...)` has been removed. Context is always assembled; the `injectionEnabled` flag is instead applied when passing `beliefCtx` to `buildSystemPrompt` (substituting `EMPTY_CONTEXT` when injection is off). This eliminates the prior `Promise.all` wrapper.
+- **`activePackage` removed from chat route and streaming context** (`src/routes/chat.ts`): The `activePackage` local variable and the corresponding `StreamingCtx` field have been removed. Side effects and IDE workspace context resolution no longer reference `activePackage`.
+- **`injectionEnabled` removed from `StreamingCtx`** (`src/routes/chat.ts`): The field is no longer threaded into the streaming context or passed to `runSideEffects`.
+- **`turnSignal` removed from side effects** (`src/routes/chat.ts`): `tryReadTurnSignal` is no longer called in either the streaming or non-streaming paths. The `turnSignal` field is no longer passed to `runSideEffects`.
+- **`tool_calls` removed from non-streaming assistant message** (`src/routes/chat.ts`): The conditional spread of `providerResp.toolCalls` onto the assistant message in the non-streaming response has been removed.
+- **`tool_call_delta` SSE forwarding removed from streaming path** (`src/routes/chat.ts`): The `tool_call_delta` event handling block in `handleStreamingResponse` has been removed. The streaming loop now only processes `stream_end` (to capture resolved model, finish reason, and usage) and content delta events.
+- **Streaming event loop simplified** (`src/routes/chat.ts`): `stream_end` is now handled first with a `continue`, and all remaining events are treated as content deltas directly, removing the previous `event.type === "content_delta" && event.delta` guard.
+- **Streaming `abortSignal` passed directly to `callStream`** (`src/routes/chat.ts`): The `abortableReq` intermediate object is gone. The abort signal is now passed as a direct positional argument to `adapter.callStream(...)`.
+- **`subscribe` message handling disabled in WebSocket beliefs route** (`src/routes/beliefs-ws.ts`): The `currentScope` variable and the `subscribe` case in the message switch have been commented out, effectively disabling scope-scoped subscription filtering.
+- **Onboarding adapter calls updated to `InternalLLMCaller` signature** (`src/routes/onboarding.ts`): Both the model-validation probe call and the onboarding extraction call now cast the adapter to `InternalLLMCaller` and use positional arguments.
+- **`searchText` in `ContextBuilder` skips the search when `maxBeliefs` is zero** (`src/context/contextBuilder.ts`): The search is now gated on both `expandedQuery` being truthy and `this.budget.maxBeliefs > 0`, avoiding a redundant Atlas Search round trip when the budget is exhausted.
+
+- **`searchResultIds` set now built from `allRelevant`** (`src/context/contextBuilder.ts`): The set used to distinguish pinned from search-retrieved beliefs when selecting a projection function is now derived from the full `allRelevant` array (direct results plus relation expansions) rather than only `rawSearchResults`.
+
+- **`PersonaSummaryService` adapter type updated to `InternalLLMCaller`** (`src/context/personaSummary.ts`): The `adapter` factory in `PersonaGeneratorDeps` now returns `InternalLLMCaller` instead of `ProviderAdapter`, and the `adapter.call(...)` invocation is updated to use positional arguments `(modelId, systemPrompt, messages, options)` matching the new internal call signature.
+
+### Removed
+
+- **History-related integration tests removed** (`src/routes/chat-integration.test.ts`): The test cases have been deleted as turn persistence is no longer part of the chat route's responsibility.
+- **`tryReadTurnSignal` function removed** (`src/routes/chat.ts`): No longer needed after turn signal tracking was moved out of the chat route.
+- **`readSidecarFlags` and `SidecarFlags` removed from chat route** (`src/routes/chat.ts`): Moved to the shared side effects module.
+- **`EMPTY_CONTEXT` constant removed from chat route** (`src/routes/chat.ts`): Now imported from `contextBuilder.js`.
+- **`extractLatestUserText` removed from chat route** (`src/routes/chat.ts`): Moved to shared helpers.
+- **`buildSystemPrompt` and `BuildSystemPromptArgs` removed from chat route** (`src/routes/chat.ts`): Extracted to `src/context/systemPromptBuilder.ts`.
+- **`runSideEffects` and `SideEffectInput` removed from chat route** (`src/routes/chat.ts`): Extracted to `src/routes/shared/sideEffects.ts`.
+- **`src/context/beliefsReaderVector.ts` deleted**: The `BeliefsReaderVector` class, `ollamaEmbed` function, `beliefEmbedText` helper, `VectorSearchOptions` interface, and associated Ollama/vector search constants (`OLLAMA_BASE_URL`, `EMBED_MODEL`, `VECTOR_DIMENSIONS`, `VECTOR_INDEX_NAME`) have been removed entirely. Ollama-based vector search is no longer part of the belief retrieval pipeline.
+
+---
+
 ## [1.0.17] - 2026-05-22
 
 ### Added

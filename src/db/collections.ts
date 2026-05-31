@@ -9,6 +9,7 @@ import type {
   CompactionLogEntry,
   BeliefContradiction,
 } from "../jobs/compactionRunner.js";
+import type { InjectionAuditRecord } from "../types/injectionAudit.js";
 
 export interface ConfigDoc {
   _id: string;
@@ -59,6 +60,7 @@ export interface Collections {
   contradictions: Collection<BeliefContradiction>;
   onboarding_drafts: Collection<OnboardingDraftDoc>;
   file_meta: Collection<FileMetaDoc>;
+  injection_audit: Collection<InjectionAuditRecord>;
 }
 
 export function getCollections(db: Db, plainDb?: Db): Collections {
@@ -78,5 +80,6 @@ export function getCollections(db: Db, plainDb?: Db): Collections {
     contradictions: db.collection<BeliefContradiction>("belief_contradictions"),
     onboarding_drafts: db.collection<OnboardingDraftDoc>("onboarding_drafts"),
     file_meta: db.collection<FileMetaDoc>("file_meta"),
+    injection_audit: db.collection<InjectionAuditRecord>("injection_audit"),
   };
 }

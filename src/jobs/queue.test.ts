@@ -90,7 +90,6 @@ test("inserted job persists all EnqueueParams fields", async (t) => {
   const params = makeParams({
     userId: "user-42",
     sessionId: "sess-abc",
-    turnId: "turn-xyz",
     userMessage: "What is AI?",
     assistantMessage: "It stands for artificial intelligence.",
     sidecarRaw: '{"turn_signal":"substantive"}',
@@ -102,7 +101,6 @@ test("inserted job persists all EnqueueParams fields", async (t) => {
   const job = await col.findOne({ _id: id });
   t.is(job!.user_id, "user-42");
   t.is(job!.session_id, "sess-abc");
-  t.is(job!.turn_id, "turn-xyz");
   t.is(job!.payload.user_message, "What is AI?");
   t.is(
     job!.payload.assistant_message,
