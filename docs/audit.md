@@ -31,12 +31,31 @@ Open [http://localhost:5757/audit](http://localhost:5757/audit) in your
 browser. You can filter by:
 
 - **Date range** - narrow to a specific window
-- **Scope** - e.g. `project:my-app`
+- **Scope** - select from a dropdown of all scopes seen in your audit history
 - **Belief ID** - see every request where a specific belief appeared
 
 Click any record to see the full detail view, including belief content,
 confidence, epistemic status, and why-it-matters annotations as they
 were at injection time.
+
+You can also reach this filtered view by clicking the Injections button on any belief card in the World Model dashboard.
+
+## Orientation tax dashboard
+
+The dashboard at the top of the audit page shows four measurements for
+the last 30 days:
+
+- **Re-explanations prevented** — turns where beliefs were injected and
+  the next turn was not a correction. A floor, not a ceiling: silent
+  failures where the model quietly used stale context are not visible here.
+- **Estimated time saved** — re-explanations prevented × 1 minute.
+  Labeled as estimated because the true cost of a correction turn varies.
+- **Tax still paid** — turns where the sidecar determined your message
+  existed primarily to re-establish context memory should have supplied.
+  This is the most directly observed number on the dashboard.
+- **Re-explanation trend** — whether tax-paid turns are increasing or
+  decreasing across the period. Down is good. `—` means not enough data
+  yet to compute a direction.
 
 ## API access
 

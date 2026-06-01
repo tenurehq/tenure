@@ -269,6 +269,22 @@ export class BeliefCompactionRunner {
 
     const cooldownMs = this.options.cooldownMs ?? config.cooldownMs;
 
+    const taxWindow = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const taxHotScopes = await this.beliefs.db
+      .collection("orientation_tax_events")
+      .distinct("scopes", {
+        user_id: userId,
+        created_at: { $gte: taxWindow },
+      })
+      .catch(() => [] as string[]);
+
+    const taxHotSet = new Set(taxHotScopes);
+
+    const reducedThreshold =
+      taxHotSet.size > 0
+        ? Math.floor(config.threshold * 0.6)
+        : config.threshold;
+
     const [countsByPartition, recentRuns] = await Promise.all([
       this.beliefs
         .aggregate<{
@@ -283,7 +299,7 @@ export class BeliefCompactionRunner {
               count: { $sum: 1 },
             },
           },
-          { $match: { count: { $gte: config.threshold } } },
+          { $match: { count: { $gte: reducedThreshold } } },
         ])
         .toArray(),
       this.compactionLog
@@ -300,7 +316,13 @@ export class BeliefCompactionRunner {
     const recentScopes = new Set(recentRuns.map((r) => r.scope));
 
     return countsByPartition
-      .filter((p) => !recentScopes.has(p._id.scope))
+      .filter((p) => {
+        if (recentScopes.has(p._id.scope)) return false;
+        const effectiveThreshold = taxHotSet.has(p._id.scope)
+          ? reducedThreshold
+          : config.threshold;
+        return p.count >= effectiveThreshold;
+      })
       .map((p) => ({
         scope: p._id.scope,
         agentId: p._id.agent_id ?? null,

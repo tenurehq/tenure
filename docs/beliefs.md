@@ -51,6 +51,7 @@ From the dashboard you can:
 - Pin beliefs to keep them prioritized in every session
 - View the full change history per belief
 - Remove beliefs that are wrong or no longer relevant. They are marked superseded and hidden, recoverable from the Superseded filter.
+- View injection history: see how often and in what contexts a belief was surfaced, with pagination for high-volume beliefs
 
 ## Pinning
 

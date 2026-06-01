@@ -268,6 +268,23 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
       key: { user_id: 1, "injected_beliefs.relevant_beliefs._id": 1 },
       name: "audit_by_relevant_belief",
     },
+    {
+      key: { user_id: 1, orientation_tax: 1, created_at: -1 },
+      name: "audit_orientation_tax",
+    },
+  ]);
+
+  const taxEventsCol = cols.db.collection("orientation_tax_events");
+  await taxEventsCol.createIndexes([
+    {
+      key: { user_id: 1, scopes: 1, created_at: -1 },
+      name: "tax_events_scope",
+    },
+    {
+      key: { created_at: 1 },
+      expireAfterSeconds: 60 * 60 * 24 * 30,
+      name: "tax_events_ttl",
+    },
   ]);
 }
 

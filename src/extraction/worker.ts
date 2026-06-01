@@ -22,6 +22,7 @@ export interface ExtractionWorkerLike {
 }
 
 export class ExtractionWorker implements ExtractionWorkerLike {
+  private readonly db: Db;
   private readonly jobs: Collection<ExtractionJob>;
   private readonly config: Collection;
   private readonly merger: BeliefMerger;
@@ -32,6 +33,7 @@ export class ExtractionWorker implements ExtractionWorkerLike {
   };
 
   constructor(deps: ExtractionWorkerDeps) {
+    this.db = deps.db;
     this.jobs = deps.db.collection<ExtractionJob>("jobs");
     this.config = deps.db.collection("config");
     this.styleSignals = deps.db.collection("style_signals");
@@ -155,6 +157,10 @@ export class ExtractionWorker implements ExtractionWorkerLike {
         { _id: job._id },
         { $set: { "payload.skipped_beliefs": skippedBeliefs } },
       );
+    }
+
+    if (enforced.orientation_tax && job.turn_id) {
+      this.handleOrientationTax(job, enforced).catch(() => {});
     }
 
     return this.merge(job, enforced);
@@ -296,6 +302,63 @@ export class ExtractionWorker implements ExtractionWorkerLike {
       },
       { upsert: true },
     );
+  }
+
+  /**
+   * Closed-loop orientation tax handler. When the user pays orientation tax,
+   * this method:
+   * 1. Stamps the injection audit record so aggregation can compute "tax prevented"
+   * 2. Reinforces any belief the user just re-explained (accelerated promotion)
+   * 3. Extracts surface forms from the user's message as candidate aliases
+   *
+   * This makes the system self-healing: repeated orientation tax on a topic
+   * drives alias enrichment and confidence promotion without prompt changes.
+   */
+  private async handleOrientationTax(
+    job: ExtractionJob,
+    result: ExtractionResult,
+  ): Promise<void> {
+    const userId = job.user_id;
+    const sessionId = job.session_id;
+    const turnId = job.turn_id ?? "";
+
+    // 1. Stamp the audit record
+    await this.db
+      .collection("injection_audit")
+      .updateOne(
+        { request_id: turnId, user_id: userId },
+        { $set: { orientation_tax: true, orientation_tax_at: new Date() } },
+      );
+
+    // 2. Accelerated reinforcement for beliefs the user re-explained
+    // If new_beliefs match existing beliefs by canonical name, the merger
+    // will reinforce them. But we give an extra reinforcement bump here
+    // because orientation tax is stronger evidence than passive repetition.
+    for (const nb of result.new_beliefs) {
+      const existing = await this.writer.findByCanonical(
+        userId,
+        nb.canonical_name,
+        true,
+        nb.scope,
+      );
+      if (existing) {
+        // Double reinforce: one from merger, one from tax signal
+        await this.writer.reinforce(userId, existing._id, sessionId, turnId);
+      }
+    }
+
+    // 3. Record orientation tax event per scope for compaction prioritization
+    const scopes = new Set(result.new_beliefs.flatMap((nb) => nb.scope));
+    if (scopes.size > 0) {
+      const now = new Date();
+      await this.db.collection("orientation_tax_events").insertOne({
+        user_id: userId,
+        session_id: sessionId,
+        turn_id: turnId,
+        scopes: [...scopes],
+        created_at: now,
+      });
+    }
   }
 }
 

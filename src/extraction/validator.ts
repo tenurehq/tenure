@@ -3,13 +3,6 @@ import { parseExtractionResult } from "./types.js";
 
 const FENCE_RE = /^```(?:json)?\s*|\s*```$/gi;
 
-const VALID_TURN_SIGNALS = new Set([
-  "substantive",
-  "acknowledgment",
-  "clarification",
-  "correction",
-]);
-
 const VALID_BELIEF_TYPES = new Set([
   "entity",
   "relation",
@@ -77,13 +70,6 @@ function validateSchema(
   data: Record<string, unknown>,
 ): Array<{ index: number; error: string }> {
   const skipped: Array<{ index: number; error: string }> = [];
-
-  if (
-    data.turn_signal !== undefined &&
-    !VALID_TURN_SIGNALS.has(data.turn_signal as string)
-  ) {
-    throw new Error(`invalid turn_signal: ${data.turn_signal}`);
-  }
 
   if (data.new_beliefs !== undefined) {
     if (!Array.isArray(data.new_beliefs))

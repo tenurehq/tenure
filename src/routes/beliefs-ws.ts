@@ -6,11 +6,16 @@ import type { Belief } from "../types/belief.js";
 import type { FileMetaDoc } from "../db/collections.js";
 import { BeliefWriter } from "../extraction/beliefWriter.js";
 import type { WorkspaceStateCache } from "../workspace/stateCache.js";
+import type { RuntimeConfigStore } from "../config/runtime.js";
 
 export type ClientMessage =
   | { type: "subscribe"; scope: string }
-  | { type: "fetch_beliefs"; scope: string; active_file: string | null }
-  | { type: "fetch_file_beliefs"; file_path: string; scope: string }
+  | {
+      type: "fetch_categorized_beliefs";
+      scope: string;
+      active_file: string | null;
+    }
+  | { type: "fetch_toggles" }
   | {
       type: "patch_belief";
       id: string;
@@ -43,10 +48,19 @@ export type ClientMessage =
       git_remote: string | null;
       active_file: string | null;
       active_language: string | null;
-    };
+    }
+  | { type: "set_toggle"; toggle: "injection" | "extraction"; value: boolean }
+  | { type: "fetch_toggles" };
 
 export type ServerMessage =
-  | { type: "beliefs_snapshot"; beliefs: BeliefSummary[]; scope: string }
+  | {
+      type: "beliefs_categorized";
+      file: BeliefSummary[];
+      project: BeliefSummary[];
+      universal: BeliefSummary[];
+      scope: string;
+      active_file: string | null;
+    }
   | { type: "belief_upserted"; belief: BeliefSummary }
   | { type: "belief_superseded"; id: string }
   | {
@@ -60,6 +74,7 @@ export type ServerMessage =
   | { type: "patch_ack"; id: string; belief: BeliefSummary }
   | { type: "record_ack"; belief: BeliefSummary }
   | { type: "scope_confirmed"; scope: string; active_file: string | null }
+  | { type: "toggles_state"; injection: boolean; extraction: boolean }
   | { type: "error"; request_type: string; message: string };
 
 export interface BeliefSummary {
@@ -114,6 +129,7 @@ export interface BeliefsWsDeps {
   userId: string;
   beliefWriter: BeliefWriter;
   workspaceState: WorkspaceStateCache;
+  runtimeStore: RuntimeConfigStore;
 }
 
 export function registerBeliefsWsRoute(
@@ -147,54 +163,6 @@ export function registerBeliefsWsRoute(
           currentScope = msg.scope;
           break;
         } */
-
-        case "fetch_beliefs": {
-          try {
-            const filter: Record<string, unknown> = {
-              user_id: userId,
-              resolved_at: null,
-              superseded_by: null,
-              scope: { $in: [msg.scope] },
-            };
-
-            const docs = await col.find(filter).limit(30).toArray();
-            const beliefs = docs.map(redactForClient);
-
-            if (msg.active_file) {
-              const activeFile = msg.active_file;
-              beliefs.sort((a, b) => {
-                const tierA = fileTier(
-                  a.origin_context?.active_file ?? null,
-                  activeFile,
-                );
-                const tierB = fileTier(
-                  b.origin_context?.active_file ?? null,
-                  activeFile,
-                );
-                if (tierA !== tierB) return tierA - tierB;
-                if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-                return 0;
-              });
-            }
-
-            socket.send(
-              JSON.stringify({
-                type: "beliefs_snapshot",
-                scope: msg.scope,
-                beliefs,
-              } satisfies ServerMessage),
-            );
-          } catch (e) {
-            socket.send(
-              JSON.stringify({
-                type: "error",
-                request_type: "fetch_beliefs",
-                message: (e as Error).message,
-              } satisfies ServerMessage),
-            );
-          }
-          break;
-        }
 
         case "patch_belief": {
           try {
@@ -293,45 +261,6 @@ export function registerBeliefsWsRoute(
               } satisfies ServerMessage),
             );
           }
-          break;
-        }
-
-        case "fetch_file_beliefs": {
-          const [fileBeliefs, projectBeliefs] = await Promise.all([
-            col
-              .find({
-                user_id: userId,
-                resolved_at: null,
-                superseded_by: null,
-                "origin_context.active_file": msg.file_path,
-              })
-              .sort({ pinned: -1, last_reinforced_at: -1 })
-              .toArray(),
-            col
-              .find({
-                user_id: userId,
-                resolved_at: null,
-                superseded_by: null,
-                scope: { $in: [msg.scope] },
-                "origin_context.active_file": null,
-              })
-              .sort({ pinned: -1, last_reinforced_at: -1 })
-              .limit(30)
-              .toArray(),
-          ]);
-
-          const beliefs = [
-            ...fileBeliefs.map(redactForClient),
-            ...projectBeliefs.map(redactForClient),
-          ];
-
-          socket.send(
-            JSON.stringify({
-              type: "beliefs_snapshot",
-              scope: msg.scope,
-              beliefs,
-            } satisfies ServerMessage),
-          );
           break;
         }
 
@@ -505,6 +434,134 @@ export function registerBeliefsWsRoute(
           }
           break;
         }
+
+        case "fetch_categorized_beliefs": {
+          try {
+            const fileBeliefs: BeliefSummary[] = [];
+            if (msg.active_file) {
+              const fileDocs = await col
+                .find({
+                  user_id: userId,
+                  resolved_at: null,
+                  superseded_by: null,
+                  "origin_context.active_file": msg.active_file,
+                })
+                .sort({ pinned: -1, last_reinforced_at: -1 })
+                .toArray();
+              fileBeliefs.push(...fileDocs.map(redactForClient));
+            }
+
+            const projectDocs = await col
+              .find({
+                user_id: userId,
+                resolved_at: null,
+                superseded_by: null,
+                scope: { $in: [msg.scope] },
+                $or: [
+                  { "origin_context.active_file": null },
+                  { origin_context: null },
+                  { origin_context: { $exists: false } },
+                ],
+              })
+              .sort({ pinned: -1, last_reinforced_at: -1 })
+              .limit(30)
+              .toArray();
+
+            const fileIds = new Set(fileBeliefs.map((b) => b.id));
+            const projectBeliefs = projectDocs
+              .filter((d) => !fileIds.has(d._id))
+              .filter(
+                (d) =>
+                  !(d.scope.length === 1 && d.scope[0] === "user:universal"),
+              )
+              .map(redactForClient);
+
+            const universalDocs = await col
+              .find({
+                user_id: userId,
+                resolved_at: null,
+                superseded_by: null,
+                scope: { $in: ["user:universal"] },
+              })
+              .sort({ pinned: -1, last_reinforced_at: -1 })
+              .limit(20)
+              .toArray();
+
+            const projectIds = new Set(projectBeliefs.map((b) => b.id));
+            const universalBeliefs = universalDocs
+              .filter((d) => !fileIds.has(d._id) && !projectIds.has(d._id))
+              .map(redactForClient);
+
+            socket.send(
+              JSON.stringify({
+                type: "beliefs_categorized",
+                file: fileBeliefs,
+                project: projectBeliefs,
+                universal: universalBeliefs,
+                scope: msg.scope,
+                active_file: msg.active_file,
+              } satisfies ServerMessage),
+            );
+          } catch (e) {
+            socket.send(
+              JSON.stringify({
+                type: "error",
+                request_type: "fetch_categorized_beliefs",
+                message: (e as Error).message,
+              } satisfies ServerMessage),
+            );
+          }
+          break;
+        }
+
+        case "set_toggle": {
+          try {
+            const key =
+              msg.toggle === "injection"
+                ? ("injection_enabled" as const)
+                : ("extraction_enabled" as const);
+            await deps.runtimeStore.set(key, msg.value);
+            const cfg = await deps.runtimeStore.load();
+            socket.send(
+              JSON.stringify({
+                type: "toggles_state",
+                injection: cfg.injection_enabled,
+                extraction: cfg.extraction_enabled,
+              } satisfies ServerMessage),
+            );
+          } catch (e) {
+            socket.send(
+              JSON.stringify({
+                type: "error",
+                request_type: "set_toggle",
+                message: (e as Error).message,
+              } satisfies ServerMessage),
+            );
+          }
+          break;
+        }
+
+        case "fetch_toggles": {
+          try {
+            const cfg = await deps.runtimeStore.load();
+            socket.send(
+              JSON.stringify({
+                type: "toggles_state",
+                injection: cfg.injection_enabled,
+                extraction: cfg.extraction_enabled,
+              } satisfies ServerMessage),
+            );
+          } catch (e) {
+            socket.send(
+              JSON.stringify({
+                type: "error",
+                request_type: "fetch_toggles",
+                message: (e as Error).message,
+              } satisfies ServerMessage),
+            );
+          }
+          break;
+        }
       }
     });
 
@@ -544,4 +601,8 @@ function fileTier(
   const activeDir = activeFile.split("/").slice(0, -1).join("/");
   if (beliefDir === activeDir) return 2;
   return 3;
+}
+
+function isUniversalOnly(scope: string[]): boolean {
+  return scope.length === 1 && scope[0] === "user:universal";
 }

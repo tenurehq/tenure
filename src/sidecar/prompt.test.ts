@@ -18,11 +18,6 @@ test("output is a non-empty trimmed string", (t) => {
   t.true(out.length > 0);
 });
 
-test("output includes turn_signal schema documentation", (t) => {
-  const out = buildSidecarInstructions();
-  t.true(out.includes("turn_signal"));
-});
-
 test("output mentions the omit rule for unclear beliefs", (t) => {
   const out = buildSidecarInstructions();
   t.true(out.includes("If you cannot write it clearly, omit the belief."));

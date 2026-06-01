@@ -55,10 +55,6 @@ async function* sseLines(
   }
 }
 
-//
-
-//
-
 export class TenureLmProvider
   implements
     vscode.LanguageModelChatProvider<vscode.LanguageModelChatInformation>

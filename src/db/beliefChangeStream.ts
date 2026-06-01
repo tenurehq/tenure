@@ -7,6 +7,7 @@ const MAX_RETRY_MS = 30_000;
 
 export function startBeliefChangeStream(
   col: Collection<Belief>,
+  encryptedCol: Collection<Belief>,
   userId: string,
 ): () => void {
   let stopped = false;
@@ -15,9 +16,6 @@ export function startBeliefChangeStream(
 
   function open(): void {
     if (stopped) return;
-    // Filter to only documents owned by this user so we never broadcast
-    // across tenant boundaries. superseded_by becoming non-null is what
-    // the compaction runner sets; we surface that as belief_superseded.
     const pipeline = [
       {
         $match: {
@@ -27,10 +25,6 @@ export function startBeliefChangeStream(
             { operationType: "replace" },
             { operationType: "delete" },
           ],
-          // fullDocument.user_id is only present on insert/replace/update
-          // with fullDocument; for delete we rely on ns filter instead
-          // since the document is gone. userId is single-tenant here so
-          // all documents in this collection belong to the same user.
         },
       },
     ];
@@ -40,13 +34,16 @@ export function startBeliefChangeStream(
       ...(resumeToken ? { resumeAfter: resumeToken } : {}),
     });
 
-    stream.on("change", (event) => {
+    stream.on("change", async (event) => {
       resumeToken = event._id;
       attempt = 0;
 
       if (event.operationType === "insert") {
-        const doc = event.fullDocument;
-        if (!doc || doc.user_id !== userId) return;
+        const doc = await encryptedCol.findOne({
+          _id: event.documentKey._id,
+          user_id: userId,
+        });
+        if (!doc) return;
         registry.broadcast(userId, {
           type: "belief_upserted",
           belief: redactForClient(doc),
@@ -58,8 +55,11 @@ export function startBeliefChangeStream(
         event.operationType === "update" ||
         event.operationType === "replace"
       ) {
-        const doc = event.fullDocument;
-        if (!doc || doc.user_id !== userId) return;
+        const doc = await encryptedCol.findOne({
+          _id: event.documentKey._id,
+          user_id: userId,
+        });
+        if (!doc) return;
 
         if (doc.superseded_by != null) {
           registry.broadcast(userId, {

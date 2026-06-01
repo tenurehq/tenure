@@ -22,12 +22,9 @@ async function maybeSeedAgent(
     const cfg = await client.getConfig();
     if (cfg[`seeded_agent:${agentId}`] === true) return;
   } catch {
-    // Tenure unreachable — skip silently, will retry next turn
     return;
   }
 
-  // If BOOTSTRAP.md exists the agent hasn't finished its first-run ritual yet.
-  // USER.md and MEMORY.md may still be empty templates — wait for next turn.
   const bootstrapPath = join(workspaceDir, "BOOTSTRAP.md");
   if (existsSync(bootstrapPath)) return;
 
@@ -41,9 +38,7 @@ async function maybeSeedAgent(
       if (content.length > 0) {
         chunks.push(`## ${filename}\n\n${content}`);
       }
-    } catch {
-      // unreadable — skip
-    }
+    } catch {}
   }
 
   if (chunks.length === 0) {
@@ -106,9 +101,7 @@ export default definePluginEntry({
             agentId,
           );
           maybeSeedAgent(agentId, workspaceDir, client, logger).catch(() => {});
-        } catch {
-          // workspace resolution failed — seeding will retry on next turn
-        }
+        } catch {}
       },
       { priority: 0 },
     );
@@ -137,9 +130,7 @@ export default definePluginEntry({
                 () => {},
               );
             }
-          } catch {
-            // workspace resolution failed — seeding will retry next turn
-          }
+          } catch {}
         }
 
         return {
