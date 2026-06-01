@@ -8,6 +8,16 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.0.20]
 
+### Removed
+
+- **`fileTier` helper function removed** (`src/routes/beliefs-ws.ts`): The unused `fileTier` function, which ranked beliefs by file proximity (same file, same directory, or other), has been deleted.
+- **`isUniversalOnly` helper function removed** (`src/routes/beliefs-ws.ts`): The unused helper that checked whether a scope array contained only `"user:universal"` has been deleted.
+- **`TurnSignal` type import removed** (`src/sidecar/splitter.ts`): The `import type { TurnSignal }` from `"../history/manager.js"` has been removed, as `TurnSignal` is no longer referenced in the splitter module.
+
+---
+
+## [1.0.19]
+
 ### Added
 
 - **Orientation tax dashboard on audit page**: The top of `/audit` now shows a four-metric panel for the last 30 days: re-explanations prevented, estimated time saved, tax still paid, and a re-explanation trend indicator. A coverage-rate progress bar appears when there is injection data to show.
