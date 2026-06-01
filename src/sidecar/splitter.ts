@@ -1,5 +1,3 @@
-import type { TurnSignal } from "../history/manager.js";
-
 export const SIDECAR_BEGIN = "<<<SIDECAR_JSON>>>";
 export const SIDECAR_END = "<<<END_SIDECAR>>>";
 

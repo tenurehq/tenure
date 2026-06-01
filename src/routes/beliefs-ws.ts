@@ -590,19 +590,3 @@ export function redactForClient(b: WithId<Belief>): BeliefSummary {
     ...(b.origin_context != null ? { origin_context: b.origin_context } : {}),
   };
 }
-
-function fileTier(
-  beliefFile: string | null | undefined,
-  activeFile: string,
-): number {
-  if (!beliefFile) return 3;
-  if (beliefFile === activeFile) return 1;
-  const beliefDir = beliefFile.split("/").slice(0, -1).join("/");
-  const activeDir = activeFile.split("/").slice(0, -1).join("/");
-  if (beliefDir === activeDir) return 2;
-  return 3;
-}
-
-function isUniversalOnly(scope: string[]): boolean {
-  return scope.length === 1 && scope[0] === "user:universal";
-}
