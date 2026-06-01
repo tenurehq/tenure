@@ -242,6 +242,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     userId: deps.userId,
     beliefWriter: new BeliefWriter(deps.cols.beliefs),
     workspaceState: deps.workspaceState,
+    runtimeStore: deps.runtimeStore,
   });
 
   await app.register(fastifySchedule);
@@ -355,7 +356,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     .catch(() => false);
 
   const stopChangeStream = isReplicaSet
-    ? startBeliefChangeStream(deps.cols.beliefs_plain, deps.userId)
+    ? startBeliefChangeStream(
+        deps.cols.beliefs_plain,
+        deps.cols.beliefs,
+        deps.userId,
+      )
     : null;
 
   app.addHook("onClose", (_instance, done) => {

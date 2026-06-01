@@ -4,12 +4,6 @@ export type ChangeKind =
   | "superseded"
   | "enriched";
 
-export type TurnSignal =
-  | "substantive"
-  | "acknowledgment"
-  | "clarification"
-  | "correction";
-
 export type StyleConfidence = "low" | "medium" | "high";
 
 export type BeliefTypeStr =
@@ -69,7 +63,7 @@ export interface StyleSignal {
 }
 
 export interface ExtractionResult {
-  turn_signal: TurnSignal;
+  orientation_tax: boolean;
   new_beliefs: NewBelief[];
   belief_updates: BeliefUpdateSignal[];
   entity_updates: EntityUpdate[];
@@ -83,7 +77,7 @@ export function parseExtractionResult(
   raw: Record<string, unknown>,
 ): ExtractionResult {
   return {
-    turn_signal: (raw.turn_signal as TurnSignal) ?? "substantive",
+    orientation_tax: raw.orientation_tax === true,
     new_beliefs: ((raw.new_beliefs as any[]) ?? []).map(parseNewBelief),
     belief_updates: ((raw.belief_updates as any[]) ?? []).map(
       parseBeliefUpdate,

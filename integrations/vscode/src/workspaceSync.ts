@@ -294,40 +294,28 @@ export class WorkspaceSync {
       return;
     } catch {}
 
+    const tenureConfig = await readTenureConfig(workspaceRoot);
+    const gitRemote = resolveGitRemote(workspaceRoot);
+    if (!tenureConfig && !gitRemote) return;
+
     await this.context.globalState.update("tenure.tenureFilePromptShown", true);
 
     const action = await vscode.window.showInformationMessage(
-      "Tenure: No `.tenure` file found. Create one to enable project-scoped memory?",
-      "Create `.tenure`",
+      "Tenure: No `.tenure` file found. Preview one to enable project-scoped memory?",
+      "Preview `.tenure`",
       "Remind me later",
     );
 
-    if (action !== "Create `.tenure`") return;
+    if (action !== "Preview `.tenure`") return;
 
     const inferredName =
       this.cachedProjectName ?? slugify(path.basename(workspaceRoot.fsPath));
 
-    const contents = [
-      `[project]`,
-      `name = "${inferredName}"`,
-      `# description = "What this project does"`,
-      ``,
-      `[context]`,
-      `# stack = ["typescript", "node"]`,
-      `# ignore = ["dist/**", "*.generated.ts"]`,
-      ``,
-    ].join("\n");
-
-    await vscode.workspace.fs.writeFile(
-      tenureFileUri,
-      Buffer.from(contents, "utf8"),
-    );
-
-    const doc = await vscode.workspace.openTextDocument(tenureFileUri);
+    const doc = await vscode.workspace.openTextDocument({
+      content: inferredName,
+      language: "plaintext",
+    });
     await vscode.window.showTextDocument(doc);
-
-    this.invalidateManifestCache();
-    this.scheduleSync();
   }
 
   private async migrateScope(

@@ -6,6 +6,38 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.19]
+
+### Added
+
+- **Categorized beliefs sidebar**: The beliefs panel now groups beliefs into three sections -- **This File**, **Project**, and **Universal** -- rather than showing a flat list. The active filename is displayed as a section label when file-level beliefs are present.
+- **Injection and Extraction toggles**: The sidebar now shows toggle switches for Belief Injection and Belief Extraction. Changes take effect immediately and are reflected across all connected clients.
+- **Scope selector in Record Belief form**: When manually recording a belief, you can now choose whether to scope it to the current file, the project, or universally, via a segmented button control.
+- **`fetch_categorized_beliefs` WebSocket message**: The extension now sends a single `fetch_categorized_beliefs` request instead of the previous separate `fetch_beliefs` / `fetch_file_beliefs` pair. The server responds with a `beliefs_categorized` message containing pre-separated file, project, and universal arrays.
+- **`set_toggle` and `fetch_toggles` WebSocket messages**: New client messages allow the sidebar to read and write injection/extraction toggle state directly over the WebSocket connection.
+- **`toggles_state` server message handling**: The webview now listens for `toggles_state` messages and updates the toggle checkboxes in real time when the state changes from any source.
+
+### Changed
+
+- **`pushState` replaced by `pushCategorizedState`** (`beliefsViewProvider.ts`): The internal method that posts beliefs to the webview now sends a `categorized_state` message with `file`, `project`, and `universal` arrays plus a `totalActive` count, instead of a flat `state` message with a single `beliefs` array. Legacy `state` messages are still handled in the webview for backward compatibility.
+- **`fetch_file_beliefs` removed from client and server**: All file-belief fetching is now handled through `fetch_categorized_beliefs`. The old `fetch_file_beliefs` handler has been removed from the WebSocket route.
+- **`fetch_beliefs` removed from client and server**: Replaced entirely by `fetch_categorized_beliefs`.
+- **Active file now tracked on `updateFileBeliefs`** (`beliefsViewProvider.ts`): `currentActiveFile` is set at the point a file-switch is detected, ensuring the correct file context is used when categorizing beliefs client-side after incremental updates.
+- **Client-side categorization on incremental updates**: When a `belief_upserted`, `belief_superseded`, `record_ack`, or `patch_ack` message arrives, beliefs are now re-categorized locally using `categorizeBeliefsClientSide` before pushing to the webview, keeping sections consistent without a round-trip.
+- **`.tenure` file prompt changed to preview mode** (`workspaceSync.ts`): The prompt now offers to open a preview of the file content in an unsaved editor rather than writing the file to disk immediately. The prompt is also gated on the workspace having a detectable git remote or existing Tenure config.
+- **Scope filter on audit page changed to a dropdown** (`audit-ui.ts`): The free-text scope filter input has been replaced with a `<select>` populated from `/admin/audit/scopes`, listing only scopes that have actually appeared in your audit history.
+- **Pinned belief border color updated**: Pinned cards now use `var(--vscode-foreground)` for the left border accent instead of `var(--vscode-charts-green)`.
+- **Record Belief form resets scope selection on close**: Closing or submitting the form resets the scope selector back to "Project".
+
+### Removed
+
+- **`beliefs_snapshot` WebSocket message**: Superseded by `beliefs_categorized`. The server no longer emits `beliefs_snapshot` in response to any client message.
+- **`fetch_beliefs` and `fetch_file_beliefs` client/server message types**: Removed from both the TypeScript types and the WebSocket handler switch.
+- **`pushState` method** (`beliefsViewProvider.ts`): Replaced by `pushCategorizedState`.
+- **`tryReadTurnSignal` function** (`splitter.ts`): Removed along with the `turn_signal` field. The extraction schema now uses `orientation_tax: boolean` in place of the previous `turn_signal` enum.
+
+---
+
 ## [1.0.18] - 2026-05-22
 
 ### Added

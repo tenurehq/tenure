@@ -81,4 +81,69 @@ export function registerAuditRoutes(
       return { record };
     },
   );
+
+  app.get("/admin/audit/scopes", async () => {
+    const raw = await deps.injectionAudit.distinct("scope", {
+      user_id: deps.userId,
+    });
+    const scopes = [...new Set(raw.flat().filter(Boolean))].sort();
+    return { scopes };
+  });
+
+  app.get<{ Querystring: { days?: string } }>(
+    "/admin/audit/orientation-tax",
+    async (req) => {
+      const days = Math.min(parseInt(req.query.days ?? "30", 10) || 30, 365);
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+      const baseFilter = {
+        user_id: deps.userId,
+        created_at: { $gte: since },
+      };
+
+      const midpoint = new Date(
+        since.getTime() + (days * 24 * 60 * 60 * 1000) / 2,
+      );
+
+      const [taxPaid, totalWithBeliefs, taxPaidFirstHalf, taxPaidSecondHalf] =
+        await Promise.all([
+          deps.injectionAudit.countDocuments({
+            ...baseFilter,
+            orientation_tax: true,
+          }),
+          deps.injectionAudit.countDocuments({
+            ...baseFilter,
+            belief_count: { $gt: 0 },
+            injected: true,
+          }),
+          deps.injectionAudit.countDocuments({
+            user_id: deps.userId,
+            created_at: { $gte: since, $lt: midpoint },
+            orientation_tax: true,
+          }),
+          deps.injectionAudit.countDocuments({
+            user_id: deps.userId,
+            created_at: { $gte: midpoint },
+            orientation_tax: true,
+          }),
+        ]);
+
+      const taxPrevented = Math.max(0, totalWithBeliefs - taxPaid);
+      const taxRatePctChange =
+        taxPaidFirstHalf > 0 && taxPaidSecondHalf >= 0
+          ? Math.round(
+              ((taxPaidSecondHalf - taxPaidFirstHalf) / taxPaidFirstHalf) * 100,
+            )
+          : null;
+
+      return {
+        period_days: days,
+        orientation_tax_paid: taxPaid,
+        orientation_tax_prevented: taxPrevented,
+        total_injected_turns: totalWithBeliefs,
+        tax_rate_trend_pct: taxRatePctChange,
+        estimated_minutes_saved: taxPrevented,
+      };
+    },
+  );
 }

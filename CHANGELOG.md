@@ -6,6 +6,35 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.20]
+
+### Added
+
+- **Orientation tax dashboard on audit page**: The top of `/audit` now shows a four-metric panel for the last 30 days: re-explanations prevented, estimated time saved, tax still paid, and a re-explanation trend indicator. A coverage-rate progress bar appears when there is injection data to show.
+- **`/admin/audit/orientation-tax` endpoint**: Returns aggregated orientation tax stats for a configurable window (up to 365 days), including first-half/second-half split for trend calculation.
+- **`/admin/audit/scopes` endpoint**: Returns a sorted, deduplicated list of all scopes that have appeared in your audit history, used to populate the new scope filter dropdown.
+- **Belief injection history on the World Model dashboard**: Each belief card now has an "Injections" button that opens a paginated modal showing every conversation the belief was surfaced in, including the triggering query, date, scope, and agent. Links directly to the full audit trail filtered to that belief.
+- **Orientation tax closed-loop handler** (`ExtractionWorker`): When `orientation_tax` is true on an extracted turn, the worker stamps the injection audit record, applies an extra reinforcement bump to any beliefs the user just re-explained, and writes a scoped `orientation_tax_events` record for compaction prioritization.
+- **Orientation-tax-aware compaction scheduling** (`BeliefCompactionRunner`): Scopes with orientation tax events in the last 7 days receive a 40% reduced compaction threshold, causing Tenure to compact and resolve beliefs in those scopes sooner.
+- **`orientation_tax_events` collection with TTL index**: Events expire after 30 days. Indexed by `user_id`, `scopes`, and `created_at` for efficient compaction and dashboard queries.
+- **`audit_orientation_tax` index on `injection_audit`**: Compound index on `(user_id, orientation_tax, created_at)` for efficient dashboard aggregation.
+
+### Changed
+
+- **`turn_signal` replaced by `orientation_tax: boolean`** across the extraction pipeline: `TurnSignal` enum type, `VALID_TURN_SIGNALS` validator set, `turnSignal` field on `MergeReport`, `tryReadTurnSignal` function in `splitter.ts`, and all sidecar prompt templates have been removed or replaced. The extraction schema now emits `"orientation_tax": false` by default instead of `"turn_signal": "substantive"`.
+- **Sidecar prompt updated for both standard and IDE prompts** (`prompt.ts`, `idePrompt.ts`): The `TURN SIGNAL` section has been replaced with an `ORIENTATION TAX` section with clearer true/false criteria and examples.
+- **Scope filter on audit page changed to a dropdown**: The free-text scope input has been replaced with a `<select>` element populated from `/admin/audit/scopes`, listing only scopes that have actually appeared in your audit history.
+- **Belief change stream reads from the encrypted collection** (`beliefChangeStream.ts`): On insert and update events, the stream now fetches the document from the encrypted collection by `_id` rather than reading `fullDocument` directly from the change event, ensuring belief content broadcast to clients is always in its decrypted form.
+- **`startBeliefChangeStream` now accepts an `encryptedCol` parameter** (`server.ts`): Both the plain and encrypted collections are passed at startup.
+
+### Removed
+
+- **`TurnSignal` type and `turn_signal` field**: Removed from `types.ts`, `merger.ts`, `splitter.ts`, `validator.ts`, and both sidecar prompt templates.
+- **`tryReadTurnSignal` function** (`splitter.ts`): No longer needed now that the extraction schema uses a boolean `orientation_tax` flag.
+- **`turnSignal` field on `MergeReport`** (`merger.ts`): Removed along with its population from extraction results.
+
+---
+
 ## [1.0.18] - 2026-05-31
 
 ### Added

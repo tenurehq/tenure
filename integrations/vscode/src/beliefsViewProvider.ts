@@ -20,8 +20,21 @@ interface BeliefSummary {
   } | null;
 }
 
+interface CategorizedBeliefs {
+  file: BeliefSummary[];
+  project: BeliefSummary[];
+  universal: BeliefSummary[];
+}
+
 type ServerMessage =
-  | { type: "beliefs_snapshot"; beliefs: BeliefSummary[]; scope: string }
+  | {
+      type: "beliefs_categorized";
+      file: BeliefSummary[];
+      project: BeliefSummary[];
+      universal: BeliefSummary[];
+      scope: string;
+      active_file: string | null;
+    }
   | { type: "belief_upserted"; belief: BeliefSummary }
   | { type: "belief_superseded"; id: string }
   | {
@@ -35,12 +48,16 @@ type ServerMessage =
   | { type: "patch_ack"; id: string; belief: BeliefSummary }
   | { type: "record_ack"; belief: BeliefSummary }
   | { type: "scope_confirmed"; scope: string; active_file: string | null }
+  | { type: "toggles_state"; injection: boolean; extraction: boolean }
   | { type: "error"; request_type: string; message: string };
 
 type ClientMessage =
   | { type: "subscribe"; scope: string }
-  | { type: "fetch_beliefs"; scope: string; active_file: string | null }
-  | { type: "fetch_file_beliefs"; file_path: string; scope: string }
+  | {
+      type: "fetch_categorized_beliefs";
+      scope: string;
+      active_file: string | null;
+    }
   | {
       type: "patch_belief";
       id: string;
@@ -73,7 +90,9 @@ type ClientMessage =
       active_file: string | null;
       active_language: string | null;
     }
-  | { type: "file_meta"; path: string; size_bytes: number };
+  | { type: "file_meta"; path: string; size_bytes: number }
+  | { type: "set_toggle"; toggle: "injection" | "extraction"; value: boolean }
+  | { type: "fetch_toggles" };
 
 const BASE_RECONNECT_MS = 1_000;
 const MAX_RECONNECT_MS = 30_000;
@@ -85,6 +104,11 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
   private currentActiveFile: string | null = null;
   private currentActiveFileUri: vscode.Uri | null = null;
   private beliefs: BeliefSummary[] = [];
+  private categorizedBeliefs: CategorizedBeliefs = {
+    file: [],
+    project: [],
+    universal: [],
+  };
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
@@ -126,15 +150,27 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
         if (this.noWorkspace) {
           this.showNoWorkspace();
         } else if (this.currentScope) {
-          this.pushState();
+          this.pushCategorizedState();
           this.ensureConnected().catch(() => {});
         }
       }
       if (msg.command === "recordBelief") {
-        const scope = this.currentScope
-          ? [this.currentScope]
-          : ["user:universal"];
-        this.recordBelief(msg.content, msg.why, scope, msg.beliefType);
+        const scopeLevel = msg.scopeLevel ?? "project";
+        let scope: string[];
+        if (scopeLevel === "universal") {
+          scope = ["user:universal"];
+        } else if (scopeLevel === "file") {
+          scope = this.currentScope ? [this.currentScope] : ["user:universal"];
+        } else {
+          scope = this.currentScope ? [this.currentScope] : ["user:universal"];
+        }
+        this.recordBelief(
+          msg.content,
+          msg.why,
+          scope,
+          msg.beliefType,
+          scopeLevel === "file" ? this.currentActiveFile : null,
+        );
       }
       if (msg.command === "openOnboarding") {
         vscode.commands.executeCommand("tenure.runOnboarding");
@@ -148,6 +184,13 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
       }
       if (msg.command === "openInstall") {
         vscode.commands.executeCommand("tenure.startInstall");
+      }
+      if (msg.command === "setToggle") {
+        this.send({
+          type: "set_toggle",
+          toggle: msg.toggle,
+          value: msg.value,
+        });
       }
     });
   }
@@ -165,7 +208,11 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
       this.send({ type: "subscribe", scope });
     }
 
-    this.send({ type: "fetch_beliefs", scope, active_file: activeFile });
+    this.send({
+      type: "fetch_categorized_beliefs",
+      scope,
+      active_file: activeFile,
+    });
   }
 
   async reconnect(): Promise<void> {
@@ -174,7 +221,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
     if (this.currentScope) {
       this.send({ type: "subscribe", scope: this.currentScope });
       this.send({
-        type: "fetch_beliefs",
+        type: "fetch_categorized_beliefs",
         scope: this.currentScope,
         active_file: this.currentActiveFile,
       });
@@ -190,6 +237,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
     whyItMatters: string,
     scope: string[],
     beliefType: "decision" | "preference" | "entity" | "relation" = "decision",
+    activeFileOverride?: string | null,
   ): void {
     const canonicalName = content
       .toLowerCase()
@@ -197,6 +245,11 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
       .split(/\s+/)
       .slice(0, 5)
       .join("_");
+
+    const activeFile =
+      activeFileOverride !== undefined
+        ? activeFileOverride
+        : this.currentActiveFile;
 
     this.ensureConnected()
       .then(() => {
@@ -207,7 +260,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
           why_it_matters: whyItMatters,
           scope,
           canonical_name: canonicalName,
-          active_file: this.currentActiveFile,
+          active_file: activeFile,
           active_language: this.pendingWorkspaceState?.active_language ?? null,
           project_scope: this.currentScope,
         });
@@ -278,8 +331,13 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
     scope: string,
     fileUri: vscode.Uri,
   ): void {
+    this.currentActiveFile = filePath;
     this.currentActiveFileUri = fileUri;
-    this.send({ type: "fetch_file_beliefs", file_path: filePath, scope });
+    this.send({
+      type: "fetch_categorized_beliefs",
+      scope,
+      active_file: filePath,
+    });
   }
 
   async ensureConnected(): Promise<void> {
@@ -330,10 +388,11 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
         if (this.currentScope) {
           this.send({ type: "subscribe", scope: this.currentScope });
           this.send({
-            type: "fetch_beliefs",
+            type: "fetch_categorized_beliefs",
             scope: this.currentScope,
             active_file: this.currentActiveFile,
           });
+          this.send({ type: "fetch_toggles" });
         }
       });
     });
@@ -367,35 +426,44 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
 
   private handleMessage(msg: ServerMessage): void {
     switch (msg.type) {
-      case "beliefs_snapshot": {
-        this.beliefs = msg.beliefs;
-        this.pushState();
+      case "beliefs_categorized": {
+        this.categorizedBeliefs = {
+          file: msg.file,
+          project: msg.project,
+          universal: msg.universal,
+        };
+        this.beliefs = [...msg.file, ...msg.project, ...msg.universal];
+        this.pushCategorizedState();
         break;
       }
       case "belief_upserted": {
         const idx = this.beliefs.findIndex((b) => b.id === msg.belief.id);
         if (idx !== -1) this.beliefs[idx] = msg.belief;
         else this.beliefs.unshift(msg.belief);
-        this.pushState();
+        this.categorizeBeliefsClientSide(this.beliefs);
+        this.pushCategorizedState();
         break;
       }
       case "belief_superseded": {
         this.beliefs = this.beliefs.filter((b) => b.id !== msg.id);
-        this.pushState();
+        this.categorizeBeliefsClientSide(this.beliefs);
+        this.pushCategorizedState();
         break;
       }
       case "record_ack": {
         const idx = this.beliefs.findIndex((b) => b.id === msg.belief.id);
         if (idx !== -1) this.beliefs[idx] = msg.belief;
         else this.beliefs.unshift(msg.belief);
-        this.pushState();
+        this.categorizeBeliefsClientSide(this.beliefs);
+        this.pushCategorizedState();
         break;
       }
       case "patch_ack": {
         const idx = this.beliefs.findIndex((b) => b.id === msg.id);
         if (idx !== -1) {
           this.beliefs[idx] = msg.belief;
-          this.pushState();
+          this.categorizeBeliefsClientSide(this.beliefs);
+          this.pushCategorizedState();
         }
         break;
       }
@@ -407,15 +475,19 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
         if (scopeChanged) {
           this.send({ type: "subscribe", scope });
         }
-        if (msg.active_file) {
-          this.send({
-            type: "fetch_file_beliefs",
-            file_path: msg.active_file,
-            scope,
-          });
-        } else {
-          this.send({ type: "fetch_beliefs", scope, active_file: null });
-        }
+        this.send({
+          type: "fetch_categorized_beliefs",
+          scope,
+          active_file: msg.active_file,
+        });
+        break;
+      }
+      case "toggles_state": {
+        this.view?.webview.postMessage({
+          type: "toggles_state",
+          injection: msg.injection,
+          extraction: msg.extraction,
+        });
         break;
       }
       case "contradiction_detected": {
@@ -429,11 +501,43 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private pushState(): void {
+  private categorizeBeliefsClientSide(beliefs: BeliefSummary[]): void {
+    const file: BeliefSummary[] = [];
+    const project: BeliefSummary[] = [];
+    const universal: BeliefSummary[] = [];
+
+    for (const b of beliefs) {
+      if (b.scope.includes("user:universal")) {
+        universal.push(b);
+      } else if (
+        b.origin_context?.active_file &&
+        b.origin_context.active_file === this.currentActiveFile
+      ) {
+        file.push(b);
+      } else {
+        project.push(b);
+      }
+    }
+
+    this.categorizedBeliefs = { file, project, universal };
+  }
+
+  private pushCategorizedState(): void {
+    const activeFileName = this.currentActiveFile
+      ? this.currentActiveFile.split("/").pop() ?? this.currentActiveFile
+      : null;
+
     this.view?.webview.postMessage({
-      type: "state",
+      type: "categorized_state",
       scope: this.currentScope ?? "No scope resolved",
-      beliefs: this.beliefs,
+      activeFileName,
+      file: this.categorizedBeliefs.file,
+      project: this.categorizedBeliefs.project,
+      universal: this.categorizedBeliefs.universal,
+      totalActive:
+        this.categorizedBeliefs.file.length +
+        this.categorizedBeliefs.project.length +
+        this.categorizedBeliefs.universal.length,
     });
   }
 
@@ -477,10 +581,33 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
 <html>
 <head>
 <style>
-  body { font-family: var(--vscode-font-family); font-size: 12px; padding: 8px; color: var(--vscode-foreground); }
-  .scope { font-size: 11px; color: var(--vscode-descriptionForeground); margin-bottom: 12px; font-family: monospace; }
+  * { box-sizing: border-box; }
+  body { font-family: var(--vscode-font-family); font-size: 12px; padding: 8px; color: var(--vscode-foreground); margin: 0; }
+
+  /* Header */
+  .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .header-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; }
+  .header-badge { font-size: 10px; padding: 2px 6px; border-radius: 3px; background: transparent; color: var(--vscode-descriptionForeground); font-weight: 600; border: 1px solid var(--vscode-panel-border); }
+
+  /* Toggles bar */
+  .toggles-bar { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; padding: 6px 8px; background: transparent; border-radius: 4px; border: none; }
+  .toggle-item { display: flex; align-items: center; gap: 5px; font-size: 10px; }
+  .toggle-item label { cursor: pointer; user-select: none; color: var(--vscode-descriptionForeground); }
+  .toggle-switch { position: relative; width: 28px; height: 14px; cursor: pointer; }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--vscode-button-secondaryBackground); border: 1px solid var(--vscode-button-secondaryBackground); border-radius: 7px; transition: background 0.2s; }
+  .toggle-slider::before { content: ""; position: absolute; width: 10px; height: 10px; left: 1px; top: 1px; background: var(--vscode-button-secondaryForeground); border-radius: 50%; transition: transform 0.2s; }
+  .toggle-switch input:checked + .toggle-slider { background: var(--vscode-button-background); border-color: var(--vscode-button-background); }
+  .toggle-switch input:checked + .toggle-slider::before { transform: translateX(14px); background: var(--vscode-button-foreground); }
+
+  /* Section */
+  .section { margin-bottom: 14px; }
+  .section-header { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--vscode-descriptionForeground); font-weight: 600; }
+  .section-icon { font-size: 12px; }
+
+  /* Belief card */
   .belief { padding: 8px; margin-bottom: 6px; border: 1px solid var(--vscode-panel-border); border-radius: 4px; }
-  .belief.pinned { border-left: 2px solid var(--vscode-charts-green); }
+  .belief.pinned { border-left: 2px solid var(--vscode-foreground); }
   .belief-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; }
   .name { font-weight: 600; }
   .pin-btn { background: none; border: none; cursor: pointer; color: var(--vscode-foreground); font-size: 14px; padding: 0 2px; line-height: 1; }
@@ -491,8 +618,15 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
   .badge-active { background: var(--vscode-testing-iconPassed); color: #fff; }
   .badge-inferred { background: var(--vscode-charts-blue); color: #fff; }
   .type { font-size: 10px; color: var(--vscode-descriptionForeground); }
-  .empty { color: var(--vscode-descriptionForeground); padding: 16px 0; text-align: center; }
+
+  /* Record form */
+  .scope-selector { display: flex; gap: 4px; margin-bottom: 8px; }
+  .scope-btn { flex: 1; padding: 4px; font-size: 10px; border: 1px solid var(--vscode-panel-border); background: var(--vscode-input-background); color: var(--vscode-foreground); cursor: pointer; border-radius: 3px; text-align: center; }
+  .scope-btn.active { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: var(--vscode-button-background); }
+
+  .empty { color: var(--vscode-descriptionForeground); padding: 16px 0; text-align: center; font-size: 11px; }
   .link { color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: underline; }
+
   .onboarding-banner {
     background: var(--vscode-editor-inactiveSelectionBackground);
     border: 1px solid var(--vscode-panel-border);
@@ -513,8 +647,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
     cursor: pointer;
     border-radius: 3px;
   }
-  .onboarding-banner button:hover { opacity: 0.85; }
-  /* Client status panel */
+
   .clients-section { margin-top: 12px; border-top: 1px solid var(--vscode-panel-border); padding-top: 10px; }
   .clients-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--vscode-descriptionForeground); margin-bottom: 8px; }
   .client-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 11px; }
@@ -526,21 +659,76 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
 </style>
 </head>
 <body>
-  <div class="scope" id="scope-label">Connecting…</div>
   <div id="onboarding-banner" class="onboarding-banner" style="display:none">
     <p>Tenure needs a provider configured before it can inject memory into your AI sessions.</p>
-    <button onclick="post('openOnboarding')">Set up Tenure →</button>
+    <button onclick="post('openOnboarding')">Set up Tenure &rarr;</button>
   </div>
-  <div id="beliefs-list"></div>
+
+  <!-- Toggles -->
+  <div class="toggles-bar" id="toggles-bar" style="display:none">
+    <div class="toggle-item">
+      <span class="toggle-switch">
+        <input type="checkbox" id="toggle-injection" checked onchange="handleToggle('injection', this.checked)">
+        <span class="toggle-slider"></span>
+      </span>
+      <label for="toggle-injection">Belief Injection</label>
+    </div>
+    <div class="toggle-item">
+      <span class="toggle-switch">
+        <input type="checkbox" id="toggle-extraction" checked onchange="handleToggle('extraction', this.checked)">
+        <span class="toggle-slider"></span>
+      </span>
+      <label for="toggle-extraction">Belief Extraction</label>
+    </div>
+  </div>
+
+  <div class="header" id="main-header" style="display:none">
+    <span class="header-title">Tenure Beliefs</span>
+    <span class="header-badge" id="total-badge">0 ACTIVE</span>
+  </div>
+
+  <div id="beliefs-container">
+    <div id="section-file" class="section" style="display:none">
+      <div class="section-header">
+        <span>This File &mdash; <span id="file-name"></span></span>
+      </div>
+      <div id="file-beliefs"></div>
+    </div>
+
+    <div id="section-project" class="section" style="display:none">
+      <div class="section-header">
+        <span>Project Beliefs</span>
+      </div>
+      <div id="project-beliefs"></div>
+    </div>
+
+    <div id="section-universal" class="section" style="display:none">
+      <div class="section-header">
+        <span>Universal Beliefs</span>
+      </div>
+      <div id="universal-beliefs"></div>
+    </div>
+  </div>
+
+  <div id="empty-state" class="empty" style="display:none"></div>
+
+  <!-- Client status -->
   <div id="clients-section" class="clients-section" style="display:none">
     <div class="clients-title" id="clients-toggle" onclick="toggleClients()" style="cursor:pointer;user-select:none;">
-      Connected clients <span id="clients-chevron" style="float:right;font-size:9px;">▶</span>
+      Connected clients <span id="clients-chevron" style="float:right;font-size:9px;">\u{25B6}</span>
     </div>
     <div id="clients-list" style="display:none"></div>
   </div>
+
+  <!-- Record form -->
   <div id="record-panel" style="display:none">
     <div style="border-top:1px solid var(--vscode-panel-border);margin-top:8px;padding-top:8px;">
       <div style="font-size:11px;font-weight:600;margin-bottom:8px;">Record Belief</div>
+      <div class="scope-selector">
+        <button class="scope-btn" data-scope="file" onclick="selectScope('file')">This File</button>
+        <button class="scope-btn active" data-scope="project" onclick="selectScope('project')">Project</button>
+        <button class="scope-btn" data-scope="universal" onclick="selectScope('universal')">Universal</button>
+      </div>
       <div style="margin-bottom:6px;">
         <select id="r-type" style="width:100%;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border);color:var(--vscode-foreground);font-family:inherit;font-size:11px;padding:4px;">
           <option value="decision">Decision</option>
@@ -570,8 +758,10 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
       + Record Belief
     </button>
   </div>
+
   <script>
     const vscode = acquireVsCodeApi();
+    let selectedScope = "project";
 
     function post(cmd, data) {
       vscode.postMessage({ command: cmd, ...data });
@@ -584,50 +774,18 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
         .replace(/>/g, "&gt;");
     }
 
-    function renderBeliefs(scope, beliefs) {
-      document.getElementById("scope-label").textContent = scope;
+    function handleToggle(toggle, value) {
+      post("setToggle", { toggle, value });
+    }
 
-      const list = document.getElementById("beliefs-list");
-
-      if (beliefs.length === 0) {
-        list.innerHTML =
-          '<div class="empty">No beliefs for this scope yet.' +
-          '<br><span class="link" onclick="post(\\'openDashboard\\')">Open Dashboard</span></div>';
-        return;
-      }
-
-      const emptyEl = list.querySelector(".empty");
-      if (emptyEl) emptyEl.remove();
-
-      const incomingIds = new Set(beliefs.map(b => b.id));
-
-      list.querySelectorAll("[data-belief-id]").forEach(el => {
-        if (!incomingIds.has(el.dataset.beliefId)) el.remove();
-      });
-
-      beliefs.forEach((b, i) => {
-        const existing = list.querySelector('[data-belief-id="' + b.id + '"]');
-        const html = beliefHtml(b);
-
-        if (existing) {
-          if (existing.dataset.hash !== hashBelief(b)) {
-            existing.outerHTML = html;
-          }
-        } else {
-          const ref = list.children[i] ?? null;
-          const tmp = document.createElement("div");
-          tmp.innerHTML = html;
-          const node = tmp.firstElementChild;
-          list.insertBefore(node, ref);
-        }
+    function selectScope(scope) {
+      selectedScope = scope;
+      document.querySelectorAll(".scope-btn").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.scope === scope);
       });
     }
 
-    function hashBelief(b) {
-      return b.id + b.content + b.pinned + b.epistemic_status + b.canonical_name;
-    }
-
-    function beliefHtml(b) {
+    function renderBeliefCard(b) {
       return (
         '<div class="belief ' + (b.pinned ? "pinned" : "") +
         '" data-belief-id="' + esc(b.id) +
@@ -637,7 +795,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
             '<button class="pin-btn" ' +
               'onclick="post(\\'pinBelief\\', {id:\\'' + esc(b.id) + '\\',pinned:' + b.pinned + '})" ' +
               'title="' + (b.pinned ? "Unpin" : "Pin") + '">' +
-              (b.pinned ? "★" : "☆") +
+              (b.pinned ? "\u2605" : "\u2606") +
             "</button>" +
           "</div>" +
           '<div class="content">' + esc(b.content) + "</div>" +
@@ -654,18 +812,69 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
       );
     }
 
+    function hashBelief(b) {
+      return b.id + "_" + b.pinned + "_" + b.epistemic_status;
+    }
+
+    function renderSection(container, beliefs) {
+      container.innerHTML = beliefs.map(renderBeliefCard).join("");
+    }
+
+    function renderCategorized(data) {
+      const header = document.getElementById("main-header");
+      const badge = document.getElementById("total-badge");
+      const fileSection = document.getElementById("section-file");
+      const projectSection = document.getElementById("section-project");
+      const universalSection = document.getElementById("section-universal");
+      const emptyState = document.getElementById("empty-state");
+      const togglesBar = document.getElementById("toggles-bar");
+
+      header.style.display = "flex";
+      togglesBar.style.display = "flex";
+      badge.textContent = data.totalActive + " ACTIVE";
+
+      const hasFile = data.file.length > 0;
+      const hasProject = data.project.length > 0;
+      const hasUniversal = data.universal.length > 0;
+
+      if (!hasFile && !hasProject && !hasUniversal) {
+        emptyState.innerHTML = 'No beliefs yet.<br><span class="link" onclick="post(\\'openDashboard\\')">Open Dashboard</span>';
+        emptyState.style.display = "block";
+        fileSection.style.display = "none";
+        projectSection.style.display = "none";
+        universalSection.style.display = "none";
+        return;
+      }
+
+      emptyState.style.display = "none";
+
+      if (hasFile) {
+        fileSection.style.display = "block";
+        document.getElementById("file-name").textContent = (data.activeFileName ?? "").toUpperCase();
+        renderSection(document.getElementById("file-beliefs"), data.file);
+      } else {
+        fileSection.style.display = "none";
+      }
+
+      if (hasProject) {
+        projectSection.style.display = "block";
+        renderSection(document.getElementById("project-beliefs"), data.project);
+      } else {
+        projectSection.style.display = "none";
+      }
+
+      if (hasUniversal) {
+        universalSection.style.display = "block";
+        renderSection(document.getElementById("universal-beliefs"), data.universal);
+      } else {
+        universalSection.style.display = "none";
+      }
+    }
+
     function openForm() {
       document.getElementById("record-panel").style.display = "block";
       document.getElementById("open-form-btn").style.display = "none";
       document.getElementById("r-content").focus();
-    }
-
-    function toggleClients() {
-      const list = document.getElementById("clients-list");
-      const chevron = document.getElementById("clients-chevron");
-      const isOpen = list.style.display !== "none";
-      list.style.display = isOpen ? "none" : "block";
-      chevron.textContent = isOpen ? "▶" : "▼";
     }
 
     function closeForm() {
@@ -674,6 +883,8 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
       document.getElementById("r-content").value = "";
       document.getElementById("r-why").value = "";
       document.getElementById("r-error").style.display = "none";
+      selectedScope = "project";
+      selectScope("project");
     }
 
     function submitForm() {
@@ -682,35 +893,49 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
       const why = document.getElementById("r-why").value.trim();
       const errEl = document.getElementById("r-error");
 
-      if (!content) {
-        errEl.textContent = "Content is required.";
-        errEl.style.display = "block";
-        return;
-      }
-      if (!why) {
-        errEl.textContent = "Why it matters is required.";
-        errEl.style.display = "block";
-        return;
-      }
+      if (!content) { errEl.textContent = "Content is required."; errEl.style.display = "block"; return; }
+      if (!why) { errEl.textContent = "Why it matters is required."; errEl.style.display = "block"; return; }
 
       errEl.style.display = "none";
-      post("recordBelief", { beliefType: type, content, why });
+      post("recordBelief", { beliefType: type, content, why, scopeLevel: selectedScope });
       closeForm();
     }
 
+    function toggleClients() {
+      const list = document.getElementById("clients-list");
+      const chevron = document.getElementById("clients-chevron");
+      const isOpen = list.style.display !== "none";
+      list.style.display = isOpen ? "none" : "block";
+      chevron.textContent = isOpen ? "\\u25B6" : "\\u25BC";
+    }
+
     function renderEmpty(label, line1, line2) {
-      document.getElementById("scope-label").textContent = label;
-      document.getElementById("beliefs-list").innerHTML =
-        '<div class="empty">' + line1 +
-        (line2 ? '<br><span style="font-size:10px;opacity:0.7;">' + line2 + '</span>' : '') +
-        '</div>';
+      document.getElementById("main-header").style.display = "none";
+      document.getElementById("toggles-bar").style.display = "none";
+      document.getElementById("section-file").style.display = "none";
+      document.getElementById("section-project").style.display = "none";
+      document.getElementById("section-universal").style.display = "none";
+      const emptyState = document.getElementById("empty-state");
+      emptyState.style.display = "block";
+      emptyState.innerHTML = '<strong>' + label + '</strong><br>' + line1 +
+        (line2 ? '<br><span style="font-size:10px;opacity:0.7;">' + line2 + '</span>' : '');
     }
 
     window.addEventListener("message", ({ data }) => {
       switch (data.type) {
-        case "state":
-          renderBeliefs(data.scope, data.beliefs);
+        case "categorized_state":
+          renderCategorized(data);
           document.getElementById("record-belief-bar").style.display = "block";
+          break;
+        case "state":
+          // Legacy flat support - treat all as project
+          renderCategorized({ file: [], project: data.beliefs, universal: [], totalActive: data.beliefs.length, activeFileName: null });
+          document.getElementById("record-belief-bar").style.display = "block";
+          break;
+        case "toggles_state":
+          document.getElementById("toggles-bar").style.display = "flex";
+          document.getElementById("toggle-injection").checked = data.injection;
+          document.getElementById("toggle-extraction").checked = data.extraction;
           break;
         case "no_workspace":
           renderEmpty("No workspace open", "Open a folder to start", "Tenure tracks beliefs per project");
@@ -731,8 +956,8 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
           break;
         case "onboarding_prompt":
           document.getElementById("onboarding-banner").style.display = "block";
-          document.getElementById("scope-label").textContent = "Setup required";
-          document.getElementById("beliefs-list").innerHTML = "";
+          document.getElementById("main-header").style.display = "none";
+          document.getElementById("beliefs-container").style.display = "none";
           document.getElementById("record-belief-bar").style.display = "none";
           break;
         case "client_status": {
@@ -740,16 +965,15 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
           const list = document.getElementById("clients-list");
           if (!section || !list || !data.rows?.length) break;
           section.style.display = "block";
-          // List stays collapsed by default — user expands if they want it
           list.innerHTML = data.rows.map(row => {
             const dotClass = row.connected ? "connected" : "disconnected";
             let actionHtml = "";
             if (!row.connected && row.action) {
               const labels = { auto_config: "Set up", copy_url: "Copy URL", copy_token: "Copy token", docs: "View docs" };
               const label = labels[row.action] ?? "Configure";
-              actionHtml = \`<span class="client-action" onclick="post('clientAction', {clientId:'\${esc(row.id)}',action:'\${esc(row.action)}'})">\${label}</span>\`;
+              actionHtml = '<span class="client-action" onclick="post(\\'clientAction\\', {clientId:\\'' + esc(row.id) + '\\',action:\\'' + esc(row.action) + '\\'})">' + label + '</span>';
             }
-            return \`<div class="client-row"><div class="client-dot \${dotClass}"></div><span class="client-label">\${esc(row.label)}</span>\${actionHtml}</div>\`;
+            return '<div class="client-row"><div class="client-dot ' + dotClass + '"></div><span class="client-label">' + esc(row.label) + '</span>' + actionHtml + '</div>';
           }).join("");
           break;
         }
