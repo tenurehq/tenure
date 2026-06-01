@@ -94,6 +94,7 @@ let filterStart = "";
 let filterEnd = "";
 let filterBelief = "";
 let filterScope = ""; 
+let auditScopes = [];
 let detailRecord = null;
 
 const app = document.getElementById("app");
@@ -137,14 +138,25 @@ async function loadRecords() {
 async function init() {
   app.innerHTML = '<div class="loading">Loading...</div>';
   try {
-    await loadRecords();
+    await Promise.all([loadRecords(), loadScopes()]);
     render();
+    loadTaxDashboard();
   } catch (e) {
     if (e.message !== "unauthorized") {
       app.innerHTML = \`<div class="loading"><p style="color:var(--danger)">\${esc(e.message)}</p>
         <button class="btn" onclick="init()">Retry</button></div>\`;
     }
   }
+}
+
+async function loadScopes() {
+  try {
+    const res = await apiFetch("GET", "/admin/audit/scopes");
+    if (res.ok) {
+      const data = await res.json();
+      auditScopes = data.scopes ?? [];
+    }
+  } catch {}
 }
 
 function render() {
@@ -158,20 +170,22 @@ function render() {
       <div class="nav-links">
         <a class="nav-link" href="/beliefs">World Model</a>
         <a class="nav-link" href="/admin">Settings</a>
-        <a class="nav-link" href="/audit">Audit</a> 
         <a class="nav-link active" href="/audit">Audit</a>
         <a class="nav-link" href="/onboarding">Onboarding</a>
       </div>
     </nav>
     <div class="main">
+     <div id="tax-dashboard" style="margin-bottom:2rem"></div>
       <div class="section-title">Injection Audit Trail</div>
        <div class="filters">
         <input class="input-sm" id="filter-start" type="date"
           value="\${esc(filterStart)}" title="From date" style="width:150px">
         <input class="input-sm" id="filter-end" type="date"
           value="\${esc(filterEnd)}" title="To date" style="width:150px">
-        <input class="input-sm" id="filter-scope" type="text" placeholder="Filter by scope (e.g. project:my-app)"
-          value="\${esc(filterScope)}" style="width:200px">
+        <select class="input-sm" id="filter-scope" style="width:200px">
+          <option value="">All scopes</option>
+          \${auditScopes.map(s => \`<option value="\${esc(s)}"\${filterScope === s ? " selected" : ""}>\${esc(s)}</option>\`).join("")}
+        </select>
         <input class="input-sm" id="filter-belief" type="text" placeholder="Filter by belief ID"
           value="\${esc(filterBelief)}" style="width:200px">
         <button class="btn btn-primary" onclick="applyFilters()">Filter</button>
@@ -363,6 +377,51 @@ function handleToken() {
 }
 
 token ? init() : showTokenScreen();
+
+async function loadTaxDashboard() {
+  try {
+    const res = await apiFetch("GET", "/admin/audit/orientation-tax?days=30");
+    if (!res.ok) return;
+    const d = await res.json();
+    const el = document.getElementById("tax-dashboard");
+    if (!el) return;
+    el.innerHTML = \`
+      <div class="section-title">Orientation Tax (last 30 days)</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.75rem;margin-bottom:.5rem">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:.875rem 1rem">
+          <div style="font-size:1.5rem;font-weight:600;color:var(--ok)">\${d.orientation_tax_prevented}</div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.25rem">Re-explanations prevented</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:.875rem 1rem">
+          <div style="font-size:1.5rem;font-weight:600;color:var(--text)">\${d.estimated_minutes_saved}<span style="font-size:.8rem;color:var(--muted)"> min</span></div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.25rem">Estimated time saved</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:.875rem 1rem">
+          <div style="font-size:1.5rem;font-weight:600;color:\${d.orientation_tax_paid > 0 ? '#d4a84b' : 'var(--text)'}">\${d.orientation_tax_paid}</div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.25rem">Tax still paid</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:.875rem 1rem">
+          \${d.tax_rate_trend_pct === null
+            ? \`<div style="font-size:1.5rem;font-weight:600;color:var(--muted)">—</div>
+              <div style="font-size:.72rem;color:var(--muted);margin-top:.25rem">Trend (not enough data)</div>\`
+            : \`<div style="font-size:1.5rem;font-weight:600;color:\${d.tax_rate_trend_pct < 0 ? 'var(--ok)' : d.tax_rate_trend_pct === 0 ? 'var(--text)' : '#d4a84b'}">
+                \${d.tax_rate_trend_pct > 0 ? '↑' : d.tax_rate_trend_pct < 0 ? '↓' : '→'} \${Math.abs(d.tax_rate_trend_pct)}<span style="font-size:.8rem;color:var(--muted)">%</span>
+              </div>
+              <div style="font-size:.72rem;color:var(--muted);margin-top:.25rem">Re-explanation trend</div>\`
+          }
+        </div>
+      </div>
+      \${d.total_injected_turns > 0 ? \`
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:.625rem 1rem;margin-top:.5rem">
+          <div style="height:6px;background:var(--surface2);border-radius:3px;overflow:hidden">
+            <div style="height:100%;width:\${Math.min(d.coverage_rate_pct, 100)}%;background:var(--accent);border-radius:3px;transition:width .3s"></div>
+          </div>
+          <div style="font-size:.7rem;color:var(--muted);margin-top:.375rem">\${d.total_injected_turns} turns with beliefs injected</div>
+        </div>
+      \` : ""}
+    \`;
+  } catch {}
+}
 <\/script>
 </body>
 </html>`;

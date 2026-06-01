@@ -54,11 +54,7 @@ export function splitSidecar(content: string): SplitResult {
 }
 
 export interface SidecarPayload {
-  turn_signal?:
-    | "substantive"
-    | "acknowledgment"
-    | "clarification"
-    | "correction";
+  orientation_tax?: boolean;
   topic_shift?: boolean;
   topic_label?: string;
   new_beliefs?: unknown[];
@@ -78,21 +74,4 @@ export function parseSidecar(raw: string | null): SidecarPayload | null {
   } catch {
     return null;
   }
-}
-
-export function tryReadTurnSignal(sidecarRaw: string | null): TurnSignal {
-  if (!sidecarRaw) return "substantive";
-  try {
-    const parsed = JSON.parse(sidecarRaw) as { turn_signal?: TurnSignal };
-    const s = parsed.turn_signal;
-    if (
-      s === "substantive" ||
-      s === "acknowledgment" ||
-      s === "clarification" ||
-      s === "correction"
-    ) {
-      return s;
-    }
-  } catch {}
-  return "substantive";
 }

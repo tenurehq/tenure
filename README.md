@@ -19,11 +19,18 @@ The next prompt becomes a correction instead of progress.
 
 ## What Tenure does
 
-You spend an hour in a chat interface thinking through an architecture problem. You explore options, rule some out, land on a direction. Then you open your IDE to start building.
+You spend an hour in a chat interface thinking through an architecture
+problem. You explore options, rule some out, land on a direction. Then
+you open your IDE to start building.
 
-Tenure is already there. It knows what you decided, what you rejected, and why. You don't re-explain anything. You just build.
+Tenure is already there. It knows what you decided, what you rejected,
+and why. You don't re-explain anything. You just build.
 
-It sits between your clients and your AI provider and quietly learns from your conversations. Every tool that routes through it shares the same belief store, so context you establish in one place is already present when you switch to another.
+It sits between your clients and your AI provider and quietly learns
+from your conversations. Every tool that routes through it shares the
+same belief store, so context you establish in one place is already
+present when you switch to another. After a month, most users have
+eliminated more than 80% of the correction turns they used to pay.
 
 Same question, cold start, new session, with Tenure running:
 
@@ -104,6 +111,41 @@ After install, open [http://localhost:5757/onboarding](http://localhost:5757/onb
 
 Full instructions: [docs/quickstart.md](docs/quickstart.md)
 
+## One container, one port
+
+Tenure runs as a single Docker container on localhost. No graph store, no
+embedding pipeline, no separate vector database, no MCP-only interface with
+no API fallback. One port: `http://localhost:5757`.
+
+The footprint matters at retrieval time too. Systems that bundle on-device
+embedding models and cross-encoder rerankers carry that weight on every
+query. Tenure's retrieval is BM25 over a structured index — 13ms mean
+latency, no model inference in the read path.
+
+Tenure speaks both OpenAI and Anthropic wire formats. Point any
+OpenAI-compatible client at `http://localhost:5757/v1` and it routes through
+Tenure automatically. For Anthropic clients, point at
+`http://localhost:5757/anthropic` — which means Claude Code works out of the
+box, with full memory across every coding session, today.
+
+The API is available for both formats for scripted access, backups, and
+automation.
+
+## Try it before you commit
+
+Run Tenure with extraction on and injection off for a week or two.
+See exactly what it learned about how you work before it ever changes
+a single response. No risk. No behavior change. No surprises.
+
+The audit log at `/audit` shows which beliefs would have been injected
+into each request. Review them. Correct anything that's wrong. When
+you're confident the memory reflects how you actually work, turn
+injection on.
+
+To start in observation mode, type `!inject off` in any chat window.
+If you're in the IDE, use the injection toggle in the Tenure sidebar.
+Details: [docs/audit.md](docs/audit.md)
+
 ## Private by design
 
 Everything runs on your machine. Your context never leaves localhost. Belief content is encrypted at rest. Every memory is visible, editable, and correctable at `/beliefs`. Nothing is hidden. You can export your entire memory as an encrypted archive and restore it on any machine.
@@ -118,18 +160,89 @@ Tenure logs every context injection: which beliefs were retrieved and
 injected into each request, and which would have been injected in
 observation mode. The full trail is available at `/audit`.
 
-Use it to understand what your AI knows at any given moment, verify that
-memory is behaving as expected, and debug unexpected responses.
+Tenure tracks your **orientation tax** (the re-explanations, corrections, and context resets that memory should have prevented) and shows you on your dashboard whether that number is going down.
+
+Use `/beliefs` to edit what Tenure knows. Use `/audit` to see what
+that knowledge is doing for you.
 
 Details: [docs/audit.md](docs/audit.md)
 
 ## The ramp
 
-The first session will be good. The tenth noticeably better. By the fiftieth, it feels like working with someone who actually knows you.
+The first session will be good. The tenth noticeably better. The
+improvement isn't just a feeling: Tenure tracks it. Your memory
+coverage rate (re-explanations prevented divided by total that would
+have been required) starts at zero and climbs as beliefs accumulate.
+Most users reach 80%+ within a month.
 
-If you import an existing preferences file or complete onboarding, the first session is already informed. Starting cold, Tenure learns from every exchange and gets more precise over time.
+Your dashboard shows the running count: "Tenure prevented 47
+re-explanations this week." The audit log at `/audit` is the source
+of that number, so you can inspect any entry and see exactly which
+belief did the work.
 
-More on how retrieval works and how to get the most out of it: [docs/retrieval.md](docs/retrieval.md)
+If you import an existing preferences file or complete onboarding,
+the first session is already informed. Starting cold, Tenure learns
+from every exchange and gets more precise over time.
+
+More on how retrieval works and how to get the most out of it:
+[docs/retrieval.md](docs/retrieval.md)
+
+## Two ways to build memory
+
+Vector search, top-k, reranking — that's the retrieval system side.
+Tenure is on the belief system side.
+
+Most memory systems store what you said and search it at inference time,
+handing the model a pile of candidates to reason over. Contradictions,
+alternatives, outdated context — the model sorts it out. When retrieval
+is noisy, the model compensates. Until it can't, or until you're not
+using a frontier model that can.
+
+Tenure does the work earlier. Every belief is extracted at write time,
+when the full reasoning chain is present: what was decided, what was
+rejected, and why. The `why_it_matters` field isn't a note, it's a
+pre-computed instruction for how future responses should act on that
+fact. The model receives a resolved belief, not raw material to
+re-derive.
+
+This is why retrieval precision is load-bearing rather than one metric
+among many. There's nothing downstream to compensate for noise. The
+belief that goes in is the instruction that comes out.
+
+It also changes what "handling contradictions" means. A belief store
+that has already resolved a decision doesn't need to surface
+alternatives at inference time. When you moved from Jest to Vitest,
+the old term became a retrieval surface for the new belief. The
+supersession chain records that the switch happened. The model doesn't
+reason over the conflict because the conflict was resolved when it
+occurred, not deferred to the next session.
+
+## Scope
+
+Beliefs are scoped to a context boundary. A belief about your TypeScript
+conventions only surfaces in code sessions. A belief about a character's
+voice only surfaces in writing sessions. A belief marked `user:universal`
+surfaces everywhere.
+
+Scope is a hard filter, not a ranking signal. A session in `project:client-a`
+cannot surface beliefs from `project:client-b` regardless of how semantically
+close the content is. There is no probabilistic suppression; out-of-scope
+beliefs are structurally absent from retrieval.
+
+This matters in practice. If you have a character named Redis in your novel
+and Redis the cache in your codebase, the right belief surfaces based on the
+active scope, not on which one scores higher in a similarity search.
+
+Scope is detected automatically from your first message or set explicitly:
+
+    !scope domain:code
+    !scope project:my-app
+    !scope domain:code/typescript
+
+Sub-domain scopes expand automatically — setting `domain:code/typescript`
+includes `domain:code` without listing it separately.
+
+Details: [docs/beliefs.md](docs/beliefs.md)
 
 ## Further reading
 

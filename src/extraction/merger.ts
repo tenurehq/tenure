@@ -62,7 +62,6 @@ export interface MergeReport {
   openQuestionsClosed: string[];
   newOpenQuestionIds: string[];
   errors: string[];
-  turnSignal: string;
 }
 
 export interface MergeInput {
@@ -103,7 +102,6 @@ export class BeliefMerger {
       openQuestionsClosed: [],
       newOpenQuestionIds: [],
       errors: [],
-      turnSignal: result.turn_signal,
     };
 
     for (const signal of result.belief_updates) {

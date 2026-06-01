@@ -31,7 +31,9 @@ export function buildIdeSidecarInstructions(
 
   const scopeRules = scopeAutoDetect
     ? `SCOPE (first match wins):
-1. Belief comes from code the assistant generated or a config file in the workspace -> ${projectScope ?? "resolved project scope"}
+1. Belief comes from code the assistant generated or a config file in the workspace -> ${
+        projectScope ?? "resolved project scope"
+      }
 2. How the user communicates or wants to be engaged, stated about themselves directly -> user:universal
 3. Everything else -> ${projectScope ?? "active scope"}
 ${scopeLine}${resolvedBlock ? "\n" + resolvedBlock : ""}
@@ -93,11 +95,13 @@ Test — would someone query for this detail independently of the parent entity?
 - "We switched from webpack to Vite" → Supersede. This replaces, not extends.
 - "The auth service uses RS256" → Yes. Emit as a new belief (auth_jwt_algorithm).
 
-TURN SIGNAL:
-- substantive: new decisions, facts, or reasoning (default when uncertain)
-- acknowledgment: purely confirmatory, no new signal ("lgtm", "👍", "looks good")
-- clarification: asked for or provided clarification without new commitment
-- correction: user corrected the assistant or a prior belief
+ORIENTATION TAX:
+Set orientation_tax to true ONLY when the user's message exists to re-establish
+context that persistent memory should have supplied. True when user corrects an
+assumption a belief should have prevented, restates something in <relevant_beliefs>
+or <pinned_facts> because you failed to apply it, or re-explains a prior decision.
+False for new decisions, new context, code/file content, or normal conversation.
+Default false.
 
 epistemic_status — pick by how the belief entered the conversation:
 - active: user stated it directly ("I prefer X", "we use Y") or it comes from a config artifact
@@ -111,7 +115,7 @@ All array fields must be present even when empty (use []).
 
 ${SIDECAR_BEGIN}
 {
-  "turn_signal": "substantive",
+  "orientation_tax": false,
   "new_beliefs": [
     {
       "type": "decision",

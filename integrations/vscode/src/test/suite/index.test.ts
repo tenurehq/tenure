@@ -233,11 +233,10 @@ suite("belief list mutations", () => {
   test("beliefs_snapshot replaces the entire list", () => {
     const previous = [makeBelief("old1"), makeBelief("old2")];
     const snapshot = [makeBelief("new1")];
-    // snapshot handler just overwrites
     const result = snapshot;
     assert.strictEqual(result.length, 1);
     assert.strictEqual(result[0].id, "new1");
-    void previous; // silence unused warning
+    void previous;
   });
 });
 
@@ -432,8 +431,7 @@ suite("fetch_file_beliefs scope construction", () => {
 
   test("relative file paths are forwarded as-is", () => {
     const relativePath = "src/components/Button.tsx";
-    // Just verify the path is unchanged (no further manipulation in the
-    // sendFetchFileBeliefs call path)
+
     assert.strictEqual(relativePath, "src/components/Button.tsx");
   });
 });

@@ -142,6 +142,7 @@ let editId       = null;
 let historyData  = null;
 let deleteId     = null;
 let createOpen   = false;
+let injectionData = null;
 let filterScope  = "all";
 let availableScopes = [];
 
@@ -304,6 +305,7 @@ function beliefCard(b) {
         <button class="btn btn-pin\${b.pinned ? " active" : ""}" data-action="toggle-pin" data-id="\${esc(b.id)}">\${b.pinned ? "📌 Pinned" : "📌 Pin"}</button>
         <button class="btn" data-action="open-edit" data-id="\${esc(b.id)}">Edit</button>
         <button class="btn" data-action="open-history" data-id="\${esc(b.id)}">History</button>
+        <button class="btn" data-action="open-injections" data-id="\${esc(b.id)}">Injections</button>
         <span class="spacer"></span>
         <button class="btn btn-danger" data-action="open-delete" data-id="\${esc(b.id)}">Remove</button>
       </div>
@@ -313,22 +315,24 @@ function beliefCard(b) {
 
 
 function renderModal() {
+  const existing = document.querySelector(".overlay");
+  if (existing) existing.remove();
   let html = "";
   if (editId)      { const b = beliefs.find(x => x.id === editId);   if (b)  html = editModal(b); }
   else if (historyData) html = historyModal(historyData);
+  else if (injectionData) html = injectionModal(injectionData);
   else if (createOpen) html = createModal();
   else if (deleteId) { const b = beliefs.find(x => x.id === deleteId); if (b) html = deleteModal(b); }
   if (!html) return;
 
   const el = document.createElement("div");
   el.className = "overlay";
-  el.setAttribute("data-action", "close-modal");
   el.innerHTML = html;
-  app.appendChild(el);
+   document.body.appendChild(el);
 }
 
 function createModal() {
-  return \`<div class="modal" onclick="event.stopPropagation()">
+  return \`<div class="modal">
     <h2>New belief</h2>
     <div class="field">
       <label>Type</label>
@@ -421,6 +425,46 @@ function historyModal({ belief, changeLog, createdAt }) {
   </div>\`;
 }
 
+function injectionModal({ belief, records, total, page }) {
+  const totalPages = Math.ceil(total / 10);
+  return \`<div class="modal">
+    <h2>\${esc(belief.canonical_name)}</h2>
+    <div style="font-size:.82rem;color:var(--muted);margin-bottom:1rem">
+      Surfaced <strong style="color:var(--text)">\${total}</strong> time\${total === 1 ? "" : "s"}
+    </div>
+    \${records.length === 0
+      ? '<p class="empty">This belief has not been injected into any conversations yet.</p>'
+      : records.map(r => \`
+        <div class="h-entry">
+          <div class="h-row">
+            <span class="h-trigger" style="font-size:.82rem;word-break:break-word">\${esc(truncateStr(r.user_query, 100))}</span>
+            <span class="h-date">\${fmtDate(r.created_at)}</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.2rem">
+            \${r.scope?.length ? \`Scope: \${esc(r.scope.join(", "))}\` : ""}
+            \${r.agent_id ? \` · Agent: \${esc(r.agent_id)}\` : ""}
+          </div>
+        </div>
+      \`).join("")}
+    \${totalPages > 1 ? \`
+      <div style="display:flex;justify-content:center;align-items:center;gap:.75rem;margin-top:1rem">
+        <button class="btn" \${page === 0 ? "disabled" : ""} data-action="injection-prev">← Newer</button>
+        <span style="font-size:.78rem;color:var(--muted)">Page \${page + 1} of \${totalPages}</span>
+        <button class="btn" \${page >= totalPages - 1 ? "disabled" : ""} data-action="injection-next">Older →</button>
+      </div>
+    \` : ""}
+    <div class="modal-footer">
+      <button class="btn" data-action="close-modal">Close</button>
+      <a class="btn btn-primary" href="/audit?belief_id=\${esc(belief.id)}" style="text-decoration:none">View in Audit Trail</a>
+    </div>
+  </div>\`;
+}
+
+function truncateStr(s, max) {
+  if (!s) return "";
+  return s.length > max ? s.slice(0, max) + "..." : s;
+}
+
 function deleteModal(b) {
   return \`<div class="modal">
     <h2>Remove belief?</h2>
@@ -439,16 +483,25 @@ function setType(t)   { filterType = t; render(); }
 function setStatus(s) { filterStatus = s; init(); }
 function setSearch(q) { searchQuery = q; render(); }
 
-function openEdit(id)    { editId = id; historyData = null; deleteId = null; render(); }
-function openDelete(id)  { deleteId = id; editId = null; historyData = null; render(); }
-function closeModal()    { editId = null; historyData = null; deleteId = null; createOpen = false; render(); }
+function openEdit(id)    { editId = id; historyData = null; deleteId = null; injectionData = null; createOpen = false; renderModal(); }
+function openDelete(id)  { deleteId = id; editId = null; historyData = null; injectionData = null; createOpen = false; renderModal(); }
+function closeModal() {
+  editId = null;
+  historyData = null;
+  deleteId = null;
+  createOpen = false;
+  injectionData = null;
+  const overlay = document.querySelector(".overlay");
+  if (overlay) overlay.remove();
+}
 
 function openCreate() {
   createOpen = true;
   editId = null;
   historyData = null;
   deleteId = null;
-  render();
+  injectionData = null;
+  renderModal();
 }
 
 async function submitCreate() {
@@ -535,9 +588,49 @@ async function openHistory(id) {
     const res = await apiFetch("GET", \`/v1/beliefs/\${id}/history\`);
     if (!res.ok) throw new Error(\`HTTP \${res.status}\`);
     const data = await res.json();
-    editId = null; deleteId = null;
+    editId = null; deleteId = null; injectionData = null; createOpen = false;
     historyData = { belief, changeLog: data.change_log ?? [], createdAt: data.created_at };
-    render();
+    renderModal();
+  } catch (e) { toast(e.message, "error"); }
+}
+
+async function openInjections(id) {
+  const belief = beliefs.find(b => b.id === id);
+  if (!belief) return;
+  try {
+    const params = new URLSearchParams({ belief_id: id, limit: "10", skip: "0" });
+    const res = await apiFetch("GET", \`/admin/audit/injections?\${params}\`);
+    if (!res.ok) throw new Error(\`HTTP \${res.status}\`);
+    const data = await res.json();
+    editId = null; deleteId = null; historyData = null; createOpen = false;
+    injectionData = {
+      belief,
+      records: data.records ?? [],
+      total: data.total ?? 0,
+      page: 0,
+    };
+    renderModal();
+  } catch (e) { toast(e.message, "error"); }
+}
+
+async function injectionPage(dir) {
+  if (!injectionData) return;
+  const newPage = injectionData.page + dir;
+  if (newPage < 0) return;
+  const skip = newPage * 10;
+  if (skip >= injectionData.total) return;
+  try {
+    const params = new URLSearchParams({
+      belief_id: injectionData.belief.id,
+      limit: "10",
+      skip: String(skip),
+    });
+    const res = await apiFetch("GET", \`/admin/audit/injections?\${params}\`);
+    if (!res.ok) throw new Error(\`HTTP \${res.status}\`);
+    const data = await res.json();
+    injectionData.records = data.records ?? [];
+    injectionData.page = newPage;
+    renderModal();
   } catch (e) { toast(e.message, "error"); }
 }
 
@@ -603,6 +696,9 @@ document.addEventListener("click", e => {
     case "set-type":       setType(value); break;
     case "open-edit":      openEdit(id); break;
     case "open-history":   openHistory(id); break;
+    case "open-injections": openInjections(id); break;
+    case "injection-prev": injectionPage(-1); break;
+    case "injection-next": injectionPage(1); break;
     case "open-delete":    openDelete(id); break;
     case "toggle-pin":     togglePin(id); break;
     case "save-edit":      saveEdit(); break;

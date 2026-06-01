@@ -35,6 +35,7 @@ export interface InjectionAuditRecord {
     relevant_beliefs: BeliefSnapshot[];
     open_questions: BeliefSnapshot[];
   };
+  next_turn_orientation_tax?: boolean | null;
   belief_count: number;
   created_at: Date;
 }

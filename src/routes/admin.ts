@@ -10,6 +10,7 @@ import { AnthropicAdapter } from "../providers/anthropic.js";
 import type { Db } from "mongodb";
 import { rotateApiToken } from "../config/appConfig.js";
 import type { BeliefCompactionRunner } from "../jobs/compactionRunner.js";
+import { registry } from "./beliefs-ws.js";
 
 export interface AdminDeps {
   runtimeStore: RuntimeConfigStore;
@@ -112,12 +113,24 @@ export function registerAdminRoutes(
       if (!safeKeys.has(key) && !isDynamicKey) {
         return reply.code(400).send({
           error: {
-            message: `Use PUT /admin/providers/:id for credentials. Allowed: ${[...safeKeys].join(", ")}`,
+            message: `Use PUT /admin/providers/:id for credentials. Allowed: ${[
+              ...safeKeys,
+            ].join(", ")}`,
           },
         });
       }
 
       await deps.runtimeStore.set(key as keyof RuntimeConfig, value as never);
+
+      if (key === "injection_enabled" || key === "extraction_enabled") {
+        const updated = await deps.runtimeStore.load();
+        registry.broadcast(deps.userId, {
+          type: "toggles_state",
+          injection: updated.injection_enabled,
+          extraction: updated.extraction_enabled,
+        });
+      }
+
       return { ok: true, key, value };
     },
   );
@@ -184,7 +197,9 @@ export function registerAdminRoutes(
     if (!spec) {
       return reply.code(400).send({
         error: {
-          message: `Unknown provider "${id}". Supported: ${Object.keys(PROVIDER_CONFIG).join(", ")}`,
+          message: `Unknown provider "${id}". Supported: ${Object.keys(
+            PROVIDER_CONFIG,
+          ).join(", ")}`,
         },
       });
     }
@@ -211,7 +226,9 @@ export function registerAdminRoutes(
     } catch (err) {
       return reply.code(502).send({
         error: {
-          message: `Credentials rejected by provider: ${(err as Error).message}`,
+          message: `Credentials rejected by provider: ${
+            (err as Error).message
+          }`,
         },
       });
     }
@@ -235,7 +252,9 @@ export function registerAdminRoutes(
       if (!spec) {
         return reply.code(400).send({
           error: {
-            message: `Unknown provider "${id}". Supported: ${Object.keys(PROVIDER_CONFIG).join(", ")}`,
+            message: `Unknown provider "${id}". Supported: ${Object.keys(
+              PROVIDER_CONFIG,
+            ).join(", ")}`,
           },
         });
       }

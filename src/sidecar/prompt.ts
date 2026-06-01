@@ -101,12 +101,13 @@ CONFIDENCE:
 - You inferred it from a single signal → 0.5-0.74
 - You are guessing based on weak evidence → omit the belief entirely
 
-TURN SIGNAL:
-- substantive: new decisions, facts, or reasoning (default when uncertain)
-- acknowledgment: purely confirmatory, no new signal ("lgtm", "👍", "yep")
-- clarification: asked for or provided clarification without new commitment
-- correction: user corrected the assistant or a prior belief
-
+ORIENTATION TAX:
+Set orientation_tax to true ONLY when the user's message exists to re-establish
+context that persistent memory should have supplied. True when user corrects an
+assumption a belief should have prevented, restates something in <relevant_beliefs>
+or <pinned_facts> because you failed to apply it, or re-explains a prior decision
+("I already told you...", "remember, we use..."). False for new decisions, new
+context, factual corrections unrelated to memory, or normal conversation. Default false.
 
 epistemic_status - pick by how the belief entered the conversation:
 - active: user stated it directly ("I prefer X", "we use Y", "I decided Z")
@@ -124,7 +125,7 @@ All array fields must be present even when empty, use [], never null or omit.
 
 ${SIDECAR_BEGIN}
 {
-  "turn_signal": "substantive",
+  "orientation_tax": false,
   "new_beliefs": [
     {
       "type": "preference",
