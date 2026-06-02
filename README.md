@@ -1,3 +1,5 @@
+# Tenure
+
 Persistent AI memory that follows you across every tool, session, and interface. Fully local.
 
 ![Build](https://github.com/tenurehq/tenure/actions/workflows/ci.yml/badge.svg)
@@ -6,6 +8,43 @@ Persistent AI memory that follows you across every tool, session, and interface.
 ![arXiv](https://img.shields.io/badge/arXiv-2605.11325-b31b1b.svg)
 
 ---
+
+You brainstorm architecture in a chat client. You open your IDE.
+It already knows what you decided. No re-explanation. You just build.
+
+Tenure is a local proxy that sits between your clients and your LLM
+provider. It learns from your conversations and injects relevant
+context on every request. One container, one port, every tool shares
+the same memory.
+
+## 30-second install
+
+**Linux / macOS:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tenurehq/tenure/main/scripts/install.sh | bash
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/tenurehq/tenure/main/scripts/install.ps1 | iex
+```
+
+Point your client at `http://localhost:5757/v1`. Done.
+Claude Code: point at `http://localhost:5757/anthropic`. Done.
+
+## What your IDE sees
+
+![Beliefs panel alongside code](assets/beliefs-panel.png)
+
+Tenure extracted these from past conversations. The model knows
+your scoring uses Hungarian algorithm via scipy, that skill scores
+default to 1.0 not 0.0, and that cosine similarity is rescaled to
+[0.5, 1.5]. When you ask it to refactor this function, it won't
+suggest breaking any of these decisions. No re-explanation required.
+
+## The problem
 
 Every AI session starts from zero. You re-explain your stack. You restate your voice. You re-establish decisions you made weeks ago. And when you don't re-explain, when you just ask the question, you get a confident, detailed answer that completely misses the point.
 
@@ -61,133 +100,93 @@ export function makeUserRepository(db: Db): UserRepository {
 
 TypeScript. MongoDB raw driver. Factory function. No re-explanation required.
 
-## What actually goes wrong without it
-
-Memory problems don't always announce themselves. They show up as wasted cycles.
-
-**Old decisions resurface as suggestions.** You switched from Jest to Vitest three months ago. The model recommends Jest. You correct it. You move on. It happens again next week.
-
-**Ruled-out approaches keep coming back.** You evaluated Mongoose, decided against it, and explained why. Without memory of that decision, it will be suggested again. And again.
-
-**Context resets mid-project.** A writer shouldn't re-explain a character's voice in session four. A researcher shouldn't re-litigate a ruled-out approach. A consultant switching between clients shouldn't re-brief from scratch.
-
-**Different tools behave differently.** You establish preferences in one client. A second client starts cold. Your tools give inconsistent answers to the same question.
-
-Tenure addresses all of these by keeping a structured, evolving model of how you work, across sessions, across clients, across time.
-
-## Who it's for
-
-Tenure is for anyone whose work compounds across sessions.
-
-**Engineers** -- stop re-explaining that you hate ORMs, use Vitest, and prefer explicit error returns over exceptions.
-
-**Writers** -- character voices, world details, and open plot threads stay consistent across every session.
-
-**Researchers** -- your thesis angle, ruled-out sources, and advisor feedback don't reset mid-project.
-
-**Consultants** -- switch cleanly between client contexts without re-briefing from scratch.
-
 ## Works where you already work
 
-Any OpenAI-compatible client works out of the box. Point it at `http://localhost:5757/v1` and it routes through Tenure automatically.
+- **IDE:** VS Code (native), Cursor, Windsurf, Continue, Cline
+- **Chat:** Open WebUI, LibreChat, any OpenAI-compatible client
+- **Mobile:** OpenClaw on WhatsApp/Telegram — aha moments on a walk
+  land in the same belief store your IDE reads from tomorrow
+- **Claude Code:** full Anthropic wire format, works today
 
-Native integrations are available for [OpenClaw](docs/clients.md#openclaw) and [VS Code](docs/clients.md#vs-code). Open WebUI and most other chat interfaces work without any integration. See [docs/clients.md](docs/clients.md) for the full list and setup instructions.
+One port. Every client. Same memory.
 
-## Get started
+## Works inside your editor
 
-**Linux / macOS:**
+![VS Code model picker showing Tenure models](assets/vscode-models.png)
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/tenurehq/tenure/main/scripts/install.sh | bash
-```
+Tenure registers as a native LLM provider. Pick any model through
+your own API keys: Anthropic, OpenAI, Mistral, Qwen, Amazon Nova,
+whatever you have access to. Same Copilot UX. Memory included.
 
-**Windows (PowerShell):**
+Already paying for an API key? You don't need a Copilot subscription.
+Tenure gives you native editor completions with the model you already
+have access to, plus memory that Copilot will never have.
 
-```powershell
-irm https://raw.githubusercontent.com/tenurehq/tenure/main/scripts/install.ps1 | iex
-```
+## Claude Code
 
-After install, open [http://localhost:5757/onboarding](http://localhost:5757/onboarding) to connect a provider, pick a model, and answer a few questions to seed your memory. Then point your client at `http://localhost:5757/v1` with your bearer token.
+Tenure has native Anthropic SDK ingress and egress. Claude Code users
+point at the same localhost endpoint, no translation layer, no
+wrapper. Your agentic sessions accumulate beliefs the same way your
+editor sessions do.
 
-Full instructions: [docs/quickstart.md](docs/quickstart.md)
-
-## One container, one port
-
-Tenure runs as a single Docker container on localhost. No graph store, no
-embedding pipeline, no separate vector database, no MCP-only interface with
-no API fallback. One port: `http://localhost:5757`.
-
-The footprint matters at retrieval time too. Systems that bundle on-device
-embedding models and cross-encoder rerankers carry that weight on every
-query. Tenure's retrieval is BM25 over a structured index — 13ms mean
-latency, no model inference in the read path.
-
-Tenure speaks both OpenAI and Anthropic wire formats. Point any
-OpenAI-compatible client at `http://localhost:5757/v1` and it routes through
-Tenure automatically. For Anthropic clients, point at
-`http://localhost:5757/anthropic` — which means Claude Code works out of the
-box, with full memory across every coding session, today.
-
-The API is available for both formats for scripted access, backups, and
-automation.
+The model that spent three hours refactoring your auth service already
+knows what it decided by the next session.
 
 ## Try it before you commit
 
-Run Tenure with extraction on and injection off for a week or two.
-See exactly what it learned about how you work before it ever changes
-a single response. No risk. No behavior change. No surprises.
+Run with extraction on, injection off. See what it learns before
+it ever changes a response. No risk, no behavior change.
 
-The audit log at `/audit` shows which beliefs would have been injected
-into each request. Review them. Correct anything that's wrong. When
-you're confident the memory reflects how you actually work, turn
-injection on.
+`!inject off` in any chat, or toggle in the VS Code sidebar.
 
-To start in observation mode, type `!inject off` in any chat window.
-If you're in the IDE, use the injection toggle in the Tenure sidebar.
-Details: [docs/audit.md](docs/audit.md)
+## How it works (30 seconds)
+
+- Sits between your client and your LLM provider
+- Extracts structured beliefs from conversations at write time
+- Injects only relevant, scoped beliefs on every request
+- Beliefs are scoped: project:my-app can't bleed into project:other
+- Supersession: moved from Jest to Vitest? The old belief routes
+  to the new one. No contradiction. No stale context.
+- 13ms retrieval. BM25 over a structured index. No embedding model.
+
+## Scope
+
+Beliefs are scoped to a context boundary. A belief about your TypeScript
+conventions only surfaces in code sessions. A belief about a character's
+voice only surfaces in writing sessions. A belief marked `user:universal`
+surfaces everywhere.
+
+Scope is a hard filter, not a ranking signal. A session in `project:client-a`
+cannot surface beliefs from `project:client-b` regardless of how semantically
+close the content is. There is no probabilistic suppression; out-of-scope
+beliefs are structurally absent from retrieval.
+
+This matters in practice. If you have a character named Redis in your novel
+and Redis the cache in your codebase, the right belief surfaces based on the
+active scope, not on which one scores higher in a similarity search.
+
+Scope is detected automatically from your first message or set explicitly:
+
+    !scope domain:code
+    !scope project:my-app
+    !scope domain:code/typescript
+
+Sub-domain scopes expand automatically — setting `domain:code/typescript`
+includes `domain:code` without listing it separately.
+
+Details: [docs/beliefs.md](docs/beliefs.md)
 
 ## Private by design
 
-Everything runs on your machine. Your context never leaves localhost. Belief content is encrypted at rest. Every memory is visible, editable, and correctable at `/beliefs`. Nothing is hidden. You can export your entire memory as an encrypted archive and restore it on any machine.
+Everything on localhost. Encrypted at rest. Nothing hidden.
+Export your entire memory as an encrypted archive anytime.
 
-To pause memory for a session, type `!extract off` in your chat.
+## Orientation tax dashboard
 
-Details: [docs/security.md](docs/security.md)
+Tenure tracks re-explanations prevented vs. total required.
+Most users hit 80%+ coverage within a month.
 
-## Audit trail
-
-Tenure logs every context injection: which beliefs were retrieved and
-injected into each request, and which would have been injected in
-observation mode. The full trail is available at `/audit`.
-
-Tenure tracks your **orientation tax** (the re-explanations, corrections, and context resets that memory should have prevented) and shows you on your dashboard whether that number is going down.
-
-Use `/beliefs` to edit what Tenure knows. Use `/audit` to see what
-that knowledge is doing for you.
-
-Details: [docs/audit.md](docs/audit.md)
-
-## The ramp
-
-The first session will be good. The tenth noticeably better. The
-improvement isn't just a feeling: Tenure tracks it. Your memory
-coverage rate (re-explanations prevented divided by total that would
-have been required) starts at zero and climbs as beliefs accumulate.
-Most users reach 80%+ within a month.
-
-Your dashboard shows the running count: "Tenure prevented 47
-re-explanations this week." The audit log at `/audit` is the source
-of that number, so you can inspect any entry and see exactly which
-belief did the work.
-
-If you import an existing preferences file or complete onboarding,
-the first session is already informed. Starting cold, Tenure learns
-from every exchange and gets more precise over time.
-
-More on how retrieval works and how to get the most out of it:
-[docs/retrieval.md](docs/retrieval.md)
-
-## Two ways to build memory
+## Architecture: beliefs vs. retrieval systems
 
 Vector search, top-k, reranking — that's the retrieval system side.
 Tenure is on the belief system side.
@@ -216,33 +215,6 @@ the old term became a retrieval surface for the new belief. The
 supersession chain records that the switch happened. The model doesn't
 reason over the conflict because the conflict was resolved when it
 occurred, not deferred to the next session.
-
-## Scope
-
-Beliefs are scoped to a context boundary. A belief about your TypeScript
-conventions only surfaces in code sessions. A belief about a character's
-voice only surfaces in writing sessions. A belief marked `user:universal`
-surfaces everywhere.
-
-Scope is a hard filter, not a ranking signal. A session in `project:client-a`
-cannot surface beliefs from `project:client-b` regardless of how semantically
-close the content is. There is no probabilistic suppression; out-of-scope
-beliefs are structurally absent from retrieval.
-
-This matters in practice. If you have a character named Redis in your novel
-and Redis the cache in your codebase, the right belief surfaces based on the
-active scope, not on which one scores higher in a similarity search.
-
-Scope is detected automatically from your first message or set explicitly:
-
-    !scope domain:code
-    !scope project:my-app
-    !scope domain:code/typescript
-
-Sub-domain scopes expand automatically — setting `domain:code/typescript`
-includes `domain:code` without listing it separately.
-
-Details: [docs/beliefs.md](docs/beliefs.md)
 
 ## Further reading
 
