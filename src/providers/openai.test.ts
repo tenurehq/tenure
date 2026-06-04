@@ -14,7 +14,7 @@ const jsonResponse = (body: unknown, status = 200) =>
     headers: { "content-type": "application/json" },
   });
 
-test.afterEach(() => sinon.restore());
+test.afterEach.always(() => sinon.restore());
 
 test.serial("call() maps response to NormalizedResponse", async (t) => {
   sinon.stub(globalThis, "fetch").resolves(jsonResponse(MOCK_BODY));
@@ -293,11 +293,14 @@ test.serial(
       events.push(event);
     }
 
-    t.is(events.length, 2);
+    t.is(events.length, 3);
     t.is(events[0].type, "content_delta");
     t.is(events[0].delta, "Hello");
     t.is(events[1].type, "content_delta");
     t.is(events[1].delta, " world");
+    t.is(events[2].type, "stream_end");
+    t.is(events[2].finish_reason, "stop");
+    t.deepEqual(events[2].usage, { input_tokens: 0, output_tokens: 0 });
   },
 );
 
@@ -322,8 +325,11 @@ test.serial("callStream() stops on [DONE] marker", async (t) => {
     events.push(event);
   }
 
-  t.is(events.length, 1);
+  t.is(events.length, 2);
+  t.is(events[0].type, "content_delta");
   t.is(events[0].delta, "Hi");
+  t.is(events[1].type, "stream_end");
+  t.is(events[1].finish_reason, "stop");
 });
 
 test.serial(
@@ -395,8 +401,11 @@ test.serial(
       events.push(event);
     }
 
-    t.is(events.length, 1);
+    t.is(events.length, 2);
+    t.is(events[0].type, "content_delta");
     t.is(events[0].delta, "ok");
+    t.is(events[1].type, "stream_end");
+    t.is(events[1].finish_reason, "stop");
   },
 );
 

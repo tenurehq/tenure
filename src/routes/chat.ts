@@ -548,6 +548,14 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
 
     if (tierWarning) reply.header("x-tenure-warning", tierWarning);
 
+    const messagePayload: Record<string, unknown> = {
+      role: "assistant",
+      content: visible,
+    };
+    if (providerResp.toolCalls?.length) {
+      messagePayload.tool_calls = providerResp.toolCalls;
+    }
+
     reply.send({
       id: `chatcmpl-${requestId}`,
       object: "chat.completion",
@@ -556,10 +564,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       choices: [
         {
           index: 0,
-          message: {
-            role: "assistant",
-            content: visible,
-          },
+          message: messagePayload,
           finish_reason: providerResp.finish_reason,
         },
       ],

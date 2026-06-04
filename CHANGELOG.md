@@ -6,6 +6,25 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.21] - 2026-06-04
+
+### Added
+
+- **Tool call passthrough in streaming** (`src/providers/openai.ts`): The OpenAI adapter's `callStream()` method now buffers and yields `tool_call_delta` events as tool call chunks arrive over the SSE stream. Accumulated tool calls are included on the final `stream_end` event.
+- **Tool call passthrough in non-streaming responses** (`src/providers/openai.ts`): `call()` now surfaces `tool_calls` from the OpenAI response message, returning them in an optional `toolCalls` field on the provider response.
+- **`tool_calls` forwarded in chat route response** (`src/routes/chat.ts`): When the provider response includes tool calls, they are now included in the `message` payload of the `/chat/completions` response.
+- **`stream_end` event emitted by `callStream()`** (`src/providers/openai.ts`): The streaming path now always yields a terminal `stream_end` event carrying the final model name, finish reason, and token usage.
+- **SSE buffer flush for final partial line** (`src/providers/openai.ts`): Any data remaining in the SSE line buffer after the stream ends is now yielded, preventing loss of a final chunk that arrives without a trailing newline.
+
+### Changed
+
+- **`content_block_start` deferred until first content delta** (`src/routes/messages.ts`): The initial `content_block_start` SSE event for a text block is no longer emitted eagerly at stream open; it is now emitted lazily on the first `content_delta`. Block indices start at `0` instead of `1`, and an `activeBlockIndex` cursor tracks whichever block is currently open to ensure correct `content_block_stop` sequencing.
+- **`buildSystemPrompt` errors now caught with raw fallback** (`src/routes/messages.ts`): System prompt construction is wrapped in a `try/catch`; if it throws, the route logs the error and falls back to the raw incoming system text rather than propagating the exception.
+- **Last-message content extraction fixed** (`src/routes/messages.ts`): The final message in the request body is now read as `message.content` instead of casting the whole message object to a string, preventing a serialisation bug for structured message objects.
+- **`test.afterEach` changed to `test.afterEach.always`** (`src/providers/openai.test.ts`): Sinon stubs are now restored even when a test fails, preventing stub leakage between serial tests.
+
+---
+
 ## [1.0.20]
 
 ### Removed

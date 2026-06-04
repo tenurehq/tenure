@@ -452,16 +452,25 @@ export function registerMessagesRoute(
         }
       }
 
-      const systemPrompt = buildSystemPrompt({
-        incomingSystem: systemText,
-        beliefCtx: injectionEnabled ? beliefCtx : EMPTY_CONTEXT,
-        extractionEnabled,
-        injectionEnabled,
-        activeScope: scope[0],
-        scopeAutoDetect: cfg.scope_auto_detect !== false,
-        extractionMode,
-        ideScope,
-      });
+      let systemPrompt: SystemPrompt;
+      try {
+        systemPrompt = buildSystemPrompt({
+          incomingSystem: systemText,
+          beliefCtx: injectionEnabled ? beliefCtx : EMPTY_CONTEXT,
+          extractionEnabled,
+          injectionEnabled,
+          activeScope: scope[0],
+          scopeAutoDetect: cfg.scope_auto_detect !== false,
+          extractionMode,
+          ideScope,
+        });
+      } catch (err) {
+        req.log.error(
+          { err },
+          "system prompt build failed — falling back to raw",
+        );
+        systemPrompt = systemText ?? "";
+      }
 
       if (deps.injectionAudit && beliefCtx.beliefCount > 0) {
         deps.injectionAudit
@@ -502,7 +511,9 @@ export function registerMessagesRoute(
         }),
       };
 
-      const rawContent = body.messages.at(-1) as string | ContentPart[];
+      const rawContent =
+        (body.messages.at(-1) as { content?: string | ContentPart[] })
+          ?.content ?? "";
 
       if (stream) {
         return handleAnthropicStream(
@@ -666,12 +677,6 @@ async function handleAnthropicStream(
     },
   });
 
-  writeAnthropicSSE(raw, "content_block_start", {
-    type: "content_block_start",
-    index: 0,
-    content_block: { type: "text", text: "" },
-  });
-
   writeAnthropicSSE(raw, "ping", { type: "ping" });
 
   let fullContent = "";
@@ -681,9 +686,10 @@ async function handleAnthropicStream(
   let finishReason = "end_turn";
   let usage = { input_tokens: 0, output_tokens: 0 };
 
-  let nextBlockIndex = 1;
-  let currentTextBlockIndex = 0;
+  let nextBlockIndex = 0;
+  let currentTextBlockIndex = -1;
   let currentToolBlockIndex = -1;
+  let activeBlockIndex = -1;
   const toolCallAccumulator: Record<
     number,
     { id: string; name: string; arguments: string }
@@ -709,6 +715,17 @@ async function handleAnthropicStream(
         fullContent += event.delta;
 
         if (sidecarDetected) continue;
+
+        if (currentTextBlockIndex === -1) {
+          currentTextBlockIndex = nextBlockIndex;
+          activeBlockIndex = nextBlockIndex;
+          nextBlockIndex++;
+          writeAnthropicSSE(raw, "content_block_start", {
+            type: "content_block_start",
+            index: currentTextBlockIndex,
+            content_block: { type: "text", text: "" },
+          });
+        }
 
         const markerIdx = fullContent.indexOf(SIDECAR_BEGIN);
         if (markerIdx !== -1) {
@@ -739,11 +756,15 @@ async function handleAnthropicStream(
       }
 
       if (event.type === "text_block_start") {
-        writeAnthropicSSE(raw, "content_block_stop", {
-          type: "content_block_stop",
-          index: currentTextBlockIndex,
-        });
-        currentTextBlockIndex = nextBlockIndex++;
+        if (activeBlockIndex !== -1) {
+          writeAnthropicSSE(raw, "content_block_stop", {
+            type: "content_block_stop",
+            index: activeBlockIndex,
+          });
+        }
+        currentTextBlockIndex = nextBlockIndex;
+        activeBlockIndex = nextBlockIndex;
+        nextBlockIndex++;
         writeAnthropicSSE(raw, "content_block_start", {
           type: "content_block_start",
           index: currentTextBlockIndex,
@@ -757,11 +778,18 @@ async function handleAnthropicStream(
 
         if (!toolCallAccumulator[idx]) {
           toolCallAccumulator[idx] = { id: "", name: "", arguments: "" };
-          currentToolBlockIndex++;
-          writeAnthropicSSE(raw, "content_block_stop", {
-            type: "content_block_stop",
-            index: currentToolBlockIndex - 1,
-          });
+
+          if (activeBlockIndex !== -1) {
+            writeAnthropicSSE(raw, "content_block_stop", {
+              type: "content_block_stop",
+              index: activeBlockIndex,
+            });
+          }
+
+          currentToolBlockIndex = nextBlockIndex;
+          activeBlockIndex = nextBlockIndex;
+          nextBlockIndex++;
+
           writeAnthropicSSE(raw, "content_block_start", {
             type: "content_block_start",
             index: currentToolBlockIndex,
@@ -846,13 +874,12 @@ async function handleAnthropicStream(
     });
   }
 
-  writeAnthropicSSE(raw, "content_block_stop", {
-    type: "content_block_stop",
-    index:
-      currentToolBlockIndex !== -1
-        ? currentToolBlockIndex
-        : currentTextBlockIndex,
-  });
+  if (activeBlockIndex !== -1) {
+    writeAnthropicSSE(raw, "content_block_stop", {
+      type: "content_block_stop",
+      index: activeBlockIndex,
+    });
+  }
 
   writeAnthropicSSE(raw, "message_delta", {
     type: "message_delta",

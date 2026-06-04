@@ -59,6 +59,7 @@ export class OpenAIAdapter implements ProviderAdapter {
     model: string;
     finish_reason: string;
     usage: { input_tokens: number; output_tokens: number };
+    toolCalls?: unknown[];
   }> {
     const res = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
@@ -85,7 +86,10 @@ export class OpenAIAdapter implements ProviderAdapter {
     const data = (await res.json()) as {
       model: string;
       choices: Array<{
-        message: { content: string | null };
+        message: {
+          content: string | null;
+          tool_calls?: unknown[];
+        };
         finish_reason: string;
       }>;
       usage: { prompt_tokens: number; completion_tokens: number };
@@ -104,6 +108,9 @@ export class OpenAIAdapter implements ProviderAdapter {
         input_tokens: data.usage.prompt_tokens,
         output_tokens: data.usage.completion_tokens,
       },
+      ...(choice.message.tool_calls?.length
+        ? { toolCalls: choice.message.tool_calls }
+        : {}),
     };
   }
 
@@ -140,24 +147,97 @@ export class OpenAIAdapter implements ProviderAdapter {
       throw new ProviderError("openai: empty stream body");
     }
 
+    let finishReason = "stop";
+    let finalModel = model;
+    let usage = { input_tokens: 0, output_tokens: 0 };
+
+    const toolCallsBuffer: Record<
+      number,
+      { id?: string; type?: string; name?: string; arguments: string }
+    > = {};
+
     for await (const line of sseLines(res.body)) {
       if (line === "[DONE]") break;
 
-      let data: Record<string, unknown>;
+      let data: Record<string, any>;
       try {
-        data = JSON.parse(line) as Record<string, unknown>;
+        data = JSON.parse(line) as Record<string, any>;
       } catch {
         continue;
       }
 
-      const content = (
-        data?.choices as Array<{ delta?: { content?: string } }> | undefined
-      )?.[0]?.delta?.content;
+      if (data.usage) {
+        usage.input_tokens = data.usage.prompt_tokens ?? usage.input_tokens;
+        usage.output_tokens =
+          data.usage.completion_tokens ?? usage.output_tokens;
+      }
 
-      if (content) {
-        yield { type: "content_delta", delta: content };
+      const choice = data.choices?.[0];
+      if (!choice) continue;
+
+      if (choice.delta?.content) {
+        yield { type: "content_delta", delta: choice.delta.content };
+      }
+
+      if (choice.delta?.tool_calls) {
+        for (const tc of choice.delta.tool_calls as Array<{
+          index: number;
+          id?: string;
+          type?: string;
+          function?: { name?: string; arguments?: string };
+        }>) {
+          const idx = tc.index;
+          if (!toolCallsBuffer[idx]) {
+            toolCallsBuffer[idx] = { arguments: "" };
+          }
+          const buf = toolCallsBuffer[idx];
+          if (tc.id) buf.id = tc.id;
+          if (tc.type) buf.type = tc.type;
+          if (tc.function?.name) buf.name = tc.function.name;
+          if (tc.function?.arguments) {
+            buf.arguments += tc.function.arguments;
+            yield {
+              type: "tool_call_delta",
+              toolCallIndex: idx,
+              toolCallId: buf.id,
+              toolCallName: buf.name,
+              toolCallArguments: tc.function.arguments,
+            };
+          } else if (tc.id && tc.function?.name) {
+            yield {
+              type: "tool_call_delta",
+              toolCallIndex: idx,
+              toolCallId: tc.id,
+              toolCallName: tc.function.name,
+              toolCallArguments: "",
+            };
+          }
+        }
+      }
+
+      if (choice.finish_reason) {
+        finishReason = choice.finish_reason;
+      }
+      if (data.model) {
+        finalModel = data.model;
       }
     }
+
+    yield {
+      type: "stream_end",
+      model: finalModel,
+      finish_reason: finishReason,
+      usage,
+      ...(Object.keys(toolCallsBuffer).length
+        ? {
+            toolCalls: Object.values(toolCallsBuffer).map((tc) => ({
+              id: tc.id ?? "",
+              type: "function" as const,
+              function: { name: tc.name ?? "", arguments: tc.arguments },
+            })),
+          }
+        : {}),
+    };
   }
 
   async listModels(): Promise<ModelInfo[]> {
@@ -208,6 +288,11 @@ async function* sseLines(
         if (!trimmed.startsWith("data: ")) continue;
         yield trimmed.slice(6);
       }
+    }
+
+    const trimmed = buffer.trim();
+    if (trimmed.startsWith("data: ")) {
+      yield trimmed.slice(6);
     }
   } finally {
     reader.releaseLock();
