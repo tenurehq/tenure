@@ -8,6 +8,7 @@ interface PluginConfig {
   baseUrl?: string;
   token?: string;
   port?: number;
+  seedOnStart?: boolean;
 }
 
 const SEED_FILES = ["USER.md", "MEMORY.md"] as const;
@@ -75,6 +76,7 @@ export default definePluginEntry({
     const port = pluginCfg.port ?? 5757;
     const baseUrl = pluginCfg.baseUrl ?? `http://localhost:${port}`;
     const token = resolveToken(pluginCfg.token);
+    const seedOnStart = pluginCfg.seedOnStart ?? true;
 
     if (!token) {
       logger.warn(
@@ -100,7 +102,11 @@ export default definePluginEntry({
             api.config,
             agentId,
           );
-          maybeSeedAgent(agentId, workspaceDir, client, logger).catch(() => {});
+          if (seedOnStart) {
+            maybeSeedAgent(agentId, workspaceDir, client, logger).catch(
+              () => {},
+            );
+          }
         } catch {}
       },
       { priority: 0 },
@@ -125,7 +131,7 @@ export default definePluginEntry({
             const bootstrapping = existsSync(
               join(workspaceDir, "BOOTSTRAP.md"),
             );
-            if (!bootstrapping) {
+            if (!bootstrapping && seedOnStart) {
               maybeSeedAgent(agentId, workspaceDir, client, logger).catch(
                 () => {},
               );
