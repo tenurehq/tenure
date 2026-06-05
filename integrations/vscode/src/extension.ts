@@ -38,7 +38,7 @@ export async function activate(
       .get<string>("baseUrl", "http://localhost:5757");
 
   const hostApp = detectHostApp();
-  const isNativeVSCode = hostApp === "vscode";
+  const isNativeVSCode = hostApp === "vscode" || hostApp === "vscodium";
 
   const lmProvider = new TenureLmProvider(tokenStore, getBaseUrl);
 

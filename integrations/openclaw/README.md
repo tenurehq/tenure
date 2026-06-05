@@ -85,5 +85,5 @@ Tenure runs entirely on your machine. Your beliefs, preferences, and conversatio
 ## More information
 
 - [Tenure on GitHub](https://github.com/tenurehq/tenure)
-- [How retrieval works](https://github.com/tenurehq/tenure/blob/main/docs/retrieval.md)
-- [Security details](https://github.com/tenurehq/tenure/blob/main/docs/security.md)
+- [How retrieval works](https://tenureai.dev/docs/memory/retrieval/)
+- [Security details](https://tenureai.dev/docs/reference/security/)

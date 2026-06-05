@@ -58,6 +58,17 @@ export function buildClientRows(
     });
   }
 
+  if (clients.vsCodium) {
+    rows.push({
+      id: "vscodium",
+      label: "VSCodium (this editor)",
+      detected: true,
+      connectionType: "lm_provider",
+      connected: true,
+      action: null,
+    });
+  }
+
   if (clients.continue) {
     const isWin = platform() === "win32";
     const configPath = isWin

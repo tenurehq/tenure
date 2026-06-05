@@ -1,34 +1,92 @@
 # Tenure for VS Code
 
-Persistent, cross-application AI memory. Connects your tools, agents, and interfaces with a shared, evolving understanding. Fully local and private.
-
-> **This extension requires Tenure to be running locally.** Without it, nothing syncs, no beliefs are stored, and the sidebar stays empty. See [Don't have Tenure installed?](#dont-have-tenure-installed) below to get up and running in under two minutes.
+> Persistent, cross-application AI memory. Fully local, fully private, and now completely automatic. **(BYOK) Bring your own key and use Tenure directly inside VS Code's native chat interface**, no Copilot subscription required.
 
 ## The workflow this unlocks
 
-You spend an hour in OpenWebUI thinking through an architecture problem. You explore options, rule some out, land on a direction. Then you open VS Code to start building.
+You spend an hour in OpenWebUI thinking through an architecture problem. You explore options, rule some out, and land on a direction. Then you open VS Code to start building.
 
-Tenure is already there. It knows what you decided, what you rejected, and why. You don't re-explain anything. You just build.
+Tenure is already there. It knows what you decided, what you rejected, and why. You do not re-explain anything. You just build.
 
-This works today. OpenWebUI, LibreChat, and any OpenAI-compatible chat client connect to Tenure by pointing at `localhost:5757/v1`. The VS Code extension is the piece that brings your IDE into the same workflow, so the thinking you do in one place is already present when you switch to another.
+This works because Tenure runs as a local proxy outside any single tool. OpenWebUI, LibreChat, Cline, Continue, Windsurf, and any OpenAI-compatible chat client connect through `localhost:5757`. The VS Code extension brings your IDE into the same memory layer, and because it registers as a native language-model provider, Tenure appears directly in Copilot Chat with no manual configuration.
 
-## The problem it also solves
+## Zero-config installation
 
-Beyond cross-interface continuity, Tenure fixes the way AI coding sessions break in practice, not dramatically, but through drift. A script gets renamed in `package.json`. A config file moves. A rule you wrote for Cline never makes it into the equivalent for Windsurf. The agent doesn't know any of this. It works from whatever it was last told, and what it was last told is increasingly wrong.
+1. Install the extension from the VS Code marketplace.
+2. When prompted, click **Set Up Tenure**.
+3. The extension downloads and starts the Tenure Docker container, reads your API token from `~/.tenure/token`, and stores it securely in VS Code secrets.
+4. The onboard wizard opens automatically. Connect your OpenAI or Anthropic API key and pick a default model.
 
-The deeper issue is duplication. Anything that copies information already in your code or config will go stale. Anything that just points to that information tends to stay correct. Most `AGENTS.md` files are full of copies.
+That is it. Tenure is ready.
 
-Tenure doesn't duplicate. It learns.
+If Docker Desktop is not running, the extension will prompt you to start it. If port 5757 is occupied, it will warn you before proceeding.
 
-## What this extension does
+## How it solves drift
 
-On every file switch, it pushes your current workspace context: project name, active file, language, to Tenure so the proxy resolves the right project scope before your first message is sent.
+Beyond cross-interface continuity, Tenure fixes the way AI coding sessions break through drift. A script gets renamed in `package.json`. A config file moves. A rule you wrote for Cline never makes it into the equivalent for Windsurf. The agent works from whatever it was last told, and what it was last told is increasingly wrong.
 
-Without the extension, Tenure still works, it resolves scope from the first message. The extension makes it instant and accurate, especially across monorepos where the root name and the active package are different things.
+The deeper issue is duplication. Anything that copies information already in your code or config will go stale. Anything that points to that information tends to stay correct. Most `AGENTS.md` files are full of copies.
 
-## Don't have Tenure installed?
+Tenure does not duplicate. It learns.
 
-The recommended install runs in a docker container the only thing it can touch on your machine is `~/.tenure`.
+## What the extension does
+
+- **Installs and manages Tenure automatically** via Docker.
+- **Saves your API token** without manual copy-paste.
+- **Registers as a native LM provider** in VS Code so Tenure models appear in the Copilot Chat picker.
+- **Pushes workspace context** on every file switch - project name, active file, and language - so the proxy resolves the right project scope before your first message.
+- **Auto-configures other extensions** when possible (for example, Continue) and shows copy-paste instructions for the rest.
+
+### Native VS Code integration
+
+Tenure registers as a first-class language-model provider inside VS Code. After you connect your own OpenAI or Anthropic API key during setup, Tenure models appear directly in the Copilot Chat model picker with no secondary panels or browser tabs. You get streaming completions, tool calling, and the full native chat experience, all routed through your local Tenure proxy so your cross-project memory is injected automatically.
+
+## Project scope
+
+Tenure resolves your project name from a `.tenure` file at your workspace root. Create one with just your project name:
+
+```
+my-project
+```
+
+If no `.tenure` file exists, Tenure falls back to your git remote name, then a stable slug derived from your workspace folder name. Scope resolution never fails silently.
+
+Run **Tenure: Create .tenure File** from the command palette to scaffold one automatically using the name Tenure has already resolved for your project.
+
+## Which clients work with Tenure?
+
+Tenure works with any client where you control the base URL. The VS Code extension detects your setup and adapts:
+
+| Client                       | Integration                                                                            |
+| ---------------------------- | -------------------------------------------------------------------------------------- |
+| VS Code Copilot Chat         | Native model picker integration. Use your own API key; no Copilot subscription needed. |
+| Continue                     | One-click automatic configuration                                                      |
+| Cline / Roo Code             | Notification with copyable URL and token                                               |
+| Cursor / Windsurf            | Host-app detection with tailored instructions                                          |
+| Any OpenAI-compatible client | Point to `http://localhost:5757/v1`                                                    |
+
+Cursor Pro and the Claude Code VS Code extension route through their own backends by default. Claude Code can be configured to route through an external proxy using `claudeCode.disableLoginPrompt: true`.
+
+## Commands
+
+| Command                          | Description                                          |
+| -------------------------------- | ---------------------------------------------------- |
+| `Tenure: Set API Token`          | Store your Tenure token manually (usually automatic) |
+| `Tenure: Sync Workspace State`   | Manually trigger a workspace sync                    |
+| `Tenure: Open Beliefs Dashboard` | Open `localhost:5757/beliefs` in your browser        |
+| `Tenure: Record Project Belief`  | Record a belief directly from the command palette    |
+| `Tenure: Run Setup`              | Open the onboard wizard to add a provider or model   |
+
+## Settings
+
+| Setting          | Default                 | Description                     |
+| ---------------- | ----------------------- | ------------------------------- |
+| `tenure.baseUrl` | `http://localhost:5757` | URL of your local Tenure proxy  |
+| `tenure.enabled` | `true`                  | Enable or disable the extension |
+
+## Advanced: manual installation
+
+If you prefer to run Docker commands yourself, you can still install Tenure manually. The extension will detect it and save your API token automatically on first connect.
 
 **macOS / Linux:**
 
@@ -46,57 +104,9 @@ docker run -d -v "$env:USERPROFILE\.tenure:/app/.tenure" -p 5757:5757 tenureai/t
 
 Your API token is saved to `~/.tenure/token` after the first command.
 
-Prefer a one-liner? The shell scripts are still available,
-see the [quickstart](https://github.com/tenurehq/tenure#quick-start).
-
-## Setup
-
-1. Install this extension
-2. Run **Tenure: Set API Token** from the command palette (`Ctrl+Shift+P` / `Cmd+Shift+P`)
-3. Paste your token from `~/.tenure/token`
-4. Point your AI client's base URL at `http://localhost:5757/v1`
-
-That's it. The extension syncs automatically on every file switch.
-
-## Which clients work with Tenure?
-
-Tenure works with any client where you control the base URL. That includes OpenWebUI, Cline, Continue, Windsurf, and any OpenAI-compatible chat interface. Point them at `localhost:5757/v1` and they route through Tenure automatically.
-
-Cursor Pro and the Claude Code VS Code extension route through their own backends by default. Claude Code can be configured to route through an external proxy using claudeCode.disableLoginPrompt: true.
-
-## Commands
-
-| Command                                | Description                                       |
-| -------------------------------------- | ------------------------------------------------- |
-| `Tenure: Set API Token`                | Store your Tenure token securely                  |
-| `Tenure: Sync Workspace State`         | Manually trigger a sync                           |
-| `Tenure: Open Beliefs Dashboard`       | Open `localhost:5757/beliefs` in your browser     |
-| `Tenure: Record Project Belief`        | Record a belief directly from the command palette |
-| `Tenure: Record Belief from Selection` | Record a belief from selected code                |
-| `Tenure: Create .tenure File`          | Scaffold a .tenure file with your resolved name   |
-
-## Settings
-
-| Setting          | Default                 | Description                     |
-| ---------------- | ----------------------- | ------------------------------- |
-| `tenure.baseUrl` | `http://localhost:5757` | URL of your local Tenure proxy  |
-| `tenure.enabled` | `true`                  | Enable or disable the extension |
-
-## Project scope
-
-Tenure resolves your project name from a `.tenure` file at your workspace root.
-Create one with just your project name:
-
-f no .tenure file exists, Tenure falls back to your git remote name, then
-a stable slug derived from your workspace folder name. Scope resolution never
-fails silently.
-
-Run `Tenure: Create .tenure File` from the command palette to scaffold one
-automatically using the name Tenure has already resolved for your project.
-
 ## Why not just use AGENTS.md or shared MCP memory?
 
-`AGENTS.md` works until it drifts. The most common failure mode is stale paths, renamed scripts, and instructions nobody updated after a refactor. The file becomes a liability the more it tries to duplicate what's already in your config.
+`AGENTS.md` works until it drifts. The most common failure mode is stale paths, renamed scripts, and instructions nobody updated after a refactor. The file becomes a liability the more it tries to duplicate what is already in your config.
 
 Shared MCP memory across tools is mostly experimental. Memory one tool writes and another reads only works if both are disciplined about when to write and when to retrieve. In practice that coordination is not there yet.
 

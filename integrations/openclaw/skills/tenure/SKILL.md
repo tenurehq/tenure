@@ -3,7 +3,7 @@ name: tenure
 description: >
   Install, set up, or onboard Tenure — persistent local memory for OpenClaw.
   Run when the user asks to install Tenure, set up memory, or run !tenure onboarding.
-version: 1.0.0
+version: 1.0.15
 user-invocable: true
 metadata:
   openclaw:
