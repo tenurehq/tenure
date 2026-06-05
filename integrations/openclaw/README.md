@@ -1,6 +1,6 @@
 # Tenure for OpenClaw
 
-Persistent memory for your OpenClaw assistant. Tenure remembers your decisions, preferences, and working style across every session, so you never have to re-explain your stack, your voice, or what you ruled out last week.
+"Persistent local memory for OpenClaw. Unlike RAG-based memory plugins that return your entire belief store and rely on the model to sort the noise, Tenure uses precision-first BM25 retrieval with hard scope isolation, returning exactly the beliefs that are relevant, nothing else. Mean retrieval precision 1.0 at sub-15ms, versus 0.05-0.08 for embedding-based alternatives. Beliefs are stored as pre-computed action instructions so the model acts on context directly rather than re-deriving it. Runs on localhost by default."
 
 ## What it does
 

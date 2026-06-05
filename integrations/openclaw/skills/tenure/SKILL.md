@@ -1,9 +1,9 @@
 ---
 name: tenure
 description: >
-  Install, set up, or onboard Tenure — persistent local memory for OpenClaw.
+  Install, set up, or onboard Tenure - persistent local memory for OpenClaw.
   Run when the user asks to install Tenure, set up memory, or run !tenure onboarding.
-version: 1.0.15
+version: 1.0.16
 user-invocable: true
 metadata:
   openclaw:
@@ -17,7 +17,7 @@ metadata:
     envVars:
       - name: TENURE_TOKEN
         required: false
-        description: "Bearer token for Tenure. Auto-populated during install via ~/.tenure/token."
+        description: "Bearer token for Tenure. Auto-read at runtime from ~/.tenure/token if not set explicitly. Treat this value as a secret - do not share or log it."
     install:
       - kind: brew
         formula: docker
@@ -25,13 +25,17 @@ metadata:
         label: "Install Docker Desktop (macOS)"
 ---
 
-# Tenure — Persistent Memory for OpenClaw
+# Tenure - Persistent Memory for OpenClaw
+
+> **Privacy notice:** Tenure persistently stores beliefs derived from your conversations. Avoid sharing regulated, confidential, or credential data in sessions. Review and delete stored beliefs at any time via `http://localhost:5757/beliefs`.
+>
+> **Local-only by default:** The default `baseUrl` is `http://localhost:5757`. Do not change it to a remote endpoint unless you intentionally trust that host with your memory data and provider API keys.
 
 ## Installing Tenure
 
 Run steps in order. Tell the user what you are doing before each step.
 
-### Step 1 — Check Docker is running
+### Step 1 - Check Docker is running
 
 ```bash
 docker info
@@ -39,7 +43,7 @@ docker info
 
 If this fails, tell the user to start Docker Desktop and try again.
 
-### Step 2 — Check port 5757 is free
+### Step 2 - Check port 5757 is free
 
 ```bash
 lsof -i :5757 2>/dev/null || echo "port-free"
@@ -49,7 +53,7 @@ Windows: `netstat -ano | findstr :5757`
 
 If the port is in use, tell the user to free it or set `TENURE_PORT` to a different value and substitute it everywhere `5757` appears below.
 
-### Step 3 — Initialize Tenure
+### Step 3 - Initialize Tenure
 
 ```bash
 mkdir -p "$HOME/.tenure"
@@ -58,13 +62,13 @@ docker run --rm -v "$HOME/.tenure:/app/.tenure" tenureai/tenure:latest init
 
 Windows: replace `$HOME/.tenure` with `$env:USERPROFILE\.tenure` in all commands.
 
-### Step 4 — Start Tenure
+### Step 4 - Start Tenure
 
 ```bash
 docker compose -f "$HOME/.tenure/docker-compose.yml" --env-file "$HOME/.tenure/.env" up -d
 ```
 
-### Step 5 — Wait for Tenure to be ready
+### Step 5 - Wait for Tenure to be ready
 
 Poll up to 60 seconds:
 
@@ -79,7 +83,7 @@ if [ $ATTEMPTS -ge 30 ]; then echo "timeout"; else echo "ready"; fi
 
 If timeout: `docker compose -f "$HOME/.tenure/docker-compose.yml" logs tenure`
 
-### Step 6 — Read the token
+### Step 6 - Read the token
 
 ```bash
 cat "$HOME/.tenure/token"
@@ -87,21 +91,25 @@ cat "$HOME/.tenure/token"
 
 Windows: `Get-Content "$env:USERPROFILE\.tenure\token"`
 
-If the file does not exist, Tenure hasn't finished first-run setup — wait a few seconds and retry, or check logs.
+If the file does not exist, Tenure has not finished first-run setup - wait a few seconds and retry, or check logs.
 
-### Step 7 — Persist the token
+Note: the token is also auto-read from this file at runtime when `TENURE_TOKEN` is not set. Treat it as a secret - do not share it or paste it into chat.
+
+### Step 7 - Persist a reference to the token
+
+Store a file path reference rather than the token value itself, so the secret is read from disk at runtime and is not duplicated in config:
 
 ```bash
-echo "TENURE_TOKEN=$(cat "$HOME/.tenure/token")" >> "$HOME/.openclaw/.env"
+echo 'TENURE_TOKEN_FILE=$HOME/.tenure/token' >> "$HOME/.openclaw/.env"
 ```
 
 Windows:
 
 ```powershell
-Add-Content "$env:USERPROFILE\.openclaw\.env" "TENURE_TOKEN=$(Get-Content "$env:USERPROFILE\.tenure\token")"
+Add-Content "$env:USERPROFILE\.openclaw\.env" "TENURE_TOKEN_FILE=$env:USERPROFILE\.tenure\token"
 ```
 
-### Step 8 — Register the Tenure provider in OpenClaw
+### Step 8 - Register the Tenure provider in OpenClaw
 
 ```bash
 TENURE_TOKEN=$(cat "$HOME/.tenure/token")
@@ -111,6 +119,7 @@ openclaw config patch --stdin << EOF
     mode: "merge",
     providers: {
       tenure: {
+        // Only change baseUrl if you intentionally trust a remote Tenure endpoint
         baseUrl: "http://localhost:5757/v1",
         apiKey: "$TENURE_TOKEN",
         api: "openai-completions",
@@ -124,13 +133,29 @@ EOF
 
 Windows: read token with `$token = Get-Content "$env:USERPROFILE\.tenure\token"` and substitute `$token` in the patch.
 
-Then validate — do not proceed if this fails:
+Then validate - do not proceed if this fails:
 
 ```bash
 openclaw config validate
 ```
 
-### Step 9 — Install the plugin and apply integration config
+### Step 9 - Install the plugin and apply integration config
+
+Before proceeding, be aware: the plugin will read `USER.md` and `MEMORY.md` from your agent workspace and ingest their contents into Tenure to seed your memory. Review those files now and remove any secrets or sensitive data before continuing.
+
+To disable automatic file seeding, set `seedOnStart: false` in your plugin config:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "tenure": {
+        "seedOnStart": false
+      }
+    }
+  }
+}
+```
 
 ```bash
 openclaw plugins install @tenureai/openclaw-plugin
@@ -158,16 +183,17 @@ EOF
 openclaw gateway restart
 ```
 
-### Step 10 — Confirm and hand off
+### Step 10 - Confirm and hand off
 
 Tell the user:
 
-> "Tenure is installed and running. Your existing provider is still active — Tenure sits in front of it and adds memory automatically.
+> "Tenure is installed and running. Your existing provider is still active - Tenure sits in front of it and adds memory automatically.
 >
-> - **Token:** `<value from step 6>`
-> - **UI URL:** `http://localhost:5757`
+> Your token is stored at `~/.tenure/token`. Keep it secret - do not share it or paste it into chat.
 >
-> Run **!tenure onboarding** when you're ready to set up your memory — takes about 2 minutes.
+> UI: `http://localhost:5757`
+>
+> Run **!tenure onboarding** when you are ready to set up your memory - takes about 2 minutes.
 >
 > Any memory plugins have been disabled since Tenure replaces them. Re-enable with `openclaw config set plugins.slots.memory memory-core` if you remove Tenure later."
 
@@ -179,11 +205,11 @@ On mobile channels, note the localhost URL must be opened on the machine running
 
 Run this flow when the user invokes `!tenure onboarding`. Use `$TENURE_TOKEN` for all API calls.
 
-Let me view the attached files to give you a well-grounded answer before drafting anything.
+### Stage 1 - Provider setup
 
-### Stage 1 — Provider setup
+Tell the user: "Your provider API key will be sent to the local Tenure service at `localhost:5757` over HTTP. Only continue if you trust your local environment. Do not use a remote `baseUrl` unless you trust that endpoint with your credentials."
 
-Ask: "Which provider do you want Tenure to use — Anthropic or OpenAI?"
+Ask: "Which provider do you want Tenure to use - Anthropic or OpenAI?"
 
 **If OpenAI:**
 
@@ -191,13 +217,13 @@ Ask for their API key, then ask: "What type of endpoint are you connecting to?"
 
 Present the three options:
 
-- **Generic OpenAI** — standard OpenAI API or any compatible endpoint
-- **Bedrock Access Gateway** — AWS Bedrock Access Gateway, enables prompt caching
-- **LiteLLM** — LiteLLM proxy, translates caching hints automatically if pointed at Bedrock
+- **Generic OpenAI** - standard OpenAI API or any compatible endpoint
+- **Bedrock Access Gateway** - AWS Bedrock Access Gateway, enables prompt caching
+- **LiteLLM** - LiteLLM proxy, translates caching hints automatically if pointed at Bedrock
 
-For **Generic OpenAI**, ask: "Do you have a custom base URL? (Leave blank for the default OpenAI endpoint.)" — this is optional.
+For **Generic OpenAI**, ask: "Do you have a custom base URL? (Leave blank for the default OpenAI endpoint.)" - this is optional.
 
-For **Bedrock Access Gateway** and **LiteLLM**, a base URL is required — ask for it and do not proceed without one.
+For **Bedrock Access Gateway** and **LiteLLM**, a base URL is required - ask for it and do not proceed without one.
 
 ```bash
 curl -sf -X PUT http://localhost:5757/admin/providers/openai \
@@ -214,7 +240,7 @@ Omit `base_url` from the body if the user left it blank.
 
 **If Anthropic:**
 
-Ask only for their API key. No base URL or endpoint flavor is needed — the Anthropic adapter ignores both.
+Ask only for their API key. No base URL or endpoint flavor is needed - the Anthropic adapter ignores both.
 
 ```bash
 curl -sf -X PUT http://localhost:5757/admin/providers/anthropic \
@@ -223,9 +249,9 @@ curl -sf -X PUT http://localhost:5757/admin/providers/anthropic \
   -d '{"api_key":"USER_KEY"}'
 ```
 
-`"ok":true` → proceed. `502` → credentials rejected by the provider, ask the user to check and retry.
+`"ok":true` -> proceed. `502` -> credentials rejected by the provider, ask the user to check and retry.
 
-### Stage 2 — Model selection
+### Stage 2 - Model selection
 
 ```bash
 curl -sf http://localhost:5757/v1/onboarding/probe-models/PROVIDER_ID \
@@ -241,7 +267,7 @@ curl -sf -X POST http://localhost:5757/v1/onboarding/validate-model \
   -d '{"provider_id":"PROVIDER_ID","model_id":"CHOSEN_MODEL"}'
 ```
 
-`"ok":true` → set as primary:
+`"ok":true` -> set as primary:
 
 ```bash
 openclaw config patch --stdin << EOF
@@ -251,9 +277,9 @@ openclaw config set agents.defaults.models '{"tenure/CHOSEN_MODEL":{}}' --strict
 openclaw models set "tenure/CHOSEN_MODEL"
 ```
 
-`502` → model ping failed, ask user to pick another.
+`502` -> model ping failed, ask user to pick another.
 
-### Stage 3 — Onboarding questions
+### Stage 3 - Onboarding questions
 
 ```bash
 curl -sf http://localhost:5757/v1/onboarding/questions \
@@ -262,23 +288,23 @@ curl -sf http://localhost:5757/v1/onboarding/questions \
 
 Read the full response and build a category map before asking anything. The response contains 11 questions across 5 categories in this order:
 
-1. `communication_style` — 2 questions
-2. `expertise_calibration` — 2 questions
-3. `working_style` — 3 questions
-4. `output_preferences` — 2 questions
-5. `project_seed` — 2 questions
+1. `communication_style` - 2 questions
+2. `expertise_calibration` - 2 questions
+3. `working_style` - 3 questions
+4. `output_preferences` - 2 questions
+5. `project_seed` - 2 questions
 
-Maintain a running answers array throughout — one entry per question, shaped as `{ question_id, question, answer }`. You will send this entire array to Stage 4 in one call, so hold every answer in memory until then.
+Maintain a running answers array throughout - one entry per question, shaped as `{ question_id, question, answer }`. You will send this entire array to Stage 4 in one call, so hold every answer in memory until then.
 
-Work through categories sequentially. Within each category ask questions one at a time as a natural conversation — not a form, not a numbered list. Signal transitions between categories naturally (e.g. "Next I want to ask about how you like to work..."). Do not announce category names or question counts.
+Work through categories sequentially. Within each category ask questions one at a time as a natural conversation - not a form, not a numbered list. Signal transitions between categories naturally (e.g. "Next I want to ask about how you like to work..."). Do not announce category names or question counts.
 
 Rules for the conversation:
 
-- If the user skips or gives a blank answer, record an empty string for that `question_id` and move on — do not stall or re-ask
-- Do not re-read the skill or pause mid-flow to check anything — drive the conversation to completion in one pass
-- After the last question in `project_seed`, move immediately to Stage 4 — do not loop back or ask if they want to continue
+- If the user skips or gives a blank answer, record an empty string for that `question_id` and move on - do not stall or re-ask
+- Do not re-read the skill or pause mid-flow to check anything - drive the conversation to completion in one pass
+- After the last question in `project_seed`, move immediately to Stage 4 - do not loop back or ask if they want to continue
 
-### Stage 4 — Commit
+### Stage 4 - Commit
 
 ```bash
 curl -sf -X POST http://localhost:5757/v1/onboarding/complete \
@@ -298,9 +324,9 @@ curl -sf -X POST http://localhost:5757/v1/onboarding/commit \
 
 If `belief_count` is 0 or `parse_failed` is true, skip commit and tell the user they can re-run `!tenure onboarding` at any time.
 
-### Stage 5 — Confirm
+### Stage 5 - Confirm
 
-> "You're set. N beliefs saved to your world model. Tenure will carry your context into every session automatically.
+> "You are all set. N beliefs saved to your world model. Tenure will carry your context into every session automatically.
 >
 > View and edit your beliefs at http://localhost:5757/beliefs"
 
@@ -308,10 +334,13 @@ If `belief_count` is 0 or `parse_failed` is true, skip commit and tell the user 
 
 ## Agent notes
 
-- `allowPrivateNetwork: true` is required — without it OpenClaw cannot reach localhost:5757.
-- The token is a plain file at `~/.tenure/token`. The plugin reads it automatically. `$TENURE_TOKEN` is available in exec calls after Step 7.
-- No models array is needed in the provider block at install time — populated during onboarding Stage 2.
-- `!extract`, `!inject`, and `!scope` are intercepted by Tenure at the proxy level. Do not handle them. If they stop working, Tenure is unreachable — check health and logs.
+- `allowPrivateNetwork: true` is required - without it OpenClaw cannot reach localhost:5757.
+- The token is a plain file at `~/.tenure/token`. The plugin reads it automatically at runtime. Never echo the token value into chat or logs.
+- No models array is needed in the provider block at install time - populated during onboarding Stage 2.
+- `!extract`, `!inject`, and `!scope` are intercepted by Tenure at the proxy level. Do not handle them. If they stop working, Tenure is unreachable - check health and logs.
 - If `openclaw onboard` overwrites `agents.defaults.model.primary`, restore with `openclaw models set "tenure/CHOSEN_MODEL"`.
 - To pause memory without removing Tenure: `!extract global off` and `!inject global off`.
 - To update Tenure: `docker compose -f "$HOME/.tenure/docker-compose.yml" pull && docker compose -f "$HOME/.tenure/docker-compose.yml" up -d`
+- The plugin ingests `USER.md` and `MEMORY.md` from the agent workspace on first run.
+  Review these files before installing and remove any secrets or sensitive data.
+  To opt out, set `seedOnStart: false` in the plugin config.
