@@ -25,12 +25,15 @@ export interface TenureHealth {
   ok: boolean;
 }
 
-export function resolveToken(configToken: string | undefined): string {
-  if (!configToken)
-    throw new Error(
-      "TENURE_TOKEN is not configured. Run !tenure onboarding to set up.",
-    );
-  return configToken;
+export function resolveToken(
+  configToken: string | undefined,
+): string | undefined {
+  if (configToken) return configToken;
+  try {
+    return readFileSync(join(homedir(), ".tenure", "token"), "utf8").trim();
+  } catch {
+    return undefined;
+  }
 }
 
 export function createTenureClient(cfg: TenureConfig) {
