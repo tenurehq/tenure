@@ -2,7 +2,7 @@
   "name": "tenure-vscode",
   "displayName": "Tenure",
   "description": "Persistent AI memory that follows you across every tool, session, and interface. Fully local.",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "publisher": "tenureai",
   "license": "MIT",
   "icon": "resources/tenure-logo-icon.png",
@@ -38,7 +38,8 @@
     "rag",
     "world model",
     "local ai",
-    "openai"
+    "openai",
+    "byok"
   ],
   "activationEvents": [
     "onStartupFinished"

@@ -10,6 +10,7 @@ export interface DetectedClients {
   copilot: boolean;
   cursorNative: boolean;
   windsurfNative: boolean;
+  vsCodium: boolean;
 }
 
 export interface ClientStatus {
@@ -26,6 +27,7 @@ export function detectInstalledClients(): DetectedClients {
     copilot: !!vscode.extensions.getExtension("GitHub.copilot-chat"),
     cursorNative: appName.includes("cursor"),
     windsurfNative: appName.includes("windsurf"),
+    vsCodium: appName.includes("vscodium"),
   };
 }
 

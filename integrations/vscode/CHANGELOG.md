@@ -6,6 +6,20 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.20]
+
+### Added
+
+- **VSCodium host environment support** (`hostEnvironment.ts`): `"vscodium"` added as a named `HostApp` variant, detected when the app name contains `"vscodium"`. Previously, VSCodium would fall through to `"unknown"`.
+- **VSCodium client detection** (`clientIntegrations.ts`): `DetectedClients` now includes a `vsCodium` flag, set by checking whether the running app name contains `"vscodium"`.
+- **VSCodium entry in connected clients panel** (`clientStatusPanel.ts`): When VSCodium is detected, a `"VSCodium (this editor)"` row is added to the client status panel with `connectionType: "lm_provider"` and no action required.
+
+### Changed
+
+- **`isNativeVSCode` check broadened to include VSCodium** (`extension.ts`): The flag that gates native LM provider registration now evaluates true for both `"vscode"` and `"vscodium"` host environments, enabling the `TenureLmProvider` to register in VSCodium as it does in VS Code.
+
+---
+
 ## [1.0.19]
 
 ### Added
