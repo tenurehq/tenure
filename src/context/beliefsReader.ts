@@ -44,6 +44,121 @@ export class BeliefsReader {
     return { ...base, $or: agentOr };
   }
 
+  FUZZY_OPTS = { maxEdits: 1, prefixLength: 2 };
+
+  private buildBaseFilters(
+    userId: string,
+    scope?: string[],
+    agentId?: string | null,
+  ): Record<string, unknown>[] {
+    const clauses: Record<string, unknown>[] = [
+      { equals: { path: "user_id", value: userId } },
+      { equals: { path: "resolved_at", value: null } },
+      { equals: { path: "superseded_by", value: null } },
+    ];
+    if (scope?.length) {
+      clauses.push({ in: { path: "scope", value: scope } });
+    }
+    if (agentId) {
+      clauses.push({
+        compound: {
+          should: [
+            { equals: { path: "agent_id", value: agentId } },
+            { equals: { path: "agent_id", value: null } },
+          ],
+          minimumShouldMatch: 1,
+        },
+      });
+    }
+    return clauses;
+  }
+
+  private buildSearchStage(
+    query: string,
+    filterClauses: Record<string, unknown>[],
+    mustNotClauses?: Record<string, unknown>[],
+    scoreDetails = false,
+  ): Record<string, unknown> {
+    const stage: Record<string, unknown> = {
+      index: "beliefs_search",
+      compound: {
+        must: [
+          {
+            compound: {
+              should: [
+                {
+                  text: {
+                    query,
+                    path: "canonical_name",
+                    fuzzy: this.FUZZY_OPTS,
+                    score: { boost: { value: 14 } },
+                  },
+                },
+                {
+                  text: {
+                    query,
+                    path: { value: "canonical_name", multi: "phrase" },
+                    score: { boost: { value: 14 } },
+                  },
+                },
+                {
+                  text: {
+                    query,
+                    path: "aliases",
+                    fuzzy: this.FUZZY_OPTS,
+                    score: { boost: { value: 5 } },
+                  },
+                },
+                {
+                  text: {
+                    query,
+                    path: { value: "aliases", multi: "shingle" },
+                    score: { boost: { value: 14 } },
+                  },
+                },
+              ],
+              minimumShouldMatch: 1,
+            },
+          },
+        ],
+        filter: filterClauses,
+      },
+    };
+    if (mustNotClauses?.length) {
+      const compound = stage.compound as Record<string, unknown>;
+      compound.mustNot = mustNotClauses;
+    }
+    if (scoreDetails) {
+      stage.scoreDetails = true;
+    }
+    return stage;
+  }
+
+  private runSearchPipeline(
+    searchStage: Record<string, unknown>,
+    minScore: number,
+    limit: number,
+    scoreDetails = false,
+  ): Promise<ScoredBelief[]> {
+    if (limit <= 0) return Promise.resolve([]);
+
+    const addFields: Record<string, unknown> = {
+      _searchScore: { $meta: "searchScore" },
+    };
+    if (scoreDetails) {
+      addFields._scoreDetails = { $meta: "searchScoreDetails" };
+    }
+
+    const pipeline: object[] = [
+      { $search: searchStage },
+      { $addFields: addFields },
+      { $match: { _searchScore: { $gte: minScore } } },
+      { $limit: limit },
+    ];
+
+    return this.col.aggregate<ScoredBelief>(pipeline).toArray();
+  }
+
   async listAlwaysOn(
     userId: string,
     scope?: string[],
@@ -133,106 +248,57 @@ export class BeliefsReader {
 
     if (!query.trim()) return [];
 
-    const fuzzyOpts = { maxEdits: 1, prefixLength: 2 };
-
-    const filterClauses: Record<string, unknown>[] = [
-      { equals: { path: "user_id", value: userId } },
-      { equals: { path: "resolved_at", value: null } },
-      { equals: { path: "superseded_by", value: null } },
-    ];
-
-    if (scope?.length) {
-      filterClauses.push({
-        in: { path: "scope", value: scope },
-      });
-    }
-
-    if (agentId) {
-      filterClauses.push({
-        compound: {
-          should: [
-            { equals: { path: "agent_id", value: agentId } },
-            { equals: { path: "agent_id", value: null } },
-          ],
-          minimumShouldMatch: 1,
-        },
-      });
-    }
+    const filterClauses = this.buildBaseFilters(userId, scope, agentId);
 
     const mustNotClauses: Record<string, unknown>[] = [
       { equals: { path: "type", value: "open_question" } },
       { equals: { path: "subtype", value: "expertise" } },
     ];
-
     if (excludeIds?.size) {
       for (const id of excludeIds) {
         mustNotClauses.push({ equals: { path: "_id", value: id } });
       }
     }
 
-    const searchStage: Record<string, unknown> = {
-      index: "beliefs_search",
-      compound: {
-        must: [
-          {
-            compound: {
-              should: [
-                {
-                  text: {
-                    query,
-                    path: "canonical_name",
-                    fuzzy: fuzzyOpts,
-                    score: { boost: { value: 14 } },
-                  },
-                },
-                {
-                  text: {
-                    query,
-                    path: { value: "canonical_name", multi: "phrase" },
-                    score: { boost: { value: 14 } },
-                  },
-                },
-                {
-                  text: {
-                    query,
-                    path: "aliases",
-                    fuzzy: fuzzyOpts,
-                    score: { boost: { value: 5 } },
-                  },
-                },
-                {
-                  text: {
-                    query,
-                    path: { value: "aliases", multi: "shingle" },
-                    score: { boost: { value: 14 } },
-                  },
-                },
-              ],
-              minimumShouldMatch: 1,
-            },
-          },
-        ],
-        filter: filterClauses,
-        mustNot: mustNotClauses,
-      },
-    };
-    if (scoreDetails) searchStage.scoreDetails = true;
+    const searchStage = this.buildSearchStage(
+      query,
+      filterClauses,
+      mustNotClauses,
+      scoreDetails,
+    );
 
-    const addFields: Record<string, unknown> = {
-      _searchScore: { $meta: "searchScore" },
-    };
-    if (scoreDetails) addFields._scoreDetails = { $meta: "searchScoreDetails" };
+    return this.runSearchPipeline(searchStage, minScore, limit, scoreDetails);
+  }
 
-    if (limit <= 0) return [];
+  /**
+   * Atlas Search fallback for ingestion-time deduplication.
+   * Unlike searchText(), this does NOT exclude expertise or open_question,
+   * and it scopes tightly to the incoming belief's type/scope/agent.
+   */
+  async searchMergeCandidates(
+    userId: string,
+    query: string,
+    scope: string[],
+    type: string,
+    subtype: string | null,
+    opts: {
+      agentId?: string | null;
+      limit?: number;
+      minScore?: number;
+    } = {},
+  ): Promise<ScoredBelief[]> {
+    const { limit = 5, minScore = 1.0, agentId } = opts;
+    if (!query.trim()) return [];
 
-    const pipeline: object[] = [
-      { $search: searchStage },
-      { $addFields: addFields },
-      { $match: { _searchScore: { $gte: minScore } } },
-      { $limit: limit },
-    ];
+    const filterClauses = this.buildBaseFilters(userId, scope, agentId);
+    filterClauses.push({ equals: { path: "type", value: type } });
+    if (subtype) {
+      filterClauses.push({ equals: { path: "subtype", value: subtype } });
+    }
 
-    return this.col.aggregate<ScoredBelief>(pipeline).toArray();
+    const searchStage = this.buildSearchStage(query, filterClauses);
+
+    return this.runSearchPipeline(searchStage, minScore, limit, false);
   }
 
   async expandRelationParticipants(

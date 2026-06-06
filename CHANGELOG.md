@@ -6,6 +6,33 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.22] - 2026-06-05
+
+### Added
+
+- **`searchMergeCandidates` method on `BeliefsReader`** (`src/context/beliefsReader.ts`): New Atlas Search method for ingestion-time deduplication. Unlike `searchText()`, it does not exclude `open_question` or `expertise` subtypes, and it filters tightly to the incoming belief's type, subtype, scope, and agent. Used as a fallback in `BeliefMerger` when the primary writer-side lookup finds no match.
+- **Atlas Search fallback in `BeliefMerger`** (`src/extraction/merger.ts`): When the writer-side lookup produces no existing match for an incoming belief, the merger now calls `searchMergeCandidates` via an optional `BeliefsReader` dependency. The fuzzy candidate is accepted unless both the incoming belief and the candidate specify conflicting `active_file` origins. When a fuzzy match is found, the incoming belief's `canonical_name` is added to `candidateAliases` so it is preserved as an alias on the merged record.
+- **`BeliefsReader` wired into `ExtractionWorker`** (`src/extraction/worker.ts`): A `BeliefsReader` instance is now constructed alongside `BeliefWriter` and passed to `BeliefMerger`, enabling the new Atlas Search fallback.
+- **`deepScanIntervalMs` field on `CompactionTypeConfig`** (`src/jobs/compactionRunner.ts`): All four belief types (`preference`, `expertise`, `entity`, `decision`) now carry a `deepScanIntervalMs` of 7 days, controlling how often a full-scope deep compaction run is triggered independently of the regular cooldown.
+- **Two-tier compaction scheduling: shallow and deep** (`src/jobs/compactionRunner.ts`): `findQualifyingPartitions` now returns a `depth` (`'shallow' | 'deep'`) and an explicit `threshold` per partition. A partition qualifies for a `deep` run once `deepScanIntervalMs` has elapsed since the last deep scan; it qualifies for a `shallow` run once the regular `cooldownMs` has elapsed. Legacy log entries without a `scan_depth` field are treated as deep to prevent immediate re-triggering.
+- **`clusterByTermOverlap` method** (`src/jobs/compactionRunner.ts`): Shallow compaction now pre-filters candidates using transitive (2-hop+) term clustering via a union-find structure. Beliefs sharing a token from their `canonical_name` or `aliases` are grouped together; only groups of two or more enter the LLM call. This prevents the model from receiving unrelated beliefs and ensures lexically bridged candidates (A↔B↔C where A and C share no direct term) are kept in the same cluster.
+- **`scan_depth` field on `CompactionLogEntry`** (`src/jobs/compactionRunner.ts`): Compaction log records now carry a `'shallow' | 'deep'` scan depth, enabling the scheduler to distinguish run types when computing cooldowns.
+- **`stripInnerFences` and `extractFirstJsonObject` helpers** (`src/sidecar/splitter.ts`): Two new parsing utilities handle common model output edge cases — stripping markdown fences wrapping the inner JSON object, and extracting the first well-balanced JSON object by brace depth when `END_SIDECAR` is absent.
+- **`belief_updates`, `entity_updates`, and `resolved_open_questions` fields added to standard sidecar prompt example output** (`src/sidecar/prompt.ts`): The JSON example block in the standard sidecar prompt now includes these previously-missing fields, aligning the example with the fields the prompt path actually emits.
+
+### Changed
+
+- **`buildBaseFilters` and `buildSearchStage` / `runSearchPipeline` extracted from `searchText`** (`src/context/beliefsReader.ts`): The inline filter construction and Atlas Search pipeline assembly in `searchText()` have been refactored into three private helpers (`buildBaseFilters`, `buildSearchStage`, `runSearchPipeline`), reused by both `searchText` and the new `searchMergeCandidates`.
+- **`SIDECAR_FENCE_RE` regex made global** (`src/sidecar/splitter.ts`): The fence-unwrapping regex now uses the `g` flag so all fenced blocks in a response are unwrapped, not just the first.
+- **`splitSidecar` now strips inner fences and extracts balanced JSON before returning** (`src/sidecar/splitter.ts`): After locating the sidecar region, the raw content is passed through `stripInnerFences`; if `END_SIDECAR` is absent, `extractFirstJsonObject` is applied to prevent trailing prose from poisoning `JSON.parse`. An empty raw region now returns `parseStatus: 'needs_repair'` rather than falling through as `parsed`.
+- **`parseSidecar` now strips inner fences before parsing** (`src/sidecar/splitter.ts`): Applies `stripInnerFences` on the raw string before `JSON.parse`, making the parser resilient to fenced JSON passed directly.
+- **`extractJson` no longer truncates to 32,000 characters** (`src/jobs/compactionRunner.ts`): The hard 32k slice has been removed; the method now strips fences and extracts the first JSON object without truncating the input.
+- **`SidecarPayload` interface pruned** (`src/sidecar/splitter.ts`): `topic_shift`, `topic_label`, and `possible_alias_candidates` fields removed — these were never populated by either the standard or IDE prompt paths.
+- **`possible_alias_candidates` removed from IDE sidecar prompt example** (`src/sidecar/idePrompt.ts`): The field is no longer included in the example JSON output block.
+- **Quote style normalised to single quotes throughout** (`src/jobs/compactionRunner.ts`, `src/sidecar/splitter.ts`, `src/sidecar/prompt.ts`, `src/sidecar/idePrompt.ts`): Double-quoted string literals and trailing commas in object/array literals updated to match the single-quote style used elsewhere in the codebase.
+
+---
+
 ## [1.0.21] - 2026-06-04
 
 ### Added

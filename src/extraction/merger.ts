@@ -1,3 +1,4 @@
+import type { BeliefsReader } from "../context/beliefsReader.js";
 import type {
   BeliefType,
   EpistemicStatus,
@@ -79,6 +80,7 @@ export class BeliefMerger {
 
   constructor(
     private readonly writer: BeliefWriter,
+    private readonly reader: BeliefsReader | undefined,
     policy: Partial<MergePolicy> = {},
   ) {
     this.policy = { ...DEFAULT_POLICY, ...policy };
@@ -228,12 +230,42 @@ export class BeliefMerger {
       true,
       nb.scope,
     );
-    const existing =
+    let existing =
       matches.find(
         (m) => m.canonical_name === nb.canonical_name.trim().toLowerCase(),
       ) ??
       matches[0] ??
       null;
+
+    if (existing === null && this.reader) {
+      try {
+        const candidates = await this.reader.searchMergeCandidates(
+          userId,
+          nb.canonical_name,
+          nb.scope,
+          nb.type,
+          nb.subtype ?? null,
+          { agentId, limit: 5, minScore: 1.0 },
+        );
+
+        const fuzzy = candidates.find((c) => {
+          // Mirror the file-context guard used later in this function:
+          // only reject if BOTH beliefs specify active_file and they differ.
+          if (
+            originContext?.active_file &&
+            c.origin_context?.active_file &&
+            originContext.active_file !== c.origin_context.active_file
+          ) {
+            return false;
+          }
+          return true;
+        });
+
+        if (fuzzy) {
+          existing = fuzzy;
+        }
+      } catch {}
+    }
 
     if (existing === null) {
       if (nb.confidence < this.policy.minInsertConfidence && !nb.user_edited) {
@@ -340,7 +372,14 @@ export class BeliefMerger {
       };
     }
 
-    const newAliases = nb.aliases.filter(
+    const candidateAliases = [
+      ...(existing.canonical_name !== nb.canonical_name.trim().toLowerCase()
+        ? [nb.canonical_name]
+        : []),
+      ...nb.aliases,
+    ];
+
+    const newAliases = candidateAliases.filter(
       (a) =>
         !existing.aliases.includes(a.trim().toLowerCase()) &&
         a.trim().toLowerCase() !== existing.canonical_name,
