@@ -1,4 +1,4 @@
-import { SIDECAR_BEGIN, SIDECAR_END } from "./splitter.js";
+import { SIDECAR_BEGIN, SIDECAR_END } from './splitter.js';
 
 export interface SidecarInstructionOptions {
   activeScope?: string | undefined;
@@ -7,7 +7,7 @@ export interface SidecarInstructionOptions {
 
 function buildScopeInstruction(
   activeScope: string | undefined,
-  scopeAutoDetect: boolean,
+  scopeAutoDetect: boolean
 ): string {
   const scopeLine = activeScope
     ? `Active session scope: ${activeScope}`
@@ -33,7 +33,7 @@ ${scopeLine}`;
 }
 
 export function buildSidecarInstructions(
-  opts: SidecarInstructionOptions = {},
+  opts: SidecarInstructionOptions = {}
 ): string {
   const { activeScope, scopeAutoDetect = true } = opts;
   const scopeInstruction = buildScopeInstruction(activeScope, scopeAutoDetect);
@@ -154,7 +154,10 @@ ${SIDECAR_BEGIN}
       "resolves_open_question": null
     }
   ],
+  "belief_updates": [],
+  "entity_updates": [],
   "new_open_questions": [],
+  "resolved_open_questions": [],
   "style_signals": []
 }
 ${SIDECAR_END}`.trim();

@@ -1,8 +1,8 @@
-import { randomUUID } from "node:crypto";
-import type { Collection, Filter } from "mongodb";
-import type { Belief, ExpertiseDepth, OriginContext } from "../types/belief.js";
-import type { InternalLLMCaller } from "../providers/types.js";
-import type { PersonaCache } from "../context/personaCache.js";
+import { randomUUID } from 'node:crypto';
+import type { Collection, Filter } from 'mongodb';
+import type { Belief, ExpertiseDepth, OriginContext } from '../types/belief.js';
+import type { InternalLLMCaller } from '../providers/types.js';
+import type { PersonaCache } from '../context/personaCache.js';
 
 const ACTIVE_FILTER = { resolved_at: null, superseded_by: null };
 
@@ -114,6 +114,7 @@ Return valid JSON only. No prose outside the JSON object.`.trim();
 interface CompactionTypeConfig {
   threshold: number;
   cooldownMs: number;
+  deepScanIntervalMs: number;
   prompt: string;
   invalidatesPersona: boolean;
   isExpertiseSynthesis: boolean;
@@ -123,31 +124,35 @@ const TYPE_CONFIGS: Record<string, CompactionTypeConfig> = {
   preference: {
     threshold: 15,
     cooldownMs: 12 * 60 * 60 * 1000,
+    deepScanIntervalMs: 7 * 24 * 60 * 60 * 1000,
     prompt: PREFERENCE_COMPACTION_PROMPT,
     invalidatesPersona: true,
-    isExpertiseSynthesis: false,
+    isExpertiseSynthesis: false
   },
   expertise: {
     threshold: 8,
     cooldownMs: 24 * 60 * 60 * 1000,
+    deepScanIntervalMs: 7 * 24 * 60 * 60 * 1000,
     prompt: EXPERTISE_SYNTHESIS_PROMPT,
     invalidatesPersona: true,
-    isExpertiseSynthesis: true,
+    isExpertiseSynthesis: true
   },
   entity: {
     threshold: 25,
     cooldownMs: 24 * 60 * 60 * 1000,
+    deepScanIntervalMs: 7 * 24 * 60 * 60 * 1000,
     prompt: DEDUP_COMPACTION_PROMPT,
     invalidatesPersona: false,
-    isExpertiseSynthesis: false,
+    isExpertiseSynthesis: false
   },
   decision: {
     threshold: 20,
     cooldownMs: 24 * 60 * 60 * 1000,
+    deepScanIntervalMs: 7 * 24 * 60 * 60 * 1000,
     prompt: DEDUP_COMPACTION_PROMPT,
     invalidatesPersona: false,
-    isExpertiseSynthesis: false,
-  },
+    isExpertiseSynthesis: false
+  }
 };
 
 const INFERRED_PROMOTION_THRESHOLD = 3;
@@ -185,7 +190,7 @@ export interface BeliefContradiction {
   scope: string;
   belief_ids: [string, string];
   reason: string;
-  status: "pending" | "resolved";
+  status: 'pending' | 'resolved';
   detected_at: Date;
   resolved_at: Date | null;
   belief_origins?: [OriginContext | null, OriginContext | null];
@@ -198,6 +203,7 @@ export interface CompactionLogEntry {
   belief_type: string;
   ran_at: Date;
   merged_count: number;
+  scan_depth?: 'shallow' | 'deep';
 }
 
 export interface CompactionRunnerOptions {
@@ -210,6 +216,8 @@ export interface CompactionRunnerOptions {
 interface QualifyingPartition {
   scope: string;
   agentId: string | null;
+  depth: 'shallow' | 'deep';
+  threshold: number;
 }
 
 export class BeliefCompactionRunner {
@@ -223,7 +231,7 @@ export class BeliefCompactionRunner {
     private readonly personaSummary: {
       regenerate(userId: string): Promise<void>;
     },
-    private readonly options: CompactionRunnerOptions = {},
+    private readonly options: CompactionRunnerOptions = {}
   ) {}
 
   async run(userId: string): Promise<void> {
@@ -231,7 +239,7 @@ export class BeliefCompactionRunner {
       const qualifyingPartitions = await this.findQualifyingPartitions(
         userId,
         beliefType,
-        config,
+        config
       );
       for (const partition of qualifyingPartitions) {
         await this.compact(
@@ -240,10 +248,12 @@ export class BeliefCompactionRunner {
           partition.agentId,
           beliefType,
           config,
+          partition.depth,
+          partition.threshold
         ).catch((err: unknown) => {
           console.error(
             `[compaction] failed user=${userId} scope=${partition.scope} agent=${partition.agentId} type=${beliefType}:`,
-            err,
+            err
           );
         });
       }
@@ -257,24 +267,24 @@ export class BeliefCompactionRunner {
   private async findQualifyingPartitions(
     userId: string,
     beliefType: string,
-    config: CompactionTypeConfig,
+    config: CompactionTypeConfig
   ): Promise<QualifyingPartition[]> {
     const typeFilter =
-      beliefType === "expertise"
-        ? { type: "preference", subtype: "expertise" }
+      beliefType === 'expertise'
+        ? { type: 'preference', subtype: 'expertise' }
         : {
             type: beliefType,
-            $or: [{ subtype: null }, { subtype: { $exists: false } }],
+            $or: [{ subtype: null }, { subtype: { $exists: false } }]
           };
 
     const cooldownMs = this.options.cooldownMs ?? config.cooldownMs;
 
     const taxWindow = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const taxHotScopes = await this.beliefs.db
-      .collection("orientation_tax_events")
-      .distinct("scopes", {
+      .collection('orientation_tax_events')
+      .distinct('scopes', {
         user_id: userId,
-        created_at: { $gte: taxWindow },
+        created_at: { $gte: taxWindow }
       })
       .catch(() => [] as string[]);
 
@@ -292,41 +302,81 @@ export class BeliefCompactionRunner {
           count: number;
         }>([
           { $match: { user_id: userId, ...ACTIVE_FILTER, ...typeFilter } },
-          { $unwind: "$scope" },
+          { $unwind: '$scope' },
           {
             $group: {
-              _id: { scope: "$scope", agent_id: "$agent_id" },
-              count: { $sum: 1 },
-            },
+              _id: { scope: '$scope', agent_id: '$agent_id' },
+              count: { $sum: 1 }
+            }
           },
-          { $match: { count: { $gte: reducedThreshold } } },
+          { $match: { count: { $gte: reducedThreshold } } }
         ])
         .toArray(),
       this.compactionLog
         .find({
           user_id: userId,
           belief_type: beliefType,
-          ran_at: { $gte: new Date(Date.now() - cooldownMs) },
+          ran_at: { $gte: new Date(Date.now() - cooldownMs) }
         })
-        .toArray(),
+        .toArray()
     ]);
 
     if (countsByPartition.length === 0) return [];
 
-    const recentScopes = new Set(recentRuns.map((r) => r.scope));
+    const latestByScope = new Map<string, CompactionLogEntry>();
+    const latestDeepByScope = new Map<string, CompactionLogEntry>();
+    for (const log of recentRuns) {
+      if (!latestByScope.has(log.scope)) {
+        latestByScope.set(log.scope, log);
+      }
+      if (log.scan_depth === 'deep' && !latestDeepByScope.has(log.scope)) {
+        latestDeepByScope.set(log.scope, log);
+      }
+    }
 
-    return countsByPartition
-      .filter((p) => {
-        if (recentScopes.has(p._id.scope)) return false;
-        const effectiveThreshold = taxHotSet.has(p._id.scope)
-          ? reducedThreshold
-          : config.threshold;
-        return p.count >= effectiveThreshold;
-      })
-      .map((p) => ({
-        scope: p._id.scope,
-        agentId: p._id.agent_id ?? null,
-      }));
+    const now = Date.now();
+    const partitions: QualifyingPartition[] = [];
+
+    for (const p of countsByPartition) {
+      const scope = p._id.scope;
+      const isTaxHot = taxHotSet.has(scope);
+      const effectiveThreshold = isTaxHot ? reducedThreshold : config.threshold;
+
+      if (p.count < effectiveThreshold) continue;
+
+      const lastAny = latestByScope.get(scope);
+      const lastDeep = latestDeepByScope.get(scope);
+
+      const lastAnyAt = lastAny?.ran_at.getTime() ?? 0;
+      let lastDeepAt = lastDeep?.ran_at.getTime() ?? 0;
+
+      // Legacy log entries without scan_depth were all full-scope runs.
+      // Treat them as deep so they don't immediately re-trigger.
+      if (lastDeepAt === 0 && lastAny && lastAny.scan_depth === undefined) {
+        lastDeepAt = lastAnyAt;
+      }
+
+      if (now - lastDeepAt >= config.deepScanIntervalMs) {
+        partitions.push({
+          scope,
+          agentId: p._id.agent_id ?? null,
+          depth: 'deep',
+          threshold: effectiveThreshold
+        });
+        continue;
+      }
+
+      if (now - lastAnyAt >= cooldownMs) {
+        partitions.push({
+          scope,
+          agentId: p._id.agent_id ?? null,
+          depth: 'shallow',
+          threshold: effectiveThreshold
+        });
+      }
+    }
+
+    return partitions;
   }
 
   private async compact(
@@ -335,13 +385,15 @@ export class BeliefCompactionRunner {
     agentId: string | null,
     beliefType: string,
     config: CompactionTypeConfig,
+    depth: 'shallow' | 'deep',
+    threshold: number
   ): Promise<void> {
     const typeFilter =
-      beliefType === "expertise"
-        ? { type: "preference", subtype: "expertise" }
+      beliefType === 'expertise'
+        ? { type: 'preference', subtype: 'expertise' }
         : {
             type: beliefType,
-            $or: [{ subtype: null }, { subtype: { $exists: false } }],
+            $or: [{ subtype: null }, { subtype: { $exists: false } }]
           };
 
     const agentFilter: Record<string, unknown> = agentId
@@ -351,7 +403,7 @@ export class BeliefCompactionRunner {
     const baseFilter: Record<string, unknown> = {
       user_id: userId,
       scope: { $in: [scope] },
-      ...ACTIVE_FILTER,
+      ...ACTIVE_FILTER
     };
 
     const typeOr = (typeFilter as Record<string, unknown>).$or;
@@ -376,7 +428,7 @@ export class BeliefCompactionRunner {
       .find(baseFilter as Filter<Belief>)
       .toArray();
 
-    if (scopeBeliefs.length < config.threshold) return;
+    if (scopeBeliefs.length < threshold) return;
 
     if (config.isExpertiseSynthesis) {
       await this.compactExpertise(userId, scope, scopeBeliefs, config);
@@ -388,8 +440,89 @@ export class BeliefCompactionRunner {
         scopeBeliefs,
         config,
         beliefType,
+        depth
       );
     }
+  }
+
+  /**
+   * Shallow compaction gate with transitive (2-hop+) clustering.
+   *
+   * If belief A shares a term with B, and B shares a term with C, then
+   * A, B, and C all enter the same cluster even when A and C share no
+   * direct term overlap. This prevents the LLM from missing merge
+   * candidates that are lexically bridged through a middle belief.
+   */
+  private clusterByTermOverlap(beliefs: Belief[]): Belief[] {
+    if (beliefs.length === 0) return [];
+
+    const indexById = new Map<string, number>();
+    beliefs.forEach((b, i) => indexById.set(b._id, i));
+
+    const parent = beliefs.map((_, i) => i);
+    const rank = beliefs.map(() => 0);
+
+    const find = (x: number): number => {
+      if (parent[x] !== x) parent[x] = find(parent[x]);
+      return parent[x];
+    };
+
+    const union = (a: number, b: number) => {
+      const ra = find(a);
+      const rb = find(b);
+      if (ra === rb) return;
+      if (rank[ra] < rank[rb]) {
+        parent[ra] = rb;
+      } else if (rank[ra] > rank[rb]) {
+        parent[rb] = ra;
+      } else {
+        parent[rb] = ra;
+        rank[ra]++;
+      }
+    };
+
+    const termToFirstIndex = new Map<string, number>();
+
+    for (let i = 0; i < beliefs.length; i++) {
+      const belief = beliefs[i];
+      const terms = new Set<string>();
+
+      const addTerms = (s: string) => {
+        s.toLowerCase()
+          .split(/[_\s\-.]+/)
+          .filter((t) => t.length > 1)
+          .forEach((t) => terms.add(t));
+      };
+
+      addTerms(belief.canonical_name);
+      for (const alias of belief.aliases) {
+        addTerms(alias);
+      }
+
+      for (const term of terms) {
+        if (termToFirstIndex.has(term)) {
+          union(i, termToFirstIndex.get(term)!);
+        } else {
+          termToFirstIndex.set(term, i);
+        }
+      }
+    }
+
+    const components = new Map<number, Belief[]>();
+    for (let i = 0; i < beliefs.length; i++) {
+      const root = find(i);
+      if (!components.has(root)) components.set(root, []);
+      components.get(root)!.push(beliefs[i]);
+    }
+
+    const clustered: Belief[] = [];
+    for (const group of components.values()) {
+      if (group.length >= 2) {
+        clustered.push(...group);
+      }
+    }
+
+    return clustered;
   }
 
   private async compactDedup(
@@ -399,13 +532,24 @@ export class BeliefCompactionRunner {
     beliefs: Belief[],
     config: CompactionTypeConfig,
     beliefType: string,
+    depth: 'shallow' | 'deep'
   ): Promise<void> {
+    let candidates = beliefs.filter((b) => !b.origin_context?.active_file);
+
+    if (depth === 'shallow') {
+      candidates = this.clusterByTermOverlap(candidates);
+      if (candidates.length < 2) {
+        await this.logRun(userId, scope, beliefType, 0, depth);
+        return;
+      }
+    }
+
     const { merges, contradictions } = await this.callDedupLLM(
-      beliefs.filter((b) => !b.origin_context?.active_file),
-      config.prompt,
+      candidates,
+      config.prompt
     );
 
-    await this.logRun(userId, scope, beliefType, merges.length);
+    await this.logRun(userId, scope, beliefType, merges.length, depth);
 
     if (merges.length > 0) {
       await this.applyDedupMerges(userId, merges);
@@ -415,13 +559,14 @@ export class BeliefCompactionRunner {
       await this.persistContradictions(userId, scope, agentId, contradictions);
     }
 
-    if (config.invalidatesPersona && scope === "user:universal") {
+    if (config.invalidatesPersona && scope === 'user:universal') {
       await this.personaCache.invalidate(userId);
     }
   }
+
   private async callDedupLLM(
     beliefs: Belief[],
-    prompt: string,
+    prompt: string
   ): Promise<{
     merges: CompactionMerge[];
     contradictions: DetectedContradiction[];
@@ -432,14 +577,14 @@ export class BeliefCompactionRunner {
       canonical_name: b.canonical_name,
       content: b.content,
       aliases: b.aliases,
-      scope: b.scope,
+      scope: b.scope
     }));
 
     const resp = await this.resolveAdapter().call(
-      this.modelId ?? "",
+      this.modelId ?? '',
       prompt,
-      [{ role: "user", content: JSON.stringify(payload) }],
-      { temperature: 0.1, max_tokens: 20000 },
+      [{ role: 'user', content: JSON.stringify(payload) }],
+      { temperature: 0.1, max_tokens: 20000 }
     );
 
     const parsed = JSON.parse(this.extractJson(resp.content)) as {
@@ -451,7 +596,7 @@ export class BeliefCompactionRunner {
       merges: Array.isArray(parsed.merges) ? parsed.merges : [],
       contradictions: Array.isArray(parsed.contradictions)
         ? parsed.contradictions
-        : [],
+        : []
     };
   }
 
@@ -459,7 +604,7 @@ export class BeliefCompactionRunner {
     userId: string,
     scope: string,
     agentId: string | null,
-    contradictions: DetectedContradiction[],
+    contradictions: DetectedContradiction[]
   ): Promise<void> {
     const now = new Date();
 
@@ -468,19 +613,19 @@ export class BeliefCompactionRunner {
         user_id: userId,
         scope,
         agent_id: agentId,
-        status: "pending",
+        status: 'pending'
       })
       .toArray();
 
     const existingPairs = new Set(
-      existingPending.map((c) => [...c.belief_ids].sort().join("|")),
+      existingPending.map((c) => [...c.belief_ids].sort().join('|'))
     );
 
     const novel = contradictions.filter((c) => {
       if (!Array.isArray(c.belief_ids) || c.belief_ids.length !== 2) {
         return false;
       }
-      const key = [...c.belief_ids].sort().join("|");
+      const key = [...c.belief_ids].sort().join('|');
       return !existingPairs.has(key);
     });
 
@@ -493,9 +638,9 @@ export class BeliefCompactionRunner {
       scope,
       belief_ids: c.belief_ids,
       reason: c.reason,
-      status: "pending",
+      status: 'pending',
       detected_at: now,
-      resolved_at: null,
+      resolved_at: null
     }));
 
     await this.contradictions.insertMany(docs);
@@ -503,7 +648,7 @@ export class BeliefCompactionRunner {
 
   private async applyDedupMerges(
     userId: string,
-    merges: CompactionMerge[],
+    merges: CompactionMerge[]
   ): Promise<void> {
     const now = new Date();
 
@@ -519,19 +664,19 @@ export class BeliefCompactionRunner {
 
       const totalReinforcements = mergeSources.reduce(
         (sum, b) => sum + (b.reinforcement_count ?? 0),
-        0,
+        0
       );
       const maxLastReinforced = mergeSources.reduce(
         (max, b) => (b.last_reinforced_at > max ? b.last_reinforced_at : max),
-        source.last_reinforced_at,
+        source.last_reinforced_at
       );
 
       const allInferred = mergeSources.every(
-        (b) => b.epistemic_status === "inferred",
+        (b) => b.epistemic_status === 'inferred'
       );
       const promotedStatus =
         allInferred && totalReinforcements >= INFERRED_PROMOTION_THRESHOLD
-          ? "active"
+          ? 'active'
           : source.epistemic_status;
 
       const newId = randomUUID();
@@ -551,15 +696,15 @@ export class BeliefCompactionRunner {
         change_log: [
           {
             changed_at: now,
-            trigger: `compaction: merged from ${allIds.join(", ")}${
-              promotedStatus === "active" && allInferred
-                ? "; promoted from inferred via combined reinforcement"
-                : ""
+            trigger: `compaction: merged from ${allIds.join(', ')}${
+              promotedStatus === 'active' && allInferred
+                ? '; promoted from inferred via combined reinforcement'
+                : ''
             }`,
             changed_by_session: null,
-            changed_by_turn: null,
-          },
-        ],
+            changed_by_turn: null
+          }
+        ]
       };
 
       await this.beliefs.insertOne(merged);
@@ -567,19 +712,19 @@ export class BeliefCompactionRunner {
         { _id: { $in: allIds }, user_id: userId },
         {
           $set: {
-            epistemic_status: "superseded",
+            epistemic_status: 'superseded',
             superseded_by: newId,
-            updated_at: now,
+            updated_at: now
           },
           $push: {
             change_log: {
               changed_at: now,
               trigger: `superseded by compaction: ${newId}`,
               changed_by_session: null,
-              changed_by_turn: null,
-            },
-          },
-        },
+              changed_by_turn: null
+            }
+          }
+        }
       );
     }
   }
@@ -588,20 +733,20 @@ export class BeliefCompactionRunner {
     userId: string,
     scope: string,
     beliefs: Belief[],
-    _config: CompactionTypeConfig,
+    _config: CompactionTypeConfig
   ): Promise<void> {
     const { assessments, retireIds } = await this.callExpertiseLLM(beliefs);
-    await this.logRun(userId, scope, "expertise", assessments.length);
+    await this.logRun(userId, scope, 'expertise', assessments.length, 'deep');
     if (assessments.length === 0) return;
 
     await this.applyExpertiseAssessments(
       userId,
       assessments,
       retireIds,
-      beliefs,
+      beliefs
     );
 
-    if (scope === "user:universal") {
+    if (scope === 'user:universal') {
       await this.personaSummary.regenerate(userId);
     }
   }
@@ -620,14 +765,14 @@ export class BeliefCompactionRunner {
       epistemic_status: b.epistemic_status,
       confidence: b.confidence,
       reinforcement_count: b.reinforcement_count,
-      scope: b.scope,
+      scope: b.scope
     }));
 
     const resp = await this.resolveAdapter().call(
-      this.modelId ?? "",
+      this.modelId ?? '',
       EXPERTISE_SYNTHESIS_PROMPT,
-      [{ role: "user", content: JSON.stringify(payload) }],
-      { temperature: 0.1, max_tokens: 5000 },
+      [{ role: 'user', content: JSON.stringify(payload) }],
+      { temperature: 0.1, max_tokens: 5000 }
     );
 
     const parsed = JSON.parse(this.extractJson(resp.content)) as {
@@ -637,7 +782,7 @@ export class BeliefCompactionRunner {
 
     return {
       assessments: Array.isArray(parsed.assessments) ? parsed.assessments : [],
-      retireIds: Array.isArray(parsed.retire_ids) ? parsed.retire_ids : [],
+      retireIds: Array.isArray(parsed.retire_ids) ? parsed.retire_ids : []
     };
   }
 
@@ -645,7 +790,7 @@ export class BeliefCompactionRunner {
     userId: string,
     assessments: ExpertiseAssessment[],
     retireIds: string[],
-    sourceBeliefsForUser: Belief[],
+    sourceBeliefsForUser: Belief[]
   ): Promise<void> {
     const now = new Date();
     const sourceIds = sourceBeliefsForUser.map((b) => b._id);
@@ -653,9 +798,9 @@ export class BeliefCompactionRunner {
     for (const assessment of assessments) {
       const existing = await this.beliefs.findOne({
         user_id: userId,
-        subtype: "expertise",
+        subtype: 'expertise',
         expertise_domain: assessment.domain,
-        ...ACTIVE_FILTER,
+        ...ACTIVE_FILTER
       });
 
       const newId = randomUUID();
@@ -665,20 +810,20 @@ export class BeliefCompactionRunner {
         user_id: userId,
         agent_id:
           existing?.agent_id ?? sourceBeliefsForUser[0]?.agent_id ?? null,
-        type: "preference",
-        subtype: "expertise",
+        type: 'preference',
+        subtype: 'expertise',
         canonical_name: assessment.canonical_name,
         aliases: existing?.aliases ?? [],
         content: assessment.content,
         why_it_matters: assessment.why_it_matters,
         scope: assessment.scope,
         provenance: existing?.provenance ?? {
-          session_id: "",
-          turn_id: "",
+          session_id: '',
+          turn_id: '',
           extracted_at: now,
-          source_model: this.modelId ?? "unknown",
+          source_model: this.modelId ?? 'unknown'
         },
-        epistemic_status: "active",
+        epistemic_status: 'active',
         confidence: assessment.confidence,
         reinforcement_count: assessment.evidence_count,
         last_reinforced_at: now,
@@ -700,11 +845,11 @@ export class BeliefCompactionRunner {
             previous_epistemic_status: existing?.epistemic_status ?? null,
             previous_confidence: existing?.confidence ?? null,
             changed_by_session: null,
-            changed_by_turn: null,
-          },
+            changed_by_turn: null
+          }
         ],
         created_at: now,
-        updated_at: now,
+        updated_at: now
       };
 
       await this.beliefs.insertOne(newBelief);
@@ -714,19 +859,19 @@ export class BeliefCompactionRunner {
           { _id: existing._id, user_id: userId },
           {
             $set: {
-              epistemic_status: "superseded",
+              epistemic_status: 'superseded',
               superseded_by: newId,
-              updated_at: now,
+              updated_at: now
             },
             $push: {
               change_log: {
                 changed_at: now,
                 trigger: `superseded by expertise re-synthesis: ${newId}`,
                 changed_by_session: null,
-                changed_by_turn: null,
-              },
-            },
-          },
+                changed_by_turn: null
+              }
+            }
+          }
         );
       }
 
@@ -736,19 +881,19 @@ export class BeliefCompactionRunner {
           { _id: { $in: toRetire }, user_id: userId },
           {
             $set: {
-              epistemic_status: "superseded",
+              epistemic_status: 'superseded',
               superseded_by: newId,
-              updated_at: now,
+              updated_at: now
             },
             $push: {
               change_log: {
                 changed_at: now,
                 trigger: `retired by expertise synthesis: ${newId}`,
                 changed_by_session: null,
-                changed_by_turn: null,
-              },
-            },
-          },
+                changed_by_turn: null
+              }
+            }
+          }
         );
       }
     }
@@ -759,6 +904,7 @@ export class BeliefCompactionRunner {
     scope: string,
     beliefType: string,
     mergedCount: number,
+    depth: 'shallow' | 'deep' = 'deep'
   ): Promise<void> {
     await this.compactionLog.insertOne({
       _id: randomUUID(),
@@ -767,14 +913,14 @@ export class BeliefCompactionRunner {
       belief_type: beliefType,
       ran_at: new Date(),
       merged_count: mergedCount,
+      scan_depth: depth
     });
   }
 
   private extractJson(raw: string): string {
     const stripped = raw
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/```\s*$/i, "")
-      .slice(0, 32_000);
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/```\s*$/i, '');
 
     const match = stripped.match(/\{[\s\S]*\}/);
     return match ? match[0] : stripped;
