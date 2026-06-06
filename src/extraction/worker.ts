@@ -9,6 +9,7 @@ import {
   type NewBelief,
   type StyleSignal,
 } from "./types.js";
+import { BeliefsReader } from "../context/beliefsReader.js";
 
 export interface ExtractionWorkerDeps {
   db: Db;
@@ -28,6 +29,7 @@ export class ExtractionWorker implements ExtractionWorkerLike {
   private readonly merger: BeliefMerger;
   private readonly writer: BeliefWriter;
   private readonly styleSignals: Collection;
+  private readonly reader: BeliefsReader;
   private readonly personaSummary: {
     regenerate(userId: string): Promise<void>;
   };
@@ -37,8 +39,9 @@ export class ExtractionWorker implements ExtractionWorkerLike {
     this.jobs = deps.db.collection<ExtractionJob>("jobs");
     this.config = deps.db.collection("config");
     this.styleSignals = deps.db.collection("style_signals");
+    this.reader = new BeliefsReader(deps.beliefs);
     this.writer = new BeliefWriter(deps.beliefs);
-    this.merger = new BeliefMerger(this.writer);
+    this.merger = new BeliefMerger(this.writer, this.reader);
     this.personaSummary = deps.personaSummary;
   }
 
