@@ -33,4 +33,5 @@ export interface ErrorLog {
   passthrough_succeeded: boolean | null;
   resolved: boolean;
   resolved_at: Date | null;
+  actor_id: string | null;
 }

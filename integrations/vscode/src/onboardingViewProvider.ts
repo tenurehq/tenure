@@ -11,7 +11,7 @@ export class OnboardingPanel {
     context: vscode.ExtensionContext,
     tokenStore: TokenStore,
     lmProvider: TenureLmProvider | undefined,
-    hostApp: import("./hostEnvironment.js").HostApp = "vscode",
+    hostApp: import("./hostEnvironment.js").HostApp = "vscode"
   ): void {
     if (OnboardingPanel.current) {
       OnboardingPanel.current.panel.reveal(vscode.ViewColumn.One);
@@ -24,7 +24,7 @@ export class OnboardingPanel {
     private readonly context: vscode.ExtensionContext,
     private readonly tokenStore: TokenStore,
     private readonly lmProvider: TenureLmProvider | undefined,
-    private readonly hostApp: import("./hostEnvironment.js").HostApp = "vscode",
+    private readonly hostApp: import("./hostEnvironment.js").HostApp = "vscode"
   ) {
     this.panel = vscode.window.createWebviewPanel(
       "tenure.onboarding",
@@ -33,18 +33,21 @@ export class OnboardingPanel {
       {
         enableScripts: true,
         retainContextWhenHidden: true,
-        localResourceRoots: [context.extensionUri],
-      },
+        localResourceRoots: [context.extensionUri]
+      }
     );
 
     OnboardingPanel.current = this;
 
-    this.panel.webview.html = this.buildHtml();
+    const cfg = vscode.workspace.getConfiguration("tenure");
+    const baseUrl = cfg.get<string>("baseUrl", "http://localhost:5757");
+    const apiUrl = baseUrl.replace(/\/$/, "") + "/v1";
+    this.panel.webview.html = this.buildHtml(baseUrl, apiUrl);
 
     this.panel.webview.onDidReceiveMessage(
       (msg) => this.handleMessage(msg),
       undefined,
-      context.subscriptions,
+      context.subscriptions
     );
 
     this.panel.onDidDispose(() => {
@@ -84,7 +87,7 @@ export class OnboardingPanel {
         await vscode.commands.executeCommand(
           "setContext",
           "tenure.tokenConfigured",
-          true,
+          true
         );
         await this.checkAndRoute(baseUrl, t);
         break;
@@ -108,10 +111,10 @@ export class OnboardingPanel {
             method: "PUT",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
+              Authorization: `Bearer ${token}`
             },
             body: JSON.stringify(body),
-            signal: AbortSignal.timeout(15_000),
+            signal: AbortSignal.timeout(15_000)
           });
           if (!res.ok) {
             const data = (await res.json().catch(() => ({}))) as {
@@ -119,7 +122,7 @@ export class OnboardingPanel {
             };
             this.post({
               type: "provider_error",
-              message: data?.error?.message ?? `HTTP ${res.status}`,
+              message: data?.error?.message ?? `HTTP ${res.status}`
             });
             return;
           }
@@ -149,13 +152,13 @@ export class OnboardingPanel {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
+              Authorization: `Bearer ${token}`
             },
             body: JSON.stringify({
               provider_id: providerId,
-              model_id: modelId,
+              model_id: modelId
             }),
-            signal: AbortSignal.timeout(30_000),
+            signal: AbortSignal.timeout(30_000)
           });
           const data = (await res.json()) as {
             ok?: boolean;
@@ -164,7 +167,7 @@ export class OnboardingPanel {
           if (!res.ok) {
             this.post({
               type: "model_error",
-              message: data?.error?.message ?? `HTTP ${res.status}`,
+              message: data?.error?.message ?? `HTTP ${res.status}`
             });
             return;
           }
@@ -183,7 +186,7 @@ export class OnboardingPanel {
         try {
           const res = await fetch(`${baseUrl}/v1/onboarding/questions`, {
             headers: { Authorization: `Bearer ${token}` },
-            signal: AbortSignal.timeout(5_000),
+            signal: AbortSignal.timeout(5_000)
           });
           const data = (await res.json()) as {
             questions: Array<{ id: string; category: string; text: string }>;
@@ -207,10 +210,10 @@ export class OnboardingPanel {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
+              Authorization: `Bearer ${token}`
             },
             body: JSON.stringify({ answers }),
-            signal: AbortSignal.timeout(60_000),
+            signal: AbortSignal.timeout(60_000)
           });
           if (!res.ok) {
             const d = (await res.json().catch(() => ({}))) as {
@@ -218,7 +221,7 @@ export class OnboardingPanel {
             };
             this.post({
               type: "submit_error",
-              message: d?.error?.message ?? `HTTP ${res.status}`,
+              message: d?.error?.message ?? `HTTP ${res.status}`
             });
             return;
           }
@@ -249,13 +252,13 @@ export class OnboardingPanel {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
+              Authorization: `Bearer ${token}`
             },
             body: JSON.stringify({
               draft_id: draftId,
-              edited_beliefs: editedBeliefs,
+              edited_beliefs: editedBeliefs
             }),
-            signal: AbortSignal.timeout(30_000),
+            signal: AbortSignal.timeout(30_000)
           });
           if (!res.ok) {
             const d = (await res.json().catch(() => ({}))) as {
@@ -263,7 +266,7 @@ export class OnboardingPanel {
             };
             this.post({
               type: "commit_error",
-              message: d?.error?.message ?? `HTTP ${res.status}`,
+              message: d?.error?.message ?? `HTTP ${res.status}`
             });
             return;
           }
@@ -272,10 +275,10 @@ export class OnboardingPanel {
             method: "PUT",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
+              Authorization: `Bearer ${token}`
             },
             body: JSON.stringify({ value: true }),
-            signal: AbortSignal.timeout(5_000),
+            signal: AbortSignal.timeout(5_000)
           }).catch(() => {});
 
           this.lmProvider?.refresh();
@@ -291,17 +294,17 @@ export class OnboardingPanel {
         await fetch(`${baseUrl}/v1/onboarding/skip`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
-          signal: AbortSignal.timeout(5_000),
+          signal: AbortSignal.timeout(5_000)
         }).catch(() => {});
 
         await fetch(`${baseUrl}/admin/config/seeded_agent:vscode`, {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
+            Authorization: `Bearer ${token}`
           },
           body: JSON.stringify({ value: true }),
-          signal: AbortSignal.timeout(5_000),
+          signal: AbortSignal.timeout(5_000)
         }).catch(() => {});
         this.lmProvider?.refresh();
         this.post({ type: "skipped" });
@@ -314,7 +317,7 @@ export class OnboardingPanel {
     try {
       const cfgRes = await fetch(`${baseUrl}/admin/config`, {
         headers: { Authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(5_000),
+        signal: AbortSignal.timeout(5_000)
       });
       if (cfgRes.status === 401) {
         this.post({ type: "show_token_entry", error: "Invalid token." });
@@ -339,7 +342,7 @@ export class OnboardingPanel {
       if (!cfg.default_model) {
         this.post({
           type: "show_model_picker",
-          providerId: cfg.default_provider ?? "openai",
+          providerId: cfg.default_provider ?? "openai"
         });
         return;
       }
@@ -352,12 +355,12 @@ export class OnboardingPanel {
 
   private async checkOnboardingStatus(
     baseUrl: string,
-    token: string,
+    token: string
   ): Promise<void> {
     try {
       const cfgRes = await fetch(`${baseUrl}/admin/config`, {
         headers: { Authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(5_000),
+        signal: AbortSignal.timeout(5_000)
       });
       if (!cfgRes.ok) throw new Error(`HTTP ${cfgRes.status}`);
 
@@ -378,15 +381,15 @@ export class OnboardingPanel {
   private async fetchAndSendModels(
     baseUrl: string,
     token: string,
-    providerId: string,
+    providerId: string
   ): Promise<void> {
     try {
       const res = await fetch(
         `${baseUrl}/v1/onboarding/probe-models/${providerId}`,
         {
           headers: { Authorization: `Bearer ${token}` },
-          signal: AbortSignal.timeout(15_000),
-        },
+          signal: AbortSignal.timeout(15_000)
+        }
       );
       if (!res.ok) {
         const d = (await res.json().catch(() => ({}))) as {
@@ -394,7 +397,7 @@ export class OnboardingPanel {
         };
         this.post({
           type: "provider_error",
-          message: d?.error?.message ?? `Probe failed (HTTP ${res.status})`,
+          message: d?.error?.message ?? `Probe failed (HTTP ${res.status})`
         });
         return;
       }
@@ -410,35 +413,35 @@ export class OnboardingPanel {
       this.post({
         type: "models_probed",
         models: data.models,
-        providerId,
+        providerId
       });
     } catch (e) {
       this.post({
         type: "provider_error",
-        message: `Probe error: ${(e as Error).message}`,
+        message: `Probe error: ${(e as Error).message}`
       });
     }
   }
 
-  private buildHtml(): string {
+  private buildHtml(baseUrl: string, apiUrl: string): string {
     const completeInstructions =
       this.hostApp === "cursor"
         ? `<div class="label">Point Cursor at Tenure</div>
            <p style="font-size:0.85rem;line-height:1.5;margin-bottom:12px">
              Go to <strong>Cursor Settings → Models</strong>, enable <strong>OpenAI API Key</strong>,
              paste your Tenure token as the key, and set the override URL to
-             <code>http://localhost:5757/v1</code>.
+             <code>${apiUrl}</code>.
            </p>`
         : this.hostApp === "windsurf"
         ? `<div class="label">Point Windsurf at Tenure</div>
            <p style="font-size:0.85rem;line-height:1.5;margin-bottom:12px">
              Go to <strong>Windsurf Settings → AI Providers</strong> and add an OpenAI-compatible
-             provider with base URL <code>http://localhost:5757/v1</code> and your Tenure token.
+             provider with base URL <code>${apiUrl}</code> and your Tenure token.
            </p>`
         : `<div class="label">Tenure is now available in the VS Code model picker</div>
            <p style="font-size:0.85rem;line-height:1.5;margin-bottom:12px">
              Open Copilot Chat and select a <strong>Tenure:</strong> model from the dropdown,
-             or point any client at <code>http://localhost:5757/v1</code>.
+             or point any client at <code>${apiUrl}</code>.
            </p>`;
 
     return `<!DOCTYPE html>
@@ -1052,7 +1055,7 @@ function showComplete() {
     <div class="complete-box">
       \${completeInstructions}
       <div class="label" style="margin-top:12px">Or point your client directly</div>
-      <p style="font-size:0.85rem;margin-bottom:4px"><span style="color:var(--vscode-descriptionForeground)">Base URL:</span> <code>http://localhost:5757/v1</code></p>
+      <p style="font-size:0.85rem;margin-bottom:4px"><span style="color:var(--vscode-descriptionForeground)">Base URL:</span> <code>${apiUrl}</code></p>
       <p style="font-size:0.85rem"><span style="color:var(--vscode-descriptionForeground)">API Key:</span> your Tenure token</p>
     </div>
     <div class="actions" style="margin-top:20px">
@@ -1083,7 +1086,7 @@ function showConnectionError(message) {
     <h1>Connection error</h1>
     <p class="subtitle">Could not reach the Tenure proxy.</p>
     <div class="error-msg">\${esc(message)}</div>
-    <p class="info-msg" style="margin-top:8px">Make sure your Tenure proxy is running at the configured base URL (<code>http://localhost:5757</code> by default).</p>
+    <p class="info-msg" style="margin-top:8px">Make sure your Tenure proxy is running at the configured base URL (<code>${baseUrl}</code> by default).</p>
     <div class="actions">
       <button class="btn btn-primary" id="retry-btn">Retry</button>
     </div>

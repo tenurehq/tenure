@@ -47,9 +47,10 @@ function makeCollections(overrides: Partial<Collections> = {}): Collections {
     topic_index: null as any,
     persona_cache: null as any,
     compaction_log: null as any,
-    ...overrides,
+    ...overrides
   };
 }
+
 test("load returns defaults when collection is empty", async (t) => {
   const store = new RuntimeConfigStore(makeCollections(), vault);
   const cfg = await store.load();
@@ -160,7 +161,7 @@ test("load ignores keys not present in defaults", async (t) => {
     key: "totally_unknown",
     value: "whatever",
     encrypted: false,
-    updatedAt: new Date(),
+    updatedAt: new Date()
   });
 
   const store = new RuntimeConfigStore(makeCollections(), vault);

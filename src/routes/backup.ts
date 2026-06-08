@@ -7,30 +7,38 @@ import { BackupImporter, type ImportOptions } from "../backup/importer.js";
 export interface BackupDeps {
   db: Db;
   runtimeStore: RuntimeConfigStore;
-  userId: string;
 }
+
+const exportsEnabled = process.env.TENURE_BACKUP_EXPORTS_ENABLED !== "false";
+const importsEnabled = process.env.TENURE_BACKUP_IMPORTS_ENABLED !== "false";
 
 export function registerBackupRoutes(
   app: FastifyInstance,
-  deps: BackupDeps,
+  deps: BackupDeps
 ): void {
   app.post<{
     Body: { passphrase: string };
   }>("/v1/backup/export", async (req, reply) => {
+    if (!exportsEnabled) {
+      return reply.code(403).send({
+        error: { message: "Backup export is disabled in this deployment." }
+      });
+    }
+
     const { passphrase } = req.body;
 
     if (!passphrase || passphrase.length < 8) {
       return reply.code(400).send({
         error: {
-          message: "Passphrase is required and must be at least 8 characters",
-        },
+          message: "Passphrase is required and must be at least 8 characters"
+        }
       });
     }
 
     const exporter = new BackupExporter({
       db: deps.db,
       runtimeStore: deps.runtimeStore,
-      userId: deps.userId,
+      userId: req.tenureUserId
     });
 
     const archive = await exporter.export(passphrase);
@@ -53,19 +61,25 @@ export function registerBackupRoutes(
       import_sessions?: boolean;
     };
   }>("/v1/backup/import", async (req, reply) => {
+    if (!importsEnabled) {
+      return reply.code(403).send({
+        error: { message: "Backup import is disabled in this deployment." }
+      });
+    }
+
     const { passphrase, skip_existing, import_config, import_sessions } =
       req.body;
 
     if (!passphrase) {
       return reply.code(400).send({
-        error: { message: "Passphrase is required" },
+        error: { message: "Passphrase is required" }
       });
     }
 
     const archiveField = (req.body as Record<string, unknown>).archive;
     if (!archiveField || typeof archiveField !== "string") {
       return reply.code(400).send({
-        error: { message: "archive field (base64) is required" },
+        error: { message: "archive field (base64) is required" }
       });
     }
 
@@ -75,24 +89,24 @@ export function registerBackupRoutes(
       skipExisting: skip_existing ?? true,
       importConfig: import_config ?? true,
       importSessions: import_sessions ?? false,
-      remapUserId: true,
+      remapUserId: true
     };
 
     const importer = new BackupImporter({
       db: deps.db,
       runtimeStore: deps.runtimeStore,
-      userId: deps.userId,
+      userId: req.tenureUserId
     });
 
     try {
       const result = await importer.importEncrypted(
         archive,
         passphrase,
-        options,
+        options
       );
       return reply.send({
         ok: true,
-        result,
+        result
       });
     } catch (err) {
       const message = (err as Error).message;
@@ -101,23 +115,23 @@ export function registerBackupRoutes(
         message.includes("Decryption failed")
       ) {
         return reply.code(401).send({
-          error: { message: "Wrong passphrase or corrupted archive" },
+          error: { message: "Wrong passphrase or corrupted archive" }
         });
       }
       if (message.includes("Unsupported export version")) {
         return reply.code(422).send({
-          error: { message },
+          error: { message }
         });
       }
       throw err;
     }
   });
 
-  app.get("/v1/backup/preview", async (_req, reply) => {
+  app.get("/v1/backup/preview", async (req, reply) => {
     const exporter = new BackupExporter({
       db: deps.db,
       runtimeStore: deps.runtimeStore,
-      userId: deps.userId,
+      userId: req.tenureUserId
     });
 
     const payload = await exporter.exportUnencrypted();
@@ -129,13 +143,13 @@ export function registerBackupRoutes(
       counts: {
         beliefs: payload.beliefs.length,
         beliefs_active: payload.beliefs.filter(
-          (b) => b.superseded_by === null && b.resolved_at === null,
+          (b) => b.superseded_by === null && b.resolved_at === null
         ).length,
         sessions: payload.sessions.length,
         compaction_entries: payload.compaction_log.length,
         has_persona: payload.persona_cache !== null,
-        has_config: payload.runtime_config !== null,
-      },
+        has_config: payload.runtime_config !== null
+      }
     });
   });
 }

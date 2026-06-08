@@ -8,6 +8,7 @@ export interface ErrorInput {
   message: string;
   error?: Error;
   user_id: string;
+  actor_id: string | null;
   session_id?: string;
   request_id?: string;
   provider?: string;
@@ -30,6 +31,7 @@ export class ErrorLogger {
       exception_type: input.error?.name ?? null,
       stack_trace: input.error?.stack ?? null,
       user_id: input.user_id,
+      actor_id: input.actor_id ?? null,
       session_id: input.session_id ?? null,
       request_id: input.request_id ?? null,
       provider: input.provider ?? null,
@@ -38,7 +40,7 @@ export class ErrorLogger {
       user_impacted: input.user_impacted ?? false,
       passthrough_succeeded: input.passthrough_succeeded ?? null,
       resolved: false,
-      resolved_at: null,
+      resolved_at: null
     };
 
     try {
@@ -46,7 +48,7 @@ export class ErrorLogger {
     } catch (e) {
       console.error("[error_logger] failed to persist error", {
         original: input,
-        meta: e,
+        meta: e
       });
     }
   }

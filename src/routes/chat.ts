@@ -7,7 +7,7 @@ import { splitSidecar, SIDECAR_BEGIN } from "../sidecar/splitter.js";
 import { ContextBuilder, EMPTY_CONTEXT } from "../context/contextBuilder.js";
 import {
   ProviderRegistry,
-  ProviderNotConfiguredError,
+  ProviderNotConfiguredError
 } from "../providers/registry.js";
 import { ExtractionJobQueue } from "../jobs/queue.js";
 import type { ContentPart, Message, SystemPrompt } from "../providers/types.js";
@@ -24,7 +24,7 @@ import {
   type ScopeDetectorDeps,
   tryInterceptExtractCommand,
   tryInterceptInjectCommand,
-  tryInterceptSessionCommand,
+  tryInterceptSessionCommand
 } from "../helpers/scopeDetector.js";
 import type { ErrorLogger } from "../errors/logger.js";
 import { parseClient, type ParsedClient } from "../helpers/clientDetector.js";
@@ -39,7 +39,6 @@ export interface ChatDeps {
   providers: ProviderRegistry;
   jobs: ExtractionJobQueue;
   extractionWorker: ExtractionWorkerLike;
-  userId: string;
   runtimeStore: RuntimeConfigStore;
   scopeDetector?: ScopeDetectorDeps;
   errorLogger: ErrorLogger;
@@ -86,7 +85,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
         .send({ error: { message: "messages is required" } });
     }
 
-    const { userId } = deps;
+    const userId = req.tenureUserId;
 
     const requestedModel = body.model;
     if (!requestedModel) {
@@ -99,8 +98,8 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
         error: {
           message: tierResult.reason,
           type: "model_not_supported",
-          supported_families: listSupportedFamilies(),
-        },
+          supported_families: listSupportedFamilies()
+        }
       });
     }
     const tierWarning = !tierResult.supported
@@ -111,15 +110,15 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
     try {
       adapter = deps.providers.detectFromModel(
         requestedModel,
-        "openai",
+        "openai"
       ) as unknown as OpenAIAdapter;
     } catch (e) {
       if (e instanceof ProviderNotConfiguredError) {
         return reply.code(502).send({
           error: {
             message: `No credentials for provider detected from model "${requestedModel}"`,
-            type: "provider_not_configured",
-          },
+            type: "provider_not_configured"
+          }
         });
       }
       throw e;
@@ -139,7 +138,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
     const adapterBody: Record<string, unknown> = {
       ...passThrough,
       ...(temperature !== undefined && { temperature }),
-      ...(max_tokens !== undefined && { max_tokens }),
+      ...(max_tokens !== undefined && { max_tokens })
     };
 
     let sessionId: string;
@@ -167,7 +166,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       if (needsBind) {
         const updated = await deps.sessions.update(sessionId, userId, {
           providerId: adapter.id,
-          model: requestedModel,
+          model: requestedModel
         });
         if (updated?.providerId && updated?.model) {
           session = updated as Session & { providerId: string; model: string };
@@ -178,7 +177,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
     } catch (err) {
       req.log.warn(
         { err, sessionId },
-        "session load failed — proceeding without session",
+        "session load failed — proceeding without session"
       );
     }
 
@@ -195,7 +194,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       injection_enabled: true,
       managed_history_token_cap: 120000,
       compaction_mode: "aggressive" as const,
-      scope_auto_detect: true,
+      scope_auto_detect: true
     }));
 
     const client = parseClient(req.headers["user-agent"] as string | undefined);
@@ -207,7 +206,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       rawContentText,
       userId,
       deps,
-      req.log,
+      req.log
     );
 
     if (sessionIntercepted) {
@@ -220,7 +219,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
         if (needsBind) {
           const updated = await deps.sessions.update(sessionId, userId, {
             providerId: adapter.id,
-            model: requestedModel,
+            model: requestedModel
           });
           if (updated?.providerId && updated?.model) {
             session = updated as Session & {
@@ -234,7 +233,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       } catch (err) {
         req.log.warn(
           { err, sessionId },
-          "session reload after !session failed",
+          "session reload after !session failed"
         );
       }
     }
@@ -244,7 +243,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       sessionId,
       userId,
       deps,
-      req.log,
+      req.log
     );
 
     if (intercepted) {
@@ -258,8 +257,8 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
           {
             index: 0,
             message: { role: "assistant", content: intercepted.message },
-            finish_reason: "stop",
-          },
+            finish_reason: "stop"
+          }
         ],
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
         tenure: {
@@ -268,8 +267,8 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
           scope: intercepted.newScope,
           parse_status: "missing",
           degraded: false,
-          context: { beliefs: 0, questions: 0, compacted_turns: 0 },
-        },
+          context: { beliefs: 0, questions: 0, compacted_turns: 0 }
+        }
       });
     }
 
@@ -278,7 +277,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       sessionId,
       userId,
       { sessions: deps.sessions, runtimeStore: deps.runtimeStore },
-      req.log,
+      req.log
     );
 
     if (extractIntercepted) {
@@ -292,8 +291,8 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
           {
             index: 0,
             message: { role: "assistant", content: extractIntercepted.message },
-            finish_reason: "stop",
-          },
+            finish_reason: "stop"
+          }
         ],
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
         tenure: {
@@ -302,8 +301,8 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
           scope,
           parse_status: "missing",
           degraded: false,
-          context: { beliefs: 0, questions: 0, compacted_turns: 0 },
-        },
+          context: { beliefs: 0, questions: 0, compacted_turns: 0 }
+        }
       });
     }
 
@@ -312,7 +311,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       sessionId,
       userId,
       { sessions: deps.sessions, runtimeStore: deps.runtimeStore },
-      req.log,
+      req.log
     );
 
     if (injectIntercepted) {
@@ -326,8 +325,8 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
           {
             index: 0,
             message: { role: "assistant", content: injectIntercepted.message },
-            finish_reason: "stop",
-          },
+            finish_reason: "stop"
+          }
         ],
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
         tenure: {
@@ -336,8 +335,8 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
           scope,
           parse_status: "missing",
           degraded: false,
-          context: { beliefs: 0, questions: 0, compacted_turns: 0 },
-        },
+          context: { beliefs: 0, questions: 0, compacted_turns: 0 }
+        }
       });
     }
 
@@ -350,7 +349,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       latestUserMessage,
       cfg,
       deps,
-      logger: req.log,
+      logger: req.log
     });
 
     const noExtractHeader =
@@ -421,7 +420,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
           : null,
         languageScope: headerLanguage
           ? `domain:code/${headerLanguage.toLowerCase()}`
-          : null,
+          : null
       };
 
       if (!ideScope.projectScope && deps.workspaceState) {
@@ -442,12 +441,12 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
         activeScope: scope[0],
         scopeAutoDetect: cfg.scope_auto_detect !== false,
         extractionMode,
-        ideScope,
+        ideScope
       });
     } catch (err) {
       req.log.error(
         { err },
-        "system prompt build failed — falling back to raw",
+        "system prompt build failed — falling back to raw"
       );
       const fallback = messages.find((m) => m.role === "system")?.content ?? "";
       systemPrompt = typeof fallback === "string" ? fallback : "";
@@ -464,15 +463,15 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
           scope,
           agentId,
           injected: injectionEnabled,
-          beliefCtx,
+          beliefCtx
         })
         .catch((err) =>
-          req.log.warn({ err, requestId }, "injection audit write failed"),
+          req.log.warn({ err, requestId }, "injection audit write failed")
         );
     }
 
     const passMessages = messages.filter(
-      (m) => m.role !== "system",
+      (m) => m.role !== "system"
     ) as Message[];
 
     const ideLanguageScope = ideScope?.languageScope ?? null;
@@ -505,8 +504,8 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
           extractionMode,
           ideProjectScope: ideScope?.projectScope ?? null,
           ideLanguageScope,
-          ideActiveFile,
-        },
+          ideActiveFile
+        }
       );
     }
 
@@ -516,7 +515,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
         requestedModel,
         systemPrompt,
         passMessages,
-        adapterBody,
+        adapterBody
       );
     } catch (e) {
       const reason = (e as Error).message;
@@ -528,29 +527,30 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
           message: reason.slice(0, 500),
           error: e instanceof Error ? e : new Error(reason),
           user_id: userId,
+          actor_id: userId,
           session_id: sessionId,
           request_id: requestId,
           provider: adapter.id,
           model: requestedModel,
           user_impacted: true,
-          passthrough_succeeded: false,
+          passthrough_succeeded: false
         })
         .catch(() => {});
 
       return reply.code(502).send({
-        error: { message: (e as Error).message, type: "provider_error" },
+        error: { message: (e as Error).message, type: "provider_error" }
       });
     }
 
     const { visible, sidecarRaw, parseStatus } = splitSidecar(
-      providerResp.content ?? "",
+      providerResp.content ?? ""
     );
 
     if (tierWarning) reply.header("x-tenure-warning", tierWarning);
 
     const messagePayload: Record<string, unknown> = {
       role: "assistant",
-      content: visible,
+      content: visible
     };
     if (providerResp.toolCalls?.length) {
       messagePayload.tool_calls = providerResp.toolCalls;
@@ -565,15 +565,15 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
         {
           index: 0,
           message: messagePayload,
-          finish_reason: providerResp.finish_reason,
-        },
+          finish_reason: providerResp.finish_reason
+        }
       ],
       usage: {
         prompt_tokens: providerResp.usage.input_tokens,
         completion_tokens: providerResp.usage.output_tokens,
         total_tokens:
-          providerResp.usage.input_tokens + providerResp.usage.output_tokens,
-      },
+          providerResp.usage.input_tokens + providerResp.usage.output_tokens
+      }
     });
 
     try {
@@ -598,12 +598,12 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
         extractionMode,
         ideProjectScope: ideScope?.projectScope ?? null,
         ideLanguageScope: ideScope?.languageScope ?? null,
-        ideActiveFile: deps.workspaceState?.get(userId)?.active_file ?? null,
+        ideActiveFile: deps.workspaceState?.get(userId)?.active_file ?? null
       });
     } catch (err) {
       req.log.error(
         { err, sessionId, requestId },
-        "side effects failed — response still delivered",
+        "side effects failed — response still delivered"
       );
     }
   });
@@ -638,7 +638,7 @@ async function handleStreamingResponse(
   systemPrompt: SystemPrompt,
   messages: Message[],
   body: Record<string, unknown>,
-  ctx: StreamingCtx,
+  ctx: StreamingCtx
 ): Promise<void> {
   reply.hijack();
   const raw = reply.raw;
@@ -648,7 +648,7 @@ async function handleStreamingResponse(
     "cache-control": "no-cache",
     connection: "keep-alive",
     "transfer-encoding": "chunked",
-    ...(ctx.tierWarning ? { "x-tenure-warning": ctx.tierWarning } : {}),
+    ...(ctx.tierWarning ? { "x-tenure-warning": ctx.tierWarning } : {})
   });
 
   const sseId = `chatcmpl-${ctx.requestId}`;
@@ -670,9 +670,9 @@ async function handleStreamingResponse(
       {
         index: 0,
         delta: { role: "assistant", content: "" },
-        finish_reason: null,
-      },
-    ],
+        finish_reason: null
+      }
+    ]
   });
 
   const abortController = new AbortController();
@@ -690,7 +690,7 @@ async function handleStreamingResponse(
       systemPrompt,
       messages,
       body,
-      abortController.signal,
+      abortController.signal
     )) {
       if (abortController.signal.aborted) break;
 
@@ -718,9 +718,9 @@ async function handleStreamingResponse(
               {
                 index: 0,
                 delta: { content: remaining },
-                finish_reason: null,
-              },
-            ],
+                finish_reason: null
+              }
+            ]
           });
         }
         flushedIdx = markerIdx;
@@ -737,9 +737,9 @@ async function handleStreamingResponse(
               {
                 index: 0,
                 delta: { content: fullContent.slice(flushedIdx, safeEnd) },
-                finish_reason: null,
-              },
-            ],
+                finish_reason: null
+              }
+            ]
           });
           flushedIdx = safeEnd;
         }
@@ -760,12 +760,13 @@ async function handleStreamingResponse(
         message: message.slice(0, 500),
         error: err instanceof Error ? err : new Error(message),
         user_id: ctx.userId,
+        actor_id: ctx.userId,
         session_id: ctx.sessionId,
         request_id: ctx.requestId,
         provider: ctx.adapter.id,
         model: ctx.requestedModel,
         user_impacted: true,
-        passthrough_succeeded: false,
+        passthrough_succeeded: false
       })
       .catch(() => {});
 
@@ -776,9 +777,9 @@ async function handleStreamingResponse(
         requestId: ctx.requestId,
         userId: ctx.userId,
         partialContent: fullContent,
-        partialLength: fullContent.length,
+        partialLength: fullContent.length
       },
-      "streaming provider error — no turn persisted",
+      "streaming provider error — no turn persisted"
     );
     writeSSE(raw, { error: { message, type: "provider_error" } });
     raw.write("data: [DONE]\n\n");
@@ -803,9 +804,9 @@ async function handleStreamingResponse(
         {
           index: 0,
           delta: { content: fullContent.slice(flushedIdx) },
-          finish_reason: null,
-        },
-      ],
+          finish_reason: null
+        }
+      ]
     });
   }
 
@@ -818,8 +819,8 @@ async function handleStreamingResponse(
     usage: {
       prompt_tokens: streamUsage.input_tokens,
       completion_tokens: streamUsage.output_tokens,
-      total_tokens: streamUsage.input_tokens + streamUsage.output_tokens,
-    },
+      total_tokens: streamUsage.input_tokens + streamUsage.output_tokens
+    }
   });
 
   raw.write("data: [DONE]\n\n");
@@ -848,7 +849,7 @@ async function handleStreamingResponse(
     extractionMode: ctx.extractionMode,
     ideProjectScope: ctx.ideProjectScope,
     ideLanguageScope: ctx.ideLanguageScope,
-    ideActiveFile: ctx.ideActiveFile,
+    ideActiveFile: ctx.ideActiveFile
   });
 }
 
@@ -875,7 +876,7 @@ async function resolveScope(args: ResolveScopeArgs): Promise<string[]> {
     latestUserMessage,
     cfg,
     deps,
-    logger,
+    logger
   } = args;
 
   if (ocAgentId && ocAgentId !== "main") {
@@ -884,7 +885,7 @@ async function resolveScope(args: ResolveScopeArgs): Promise<string[]> {
       await deps.sessions
         .update(sessionId, userId, { agentId: ocAgentId })
         .catch((err) =>
-          logger.warn({ err, sessionId }, "agent id persist failed"),
+          logger.warn({ err, sessionId }, "agent id persist failed")
         );
     }
   }
@@ -905,28 +906,28 @@ async function resolveScope(args: ResolveScopeArgs): Promise<string[]> {
   try {
     const existingScopes = await fetchExistingUserScopes(
       userId,
-      deps.scopeDetector.db,
+      deps.scopeDetector.db
     );
 
     const detected = await detectScopeFromMessage(
       latestUserMessage,
       existingScopes,
       deps.scopeDetector,
-      logger,
+      logger
     );
 
     if (detected.length > 0) {
       await deps.sessions
         .update(sessionId, userId, { activeScope: detected })
         .catch((err) =>
-          logger.warn({ err, sessionId }, "first-turn scope persist failed"),
+          logger.warn({ err, sessionId }, "first-turn scope persist failed")
         );
       return detected;
     }
   } catch (err) {
     logger.warn(
       { err, sessionId },
-      "first-turn scope detection failed — proceeding without scope",
+      "first-turn scope detection failed — proceeding without scope"
     );
   }
 

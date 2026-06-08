@@ -6,6 +6,70 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.23] - 2026-06-07
+
+### Added
+
+- **Teams mode (`TENURE_MODE=teams`)** (`src/config/bootstrap.ts`, `src/config/appConfig.ts`, `src/index.ts`, `src/app.ts`): New deployment mode for multi-user enterprise deployments. When set, requires `MONGODB_URI`, `TENURE_USER_ID`, and `TENURE_MASTER_KEY_PATH` to be supplied via environment variables rather than generated config files. Config file generation and token rotation are disabled. The `token` subcommand exits immediately with an error in this mode.
+
+- **OIDC proxy header authentication** (`src/server.ts`): When `OIDC_PROXY_HEADER` is set, the server trusts the specified header as the authenticated user ID, enabling SSO via a reverse proxy (e.g. OAuth2 Proxy). Proxy-authenticated requests bypass token checks entirely.
+
+- **Personal access tokens (PAT)** (`src/routes/admin.ts`, `src/routes/admin-ui.ts`, `src/db/collections.ts`, `src/db/indexes.ts`): Users can now generate named `tpat_`-prefixed tokens from the Admin UI for use with VS Code, OpenWebUI, or CI. Tokens are SHA-256 hashed at rest. PAT-authenticated requests are scoped to a specific set of allowed paths (`/v1/chat/completions`, `/v1/messages`, `/v1/models`, `/v1/ws/beliefs`). Full CRUD UI (generate, list, revoke) shown in teams mode in place of the existing token rotation UI.
+
+- **`ApiTokenDoc` and `ScimUserDoc` collection interfaces** (`src/db/collections.ts`): Two new MongoDB collection types. `api_tokens` has a unique index on `token_hash` (with partial filter for non-revoked tokens) and a compound index on `user_id`/`created_at`. `scim_users` has unique index on `userName` and an index on `externalId`.
+
+- **SCIM route registration** (`src/server.ts`): `registerScimRoutes` from the new `src/routes/scim.ts` is wired in at server startup with a `ScimDeps` object.
+
+- **`tenureUserId` and `tenureAuthMethod` on Fastify request** (`src/server.ts`): All routes now read `req.tenureUserId` instead of a hardcoded `deps.userId`, enabling per-request user identity. Auth method is one of `proxy`, `root`, or `pat`.
+
+- **Root token restricted in teams mode** (`src/server.ts`): The root API token can only access bootstrap-related paths (provider config, onboarding, model listing) in teams mode. All other paths return `403` directing users to authenticate via SSO.
+
+- **OpenTelemetry tracing** (`src/index.ts`, `src/server.ts`): `src/telemetry.ts` is imported at process startup. Compaction and extraction sweep jobs are now wrapped in OTel spans. Auth errors and span attributes (`user.id`) are recorded on the active span. Full OTel SDK stack added as dependencies (`@opentelemetry/api`, `@opentelemetry/sdk-node`, `@opentelemetry/auto-instrumentations-node`, OTLP exporters, gRPC transport, etc.).
+
+- **`actor_id` field on error logs** (`src/types/error.ts`, `src/errors/logger.ts`): All error log entries now include an `actor_id` field alongside `user_id`, populated from the request's authenticated user ID.
+
+- **MongoDB TLS support** (`src/app.ts`): When `MONGODB_TLS_CA_FILE` is set, the CA file path is passed to all MongoClient instances including the CSFLE encryption client.
+
+- **`TENURE_BELIEF_KEY_PATH` env override** (`src/config/beliefEncryptionMasterKey.ts`): The belief master key path can now be overridden directly via environment variable, bypassing the `TENURE_HOME`-based path resolution.
+
+- **`TENURE_BACKUP_EXPORTS_ENABLED` / `TENURE_BACKUP_IMPORTS_ENABLED` flags** (`src/routes/backup.ts`): Backup export and import endpoints can be independently disabled at the deployment level, returning `403` when disabled.
+
+- **`TENURE_DISABLE_JOBS` flag** (`src/server.ts`): Both the compaction and extraction sweep background jobs can be disabled by setting this env var to `"true"`, useful for read-only or worker-separated deployments.
+
+- **Multi-user compaction** (`src/server.ts`): The compaction job now queries recently active session `userId`s from the last 30 days and runs compaction for each, rather than only for the single hardcoded `deps.userId`.
+
+- **SSO auto-init in UI pages** (`src/routes/admin-ui.ts`, `src/routes/beliefs-ui.ts`, `src/routes/onboarding.ts`): When `req.tenureUserId` is set (proxy auth), a `window.__TENURE_SSO_USER__` script block is injected and the page calls `init()` directly, bypassing the token screen.
+
+- **`TENURE_API_TOKEN` env var for token seeding** (`src/config/appConfig.ts`): If set, this value is used as the API token instead of generating a random one.
+
+- **`DEPLOY_MODE` constant exported** (`src/config/bootstrap.ts`): Derived from `TENURE_MODE`, available for use throughout the codebase.
+
+### Changed
+
+- **`userId` removed from `deps` on all route registrations** (`src/routes/chat.ts`, `src/routes/messages.ts`, `src/routes/admin.ts`, `src/routes/audit.ts`, `src/routes/backup.ts`, `src/routes/beliefs.ts`, `src/routes/beliefs-ws.ts`, `src/routes/persona.ts`, `src/routes/workspace.ts`, `src/routes/onboarding.ts`): All routes now resolve user identity from `req.tenureUserId` at request time rather than receiving it as a static dep at registration time.
+
+- **`beliefChangeStream` user ID sourced from document** (`src/db/beliefChangeStream.ts`): Change stream broadcasts now use `doc.user_id` from the fetched belief document rather than the `userId` passed at startup, supporting multi-user change broadcasting. The `userId` parameter removed from `startBeliefChangeStream`.
+
+- **`delete` event handling removed from belief change stream** (`src/db/beliefChangeStream.ts`): The `operationType === "delete"` broadcast case has been removed.
+
+- **`createDraftStore` refactored to a factory** (`src/routes/onboarding.ts`): Now returns a function `(userId: string) => DraftStore` rather than accepting `userId` at construction time, allowing per-request draft store instances.
+
+- **Onboarding HTML token injection hardened** (`src/routes/onboarding.ts`): Token JS now safely escapes `<` characters in the embedded token string.
+
+- **Onboarding extraction `max_tokens` raised** from 4,000 to 8,000 (`src/routes/onboarding.ts`).
+
+- **Onboarding "draft not found" error message** changed from em-dash to comma for consistency (`src/routes/onboarding.ts`).
+
+- **Compaction and sweep jobs wrapped in OTel spans** (`src/server.ts`): Both background jobs record exceptions and set span error status on failure.
+
+- **VS Code extension docs updated for enterprise/local split** (`docs/clients/vscode.md`): Requirements, first-time setup flow, token instructions, proxy URL reference, status bar link, settings table, Docker networking note, and troubleshooting section all updated to reflect local vs. enterprise modes. New `Tenure: Configure Deployment` command documented.
+
+- **OpenClaw docs: hardcoded localhost URL generalized** (`docs/clients/openclaw.md`).
+
+- **`package.json`**: Added `@opentelemetry/api`, `@opentelemetry/auto-instrumentations-node`, `@opentelemetry/exporter-trace-otlp-proto`, `@opentelemetry/instrumentation-dns`, `@opentelemetry/instrumentation-mongodb`, `@opentelemetry/instrumentation-net`, `@opentelemetry/sdk-node`, `install`, and `npm` as direct dependencies.
+
+---
+
 ## [1.0.22] - 2026-06-05
 
 ### Added

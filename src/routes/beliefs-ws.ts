@@ -126,7 +126,6 @@ export const registry = new ConnectionRegistry();
 export interface BeliefsWsDeps {
   beliefs: Collection<Belief>;
   fileMeta: Collection<FileMetaDoc>;
-  userId: string;
   beliefWriter: BeliefWriter;
   workspaceState: WorkspaceStateCache;
   runtimeStore: RuntimeConfigStore;
@@ -134,11 +133,12 @@ export interface BeliefsWsDeps {
 
 export function registerBeliefsWsRoute(
   app: FastifyInstance,
-  deps: BeliefsWsDeps,
+  deps: BeliefsWsDeps
 ): void {
-  const { beliefs: col, fileMeta, userId, beliefWriter } = deps;
+  const { beliefs: col, fileMeta, beliefWriter } = deps;
 
-  app.get("/v1/ws/beliefs", { websocket: true }, (socket: WebSocket, _req) => {
+  app.get("/v1/ws/beliefs", { websocket: true }, (socket: WebSocket, req) => {
+    const userId = req.tenureUserId;
     //let currentScope: string | null = null;
 
     registry.add(userId, socket);
@@ -152,8 +152,8 @@ export function registerBeliefsWsRoute(
           JSON.stringify({
             type: "error",
             request_type: "unknown",
-            message: "invalid JSON",
-          } satisfies ServerMessage),
+            message: "invalid JSON"
+          } satisfies ServerMessage)
         );
         return;
       }
@@ -174,8 +174,8 @@ export function registerBeliefsWsRoute(
                 JSON.stringify({
                   type: "error",
                   request_type: "patch_belief",
-                  message: "belief not found",
-                } satisfies ServerMessage),
+                  message: "belief not found"
+                } satisfies ServerMessage)
               );
               break;
             }
@@ -196,7 +196,7 @@ export function registerBeliefsWsRoute(
               "pinned",
               "canonical_name",
               "why_it_matters",
-              "aliases",
+              "aliases"
             ] as const;
 
             for (const field of mutable) {
@@ -216,7 +216,7 @@ export function registerBeliefsWsRoute(
                     ? { previous_epistemic_status: current.epistemic_status }
                     : {}),
                   changed_by_session: null,
-                  changed_by_turn: null,
+                  changed_by_turn: null
                 });
               }
             }
@@ -226,8 +226,8 @@ export function registerBeliefsWsRoute(
                 JSON.stringify({
                   type: "patch_ack",
                   id,
-                  belief: redactForClient(current),
-                } satisfies ServerMessage),
+                  belief: redactForClient(current)
+                } satisfies ServerMessage)
               );
               break;
             }
@@ -236,8 +236,8 @@ export function registerBeliefsWsRoute(
               { _id: id, user_id: userId },
               {
                 $set,
-                $push: { change_log: { $each: logEntries } } as any,
-              },
+                $push: { change_log: { $each: logEntries } } as any
+              }
             );
 
             if (result.modifiedCount > 0) {
@@ -247,8 +247,8 @@ export function registerBeliefsWsRoute(
                   JSON.stringify({
                     type: "patch_ack",
                     id,
-                    belief: redactForClient(decrypted),
-                  } satisfies ServerMessage),
+                    belief: redactForClient(decrypted)
+                  } satisfies ServerMessage)
                 );
               }
             }
@@ -257,8 +257,8 @@ export function registerBeliefsWsRoute(
               JSON.stringify({
                 type: "error",
                 request_type: "patch_belief",
-                message: (e as Error).message,
-              } satisfies ServerMessage),
+                message: (e as Error).message
+              } satisfies ServerMessage)
             );
           }
           break;
@@ -281,7 +281,7 @@ export function registerBeliefsWsRoute(
                 session_id: "manual",
                 turn_id: "manual",
                 extracted_at: now,
-                source_model: "user",
+                source_model: "user"
               },
               epistemic_status: "active",
               confidence: 1.0,
@@ -290,33 +290,33 @@ export function registerBeliefsWsRoute(
               origin_context: {
                 active_file: msg.active_file,
                 language: msg.active_language,
-                project_scope: msg.project_scope,
+                project_scope: msg.project_scope
               },
               change_log: [
                 {
                   changed_at: now,
                   trigger: "manual_creation",
                   changed_by_session: null,
-                  changed_by_turn: null,
-                },
-              ],
+                  changed_by_turn: null
+                }
+              ]
             });
 
             const created = await col.findOne({
               _id: beliefId,
-              user_id: userId,
+              user_id: userId
             });
             if (created) {
               const summary = redactForClient(created);
               socket.send(
                 JSON.stringify({
                   type: "record_ack",
-                  belief: summary,
-                } satisfies ServerMessage),
+                  belief: summary
+                } satisfies ServerMessage)
               );
               registry.broadcast(userId, {
                 type: "belief_upserted",
-                belief: summary,
+                belief: summary
               });
             }
           } catch (e) {
@@ -324,8 +324,8 @@ export function registerBeliefsWsRoute(
               JSON.stringify({
                 type: "error",
                 request_type: "record_belief",
-                message: (e as Error).message,
-              } satisfies ServerMessage),
+                message: (e as Error).message
+              } satisfies ServerMessage)
             );
           }
           break;
@@ -339,24 +339,24 @@ export function registerBeliefsWsRoute(
               {
                 $set: {
                   size_bytes: msg.size_bytes,
-                  updated_at: now,
+                  updated_at: now
                 },
                 $setOnInsert: {
                   user_id: userId,
                   path: msg.path,
                   belief_ids: [],
-                  created_at: now,
-                },
+                  created_at: now
+                }
               },
-              { upsert: true },
+              { upsert: true }
             );
           } catch (e) {
             socket.send(
               JSON.stringify({
                 type: "error",
                 request_type: "file_meta",
-                message: (e as Error).message,
-              } satisfies ServerMessage),
+                message: (e as Error).message
+              } satisfies ServerMessage)
             );
           }
           break;
@@ -367,11 +367,11 @@ export function registerBeliefsWsRoute(
             await col.updateMany(
               {
                 user_id: userId,
-                "origin_context.active_file": msg.old_path,
+                "origin_context.active_file": msg.old_path
               },
               {
-                $set: { "origin_context.active_file": msg.new_path },
-              },
+                $set: { "origin_context.active_file": msg.new_path }
+              }
             );
 
             const oldId = `${userId}:${msg.old_path}`;
@@ -382,7 +382,7 @@ export function registerBeliefsWsRoute(
                 ...existing,
                 _id: newId,
                 path: msg.new_path,
-                updated_at: new Date(),
+                updated_at: new Date()
               });
               await fileMeta.deleteOne({ _id: oldId });
             }
@@ -391,8 +391,8 @@ export function registerBeliefsWsRoute(
               JSON.stringify({
                 type: "error",
                 request_type: "rename_file",
-                message: (e as Error).message,
-              } satisfies ServerMessage),
+                message: (e as Error).message
+              } satisfies ServerMessage)
             );
           }
           break;
@@ -406,7 +406,7 @@ export function registerBeliefsWsRoute(
               git_remote: msg.git_remote,
               active_file: msg.active_file,
               active_language: msg.active_language,
-              updated_at: new Date(),
+              updated_at: new Date()
             });
 
             const slug = msg.project_name
@@ -420,16 +420,16 @@ export function registerBeliefsWsRoute(
               JSON.stringify({
                 type: "scope_confirmed",
                 scope: `project:${slug}`,
-                active_file: msg.active_file,
-              } satisfies ServerMessage),
+                active_file: msg.active_file
+              } satisfies ServerMessage)
             );
           } catch (e) {
             socket.send(
               JSON.stringify({
                 type: "error",
                 request_type: "workspace_state",
-                message: (e as Error).message,
-              } satisfies ServerMessage),
+                message: (e as Error).message
+              } satisfies ServerMessage)
             );
           }
           break;
@@ -444,7 +444,7 @@ export function registerBeliefsWsRoute(
                   user_id: userId,
                   resolved_at: null,
                   superseded_by: null,
-                  "origin_context.active_file": msg.active_file,
+                  "origin_context.active_file": msg.active_file
                 })
                 .sort({ pinned: -1, last_reinforced_at: -1 })
                 .toArray();
@@ -460,8 +460,8 @@ export function registerBeliefsWsRoute(
                 $or: [
                   { "origin_context.active_file": null },
                   { origin_context: null },
-                  { origin_context: { $exists: false } },
-                ],
+                  { origin_context: { $exists: false } }
+                ]
               })
               .sort({ pinned: -1, last_reinforced_at: -1 })
               .limit(30)
@@ -472,7 +472,7 @@ export function registerBeliefsWsRoute(
               .filter((d) => !fileIds.has(d._id))
               .filter(
                 (d) =>
-                  !(d.scope.length === 1 && d.scope[0] === "user:universal"),
+                  !(d.scope.length === 1 && d.scope[0] === "user:universal")
               )
               .map(redactForClient);
 
@@ -481,7 +481,7 @@ export function registerBeliefsWsRoute(
                 user_id: userId,
                 resolved_at: null,
                 superseded_by: null,
-                scope: { $in: ["user:universal"] },
+                scope: { $in: ["user:universal"] }
               })
               .sort({ pinned: -1, last_reinforced_at: -1 })
               .limit(20)
@@ -499,16 +499,16 @@ export function registerBeliefsWsRoute(
                 project: projectBeliefs,
                 universal: universalBeliefs,
                 scope: msg.scope,
-                active_file: msg.active_file,
-              } satisfies ServerMessage),
+                active_file: msg.active_file
+              } satisfies ServerMessage)
             );
           } catch (e) {
             socket.send(
               JSON.stringify({
                 type: "error",
                 request_type: "fetch_categorized_beliefs",
-                message: (e as Error).message,
-              } satisfies ServerMessage),
+                message: (e as Error).message
+              } satisfies ServerMessage)
             );
           }
           break;
@@ -526,16 +526,16 @@ export function registerBeliefsWsRoute(
               JSON.stringify({
                 type: "toggles_state",
                 injection: cfg.injection_enabled,
-                extraction: cfg.extraction_enabled,
-              } satisfies ServerMessage),
+                extraction: cfg.extraction_enabled
+              } satisfies ServerMessage)
             );
           } catch (e) {
             socket.send(
               JSON.stringify({
                 type: "error",
                 request_type: "set_toggle",
-                message: (e as Error).message,
-              } satisfies ServerMessage),
+                message: (e as Error).message
+              } satisfies ServerMessage)
             );
           }
           break;
@@ -548,16 +548,16 @@ export function registerBeliefsWsRoute(
               JSON.stringify({
                 type: "toggles_state",
                 injection: cfg.injection_enabled,
-                extraction: cfg.extraction_enabled,
-              } satisfies ServerMessage),
+                extraction: cfg.extraction_enabled
+              } satisfies ServerMessage)
             );
           } catch (e) {
             socket.send(
               JSON.stringify({
                 type: "error",
                 request_type: "fetch_toggles",
-                message: (e as Error).message,
-              } satisfies ServerMessage),
+                message: (e as Error).message
+              } satisfies ServerMessage)
             );
           }
           break;
@@ -587,6 +587,6 @@ export function redactForClient(b: WithId<Belief>): BeliefSummary {
     pinned: b.pinned,
     scope: b.scope,
     aliases: b.aliases,
-    ...(b.origin_context != null ? { origin_context: b.origin_context } : {}),
+    ...(b.origin_context != null ? { origin_context: b.origin_context } : {})
   };
 }

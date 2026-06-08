@@ -8,20 +8,20 @@ import path from "node:path";
 import {
   detectInstalledClients,
   offerClientIntegrations,
-  type DetectedClients,
+  type DetectedClients
 } from "./clientIntegrations.js";
 import { buildClientRows } from "./clientStatusPanel.js";
 import {
   ensureTenureRunning,
   isTenureHealthy,
   readTenureToken,
-  updateTenureImage,
+  updateTenureImage
 } from "./tenureInstaller.js";
 import { injectContinueConfig } from "./clientIntegrations.js";
 import { detectHostApp } from "./hostEnvironment.js";
 
 export async function activate(
-  context: vscode.ExtensionContext,
+  context: vscode.ExtensionContext
 ): Promise<void> {
   const tokenStore = new TokenStore(context.secrets);
 
@@ -29,7 +29,7 @@ export async function activate(
   await vscode.commands.executeCommand(
     "setContext",
     "tenure.tokenConfigured",
-    existingToken !== undefined,
+    existingToken !== undefined
   );
 
   const getBaseUrl = (): string =>
@@ -45,7 +45,7 @@ export async function activate(
   if (isNativeVSCode) {
     const lmProviderDisposable = vscode.lm.registerLanguageModelChatProvider(
       "tenure",
-      lmProvider,
+      lmProvider
     );
     context.subscriptions.push(lmProviderDisposable);
   }
@@ -55,27 +55,27 @@ export async function activate(
   if (!vscode.workspace.workspaceFolders?.length) {
     beliefsProvider = new TenureBeliefsViewProvider(
       tokenStore,
-      context.extensionUri,
+      context.extensionUri
     );
     beliefsProvider.setNoWorkspace(true);
     context.subscriptions.push(
       vscode.window.registerWebviewViewProvider(
         "tenure.beliefsView",
         beliefsProvider,
-        { webviewOptions: { retainContextWhenHidden: true } },
-      ),
+        { webviewOptions: { retainContextWhenHidden: true } }
+      )
     );
   } else {
     beliefsProvider = new TenureBeliefsViewProvider(
       tokenStore,
-      context.extensionUri,
+      context.extensionUri
     );
     context.subscriptions.push(
       vscode.window.registerWebviewViewProvider(
         "tenure.beliefsView",
         beliefsProvider,
-        { webviewOptions: { retainContextWhenHidden: true } },
-      ),
+        { webviewOptions: { retainContextWhenHidden: true } }
+      )
     );
   }
 
@@ -85,14 +85,14 @@ export async function activate(
         prompt: "Paste your Tenure API token",
         password: true,
         ignoreFocusOut: true,
-        placeHolder: "mp_...",
+        placeHolder: "mp_..."
       });
       if (token?.trim()) {
         await tokenStore.set(token.trim());
         await vscode.commands.executeCommand(
           "setContext",
           "tenure.tokenConfigured",
-          true,
+          true
         );
         vscode.window.showInformationMessage("Tenure: token saved.");
         lmProvider.refresh();
@@ -126,7 +126,7 @@ export async function activate(
           const result = await injectContinueConfig(token, baseUrl);
           if (result === "injected") {
             vscode.window.showInformationMessage(
-              "Done. Tenure is now available in Continue's model picker.",
+              "Done. Tenure is now available in Continue's model picker."
             );
 
             if (beliefsProvider) {
@@ -137,84 +137,141 @@ export async function activate(
           } else if (result === "ts_config") {
             vscode.window.showWarningMessage(
               "Continue uses a TypeScript config — add Tenure manually. Base URL: " +
-                `${baseUrl}/v1`,
+                `${baseUrl}/v1`
             );
           }
         } else if (action === "docs") {
           vscode.env.openExternal(
             vscode.Uri.parse(
-              "https://docs.continue.dev/reference/model-providers/openai",
-            ),
+              "https://docs.continue.dev/reference/model-providers/openai"
+            )
           );
         }
       },
-    ),
+
+      vscode.commands.registerCommand("tenure.configureDeployment", () =>
+        configureDeployment(
+          context,
+          tokenStore,
+          lmProvider,
+          beliefsProvider,
+          sync
+        )
+      )
+    )
   );
 
   void (async () => {
-    const healthy = await isTenureHealthy();
+    const baseUrl = getBaseUrl();
+    const healthy = await isTenureHealthy(baseUrl);
 
     if (healthy) {
       if (!existingToken) {
-        const token = await readTenureToken();
-        if (token) {
-          await tokenStore.set(token);
-          vscode.window.showInformationMessage(
-            "Tenure is running and your token has been saved automatically.",
-          );
-        } else {
+        const mode = context.globalState.get<"local" | "teams">("tenure.mode");
+        if (mode === "teams") {
           await maybeShowTokenWarning(context);
+        } else {
+          const token = await readTenureToken();
+          if (token) {
+            await tokenStore.set(token);
+            vscode.window.showInformationMessage(
+              "Tenure is running and your token has been saved automatically."
+            );
+          } else {
+            await maybeShowTokenWarning(context);
+          }
         }
       }
 
       const currentVersion = context.extension.packageJSON.version as string;
       const lastVersion = context.globalState.get<string>(
-        "tenure.lastSeenVersion",
+        "tenure.lastSeenVersion"
       );
       if (lastVersion === undefined) {
         await context.globalState.update(
           "tenure.lastSeenVersion",
-          currentVersion,
+          currentVersion
         );
       } else if (lastVersion !== currentVersion) {
-        updateTenureImage().then(async (success) => {
-          if (success) {
-            await context.globalState.update(
-              "tenure.lastSeenVersion",
-              currentVersion,
-            );
-            beliefsProvider?.resetAndReconnect();
-          }
-        });
+        const mode = context.globalState.get<"local" | "teams">("tenure.mode");
+        if (mode !== "teams") {
+          updateTenureImage().then(async (success) => {
+            if (success) {
+              await context.globalState.update(
+                "tenure.lastSeenVersion",
+                currentVersion
+              );
+              beliefsProvider?.resetAndReconnect();
+            }
+          });
+        } else {
+          await context.globalState.update(
+            "tenure.lastSeenVersion",
+            currentVersion
+          );
+          beliefsProvider?.resetAndReconnect();
+        }
       }
     } else {
-      const action = await vscode.window.showInformationMessage(
-        "Tenure isn't running. Would you like to set it up automatically?",
-        "Set Up Tenure",
-        "I'll do it manually",
+      const alreadyConfigured = context.globalState.get<boolean>(
+        "tenure.deploymentConfigured"
       );
 
-      if (action === "Set Up Tenure") {
-        const installStatus = vscode.window.createStatusBarItem(
-          vscode.StatusBarAlignment.Right,
-          101,
+      if (!alreadyConfigured && !existingToken) {
+        await configureDeployment(
+          context,
+          tokenStore,
+          lmProvider,
+          beliefsProvider,
+          undefined
         );
-        installStatus.text = "$(sync~spin) Tenure: Setting up…";
-        installStatus.show();
-        context.subscriptions.push(installStatus);
-
-        const result = await ensureTenureRunning(context, (msg) => {
-          installStatus.text = `$(sync~spin) ${msg}`;
-        });
-
-        installStatus.hide();
-
-        if (result !== "failed") {
-          handleInstallSuccess(context, lmProvider, beliefsProvider);
-        }
       } else {
-        if (!existingToken) {
-          await maybeShowTokenWarning(context);
+        const mode = context.globalState.get<"local" | "teams">("tenure.mode");
+        if (mode === "teams") {
+          const action = await vscode.window.showInformationMessage(
+            "Tenure teams server is unreachable. Check your network or run Configure Deployment.",
+            "Configure Deployment",
+            "Dismiss"
+          );
+          if (action === "Configure Deployment") {
+            await configureDeployment(
+              context,
+              tokenStore,
+              lmProvider,
+              beliefsProvider,
+              undefined
+            );
+          }
+        } else {
+          const action = await vscode.window.showInformationMessage(
+            "Tenure isn't running. Would you like to set it up automatically?",
+            "Set Up Tenure",
+            "I'll do it manually"
+          );
+
+          if (action === "Set Up Tenure") {
+            const installStatus = vscode.window.createStatusBarItem(
+              vscode.StatusBarAlignment.Right,
+              101
+            );
+            installStatus.text = "$(sync~spin) Tenure: Setting up…";
+            installStatus.show();
+            context.subscriptions.push(installStatus);
+
+            const result = await ensureTenureRunning(context, (msg) => {
+              installStatus.text = `$(sync~spin) ${msg}`;
+            });
+
+            installStatus.hide();
+
+            if (result !== "failed") {
+              handleInstallSuccess(context, lmProvider, beliefsProvider);
+            }
+          } else {
+            if (!existingToken) {
+              await maybeShowTokenWarning(context);
+            }
+          }
         }
       }
     }
@@ -227,7 +284,7 @@ export async function activate(
   const statusBar = vscode.window.createStatusBarItem(
     "tenure.status",
     vscode.StatusBarAlignment.Right,
-    100,
+    100
   );
   statusBar.command = "tenure.openBeliefs";
   statusBar.text = "$(symbol-misc) Tenure";
@@ -239,7 +296,7 @@ export async function activate(
     context,
     statusBar,
     beliefsProvider,
-    lmProvider,
+    lmProvider
   );
 
   {
@@ -258,7 +315,7 @@ export async function activate(
           const updatedClients = detectInstalledClients();
           const updatedRows = buildClientRows(updatedClients, token, baseUrl);
           beliefsProvider!.updateClientStatus(updatedRows);
-        }),
+        })
       );
     }
   }
@@ -266,7 +323,7 @@ export async function activate(
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   const tenureWatcher = workspaceFolder
     ? vscode.workspace.createFileSystemWatcher(
-        new vscode.RelativePattern(workspaceFolder, ".tenure"),
+        new vscode.RelativePattern(workspaceFolder, ".tenure")
       )
     : null;
 
@@ -279,7 +336,7 @@ export async function activate(
       tenureWatcher.onDidChange(handleConfigMutation),
       tenureWatcher.onDidCreate(handleConfigMutation),
       tenureWatcher.onDidDelete(handleConfigMutation),
-      tenureWatcher,
+      tenureWatcher
     );
   }
 
@@ -287,7 +344,7 @@ export async function activate(
     vscode.commands.registerCommand("tenure.startInstall", async () => {
       const installStatus = vscode.window.createStatusBarItem(
         vscode.StatusBarAlignment.Right,
-        101,
+        101
       );
       installStatus.text = "$(sync~spin) Tenure: Setting up…";
       installStatus.show();
@@ -334,7 +391,7 @@ export async function activate(
       if (editor?.document.uri && editor.document.uri.scheme === "file") {
         const relativePath = vscode.workspace.asRelativePath(
           editor.document.uri,
-          true,
+          true
         );
         const projectName = sync.getLastProjectName();
         if (projectName && !path.isAbsolute(relativePath)) {
@@ -342,12 +399,12 @@ export async function activate(
           beliefsProvider!.sendFetchFileBeliefs(
             relativePath,
             scope,
-            editor.document.uri,
+            editor.document.uri
           );
           sync.sendActiveFileUpdate(
             relativePath,
             editor.document.languageId,
-            editor.document.uri,
+            editor.document.uri
           );
         }
       }
@@ -384,7 +441,7 @@ export async function activate(
     }),
 
     statusBar,
-    { dispose: () => sync.dispose() },
+    { dispose: () => sync.dispose() }
   );
 
   sync.scheduleSync();
@@ -395,14 +452,14 @@ export function deactivate(): void {}
 const DONT_SHOW_TOKEN_WARNING = "tenure.dontShowTokenWarning";
 
 async function maybeShowTokenWarning(
-  context: vscode.ExtensionContext,
+  context: vscode.ExtensionContext
 ): Promise<void> {
   if (context.globalState.get<boolean>(DONT_SHOW_TOKEN_WARNING)) return;
 
   const action = await vscode.window.showWarningMessage(
     "Tenure: No API token configured. Tenure will not sync workspace state.",
     "Set Token",
-    "Don't show again",
+    "Don't show again"
   );
 
   if (action === "Set Token") {
@@ -415,14 +472,14 @@ async function maybeShowTokenWarning(
 function handleInstallSuccess(
   context: vscode.ExtensionContext,
   lmProvider: TenureLmProvider,
-  beliefsProvider: TenureBeliefsViewProvider | undefined,
+  beliefsProvider: TenureBeliefsViewProvider | undefined
 ): void {
   const currentVersion = context.extension.packageJSON.version as string;
   context.globalState.update("tenure.lastSeenVersion", currentVersion);
   lmProvider.refresh();
   beliefsProvider?.resetAndReconnect();
   vscode.window.showInformationMessage(
-    "Tenure is running and your token has been saved automatically.",
+    "Tenure is running and your token has been saved automatically."
   );
 }
 
@@ -433,4 +490,87 @@ function slugify(name: string): string {
     .replace(/[^a-z0-9-]/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+async function configureDeployment(
+  context: vscode.ExtensionContext,
+  tokenStore: TokenStore,
+  lmProvider: TenureLmProvider,
+  beliefsProvider: TenureBeliefsViewProvider | undefined,
+  sync: WorkspaceSync | undefined
+): Promise<void> {
+  const mode = await vscode.window.showQuickPick(
+    [
+      {
+        label: "$(desktop-download) Local (Docker)",
+        description: "Install and run Tenure on this machine",
+        value: "local" as const
+      },
+      {
+        label: "$(globe) Teams / Self-hosted",
+        description: "Connect to an existing Tenure server",
+        value: "teams" as const
+      }
+    ],
+    {
+      placeHolder: "Select Tenure deployment",
+      ignoreFocusOut: true,
+      title: "Configure Tenure"
+    }
+  );
+  if (!mode) return;
+
+  await context.globalState.update("tenure.mode", mode.value);
+
+  if (mode.value === "local") {
+    await vscode.commands.executeCommand("tenure.startInstall");
+    await context.globalState.update("tenure.deploymentConfigured", true);
+    return;
+  }
+
+  const baseUrl = await vscode.window.showInputBox({
+    prompt: "Enter your Tenure server base URL",
+    placeHolder: "https://tenure.company.com:5757",
+    value: vscode.workspace
+      .getConfiguration("tenure")
+      .get<string>("baseUrl", "http://localhost:5757"),
+    ignoreFocusOut: true,
+    validateInput: (value) => {
+      if (!value?.trim()) return "Base URL is required";
+      try {
+        new URL(value);
+      } catch {
+        return "Invalid URL";
+      }
+      return undefined;
+    }
+  });
+  if (!baseUrl) return;
+
+  const token = await vscode.window.showInputBox({
+    prompt: "Enter your Tenure API token",
+    password: true,
+    placeHolder: "mp_...",
+    ignoreFocusOut: true,
+    validateInput: (value) => (!value?.trim() ? "Token is required" : undefined)
+  });
+  if (!token?.trim()) return;
+
+  await vscode.workspace
+    .getConfiguration("tenure")
+    .update("baseUrl", baseUrl.trim(), true);
+  await tokenStore.set(token.trim());
+  await vscode.commands.executeCommand(
+    "setContext",
+    "tenure.tokenConfigured",
+    true
+  );
+  await context.globalState.update("tenure.deploymentConfigured", true);
+
+  vscode.window.showInformationMessage("Tenure: Teams server configured.");
+  lmProvider.refresh();
+  beliefsProvider?.resetAndReconnect();
+  sync?.invalidateCache();
+  sync?.reconnectBeliefs();
+  sync?.scheduleSync();
 }

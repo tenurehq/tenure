@@ -27,7 +27,7 @@ export function detectInstalledClients(): DetectedClients {
     copilot: !!vscode.extensions.getExtension("GitHub.copilot-chat"),
     cursorNative: appName.includes("cursor"),
     windsurfNative: appName.includes("windsurf"),
-    vsCodium: appName.includes("vscodium"),
+    vsCodium: appName.includes("vscodium")
   };
 }
 
@@ -38,13 +38,12 @@ function getContinueConfigPath(): string {
     : join(homedir(), ".continue", "config.json");
 }
 
-export function isContinueConfigured(token: string): boolean {
+export function isContinueConfigured(baseUrl: string): boolean {
   const configPath = getContinueConfigPath();
   if (!existsSync(configPath)) return false;
   try {
     const raw = readFileSync(configPath, "utf8");
-
-    return raw.includes("localhost:5757");
+    return raw.includes(`${baseUrl}/v1`);
   } catch {
     return false;
   }
@@ -59,7 +58,7 @@ export type ContinueInjectResult =
 
 export async function injectContinueConfig(
   token: string,
-  baseUrl: string,
+  baseUrl: string
 ): Promise<ContinueInjectResult> {
   const isWin = platform() === "win32";
   const continueDir = isWin
@@ -85,7 +84,7 @@ export async function injectContinueConfig(
     return "parse_error";
   }
 
-  if (raw.includes("localhost:5757")) {
+  if (raw.includes(`${baseUrl}/v1`)) {
     return "already_configured";
   }
 
@@ -94,7 +93,7 @@ export async function injectContinueConfig(
     provider: "openai",
     model: "auto",
     apiKey: token,
-    apiBase: `${baseUrl}/v1`,
+    apiBase: `${baseUrl}/v1`
   };
 
   if (!Array.isArray(config.models)) {
@@ -118,7 +117,7 @@ export async function offerClientIntegrations(
   context: vscode.ExtensionContext,
   clients: DetectedClients,
   token: string,
-  baseUrl: string,
+  baseUrl: string
 ): Promise<void> {
   if (
     clients.continue &&
@@ -134,7 +133,7 @@ export async function offerClientIntegrations(
       "Cline detected. Point it at Tenure to add memory to every session.",
       "Copy Base URL",
       "Copy Token",
-      "View Docs",
+      "View Docs"
     );
     await handleCopyAction(action, token, baseUrl);
   }
@@ -145,7 +144,7 @@ export async function offerClientIntegrations(
       "Roo Code detected. Point it at Tenure to add memory to every session.",
       "Copy Base URL",
       "Copy Token",
-      "View Docs",
+      "View Docs"
     );
     await handleCopyAction(action, token, baseUrl);
   }
@@ -153,7 +152,7 @@ export async function offerClientIntegrations(
 
 async function offerContinueIntegration(
   token: string,
-  baseUrl: string,
+  baseUrl: string
 ): Promise<void> {
   const configPath = getContinueConfigPath();
   const configExists = existsSync(configPath);
@@ -163,20 +162,20 @@ async function offerContinueIntegration(
       "Continue detected. Set Tenure as your base URL to add memory to every session.",
       "Copy Base URL",
       "Copy Token",
-      "View Docs",
+      "View Docs"
     );
     await handleCopyAction(action, token, baseUrl);
     return;
   }
 
-  if (isContinueConfigured(token)) {
+  if (isContinueConfigured(baseUrl)) {
     return;
   }
 
   const action = await vscode.window.showInformationMessage(
     "Continue detected. Add Tenure as a model provider automatically?",
     "Yes, set it up",
-    "I'll do it manually",
+    "I'll do it manually"
   );
 
   if (action !== "Yes, set it up") return;
@@ -186,12 +185,12 @@ async function offerContinueIntegration(
   switch (result) {
     case "injected":
       vscode.window.showInformationMessage(
-        "Done. Tenure is now available in Continue's model picker.",
+        "Done. Tenure is now available in Continue's model picker."
       );
       break;
     case "already_configured":
       vscode.window.showInformationMessage(
-        "Tenure is already configured in Continue.",
+        "Tenure is already configured in Continue."
       );
       break;
     case "ts_config":
@@ -209,19 +208,19 @@ async function offerContinueIntegration(
 async function showManualContinueCard(
   token: string,
   baseUrl: string,
-  reason: "ts" | "parse" | "missing",
+  reason: "ts" | "parse" | "missing"
 ): Promise<void> {
   const messages: Record<string, string> = {
     ts: "Continue uses a TypeScript config — add Tenure manually.",
     parse: "Continue config could not be parsed — add Tenure manually.",
     missing:
-      "Continue config not found — add Tenure manually once you've opened Continue.",
+      "Continue config not found — add Tenure manually once you've opened Continue."
   };
 
   const action = await vscode.window.showWarningMessage(
     messages[reason],
     "Copy Base URL",
-    "View Docs",
+    "View Docs"
   );
   await handleCopyAction(action, token, baseUrl);
 }
@@ -229,7 +228,7 @@ async function showManualContinueCard(
 async function handleCopyAction(
   action: string | undefined,
   token: string,
-  baseUrl: string,
+  baseUrl: string
 ): Promise<void> {
   if (action === "Copy Base URL") {
     await vscode.env.clipboard.writeText(`${baseUrl}/v1`);
@@ -240,8 +239,8 @@ async function handleCopyAction(
   } else if (action === "View Docs") {
     vscode.env.openExternal(
       vscode.Uri.parse(
-        "https://docs.continue.dev/reference/model-providers/openai",
-      ),
+        "https://docs.continue.dev/reference/model-providers/openai"
+      )
     );
   }
 }

@@ -3,6 +3,8 @@ import { dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseToml } from "smol-toml";
 
+export const DEPLOY_MODE = process.env.TENURE_MODE ?? "single";
+
 export interface BootstrapConfig {
   mongodb_uri: string;
   mongodb_db: string;
@@ -15,11 +17,13 @@ const TENURE_HOME = process.env.TENURE_HOME ?? resolve(homedir(), ".tenure");
 const CONFIG_PATH = resolve(TENURE_HOME, "config.toml");
 
 const DEFAULT: BootstrapConfig = {
-  mongodb_uri: "mongodb://mongo:27017/?directConnection=true",
-  mongodb_db: "tenure",
+  mongodb_uri:
+    process.env.MONGODB_URI ?? "mongodb://mongo:27017/?directConnection=true",
+  mongodb_db: process.env.TENURE_MONGODB_DB ?? "tenure",
   port: 5757,
-  user_id: "local",
-  master_key_path: resolve(TENURE_HOME, "master.key"),
+  user_id: process.env.TENURE_USER_ID ?? "local",
+  master_key_path:
+    process.env.TENURE_MASTER_KEY_PATH ?? resolve(TENURE_HOME, "master.key")
 };
 
 const CONFIG_TOML = (c: BootstrapConfig) => `mongodb_uri = "${c.mongodb_uri}"
@@ -31,6 +35,13 @@ master_key_path = "${c.master_key_path}"
 
 function validateConfig(raw: Record<string, unknown>): BootstrapConfig {
   const merged = { ...DEFAULT, ...raw };
+
+  if (DEPLOY_MODE === "teams") {
+    if (!process.env.MONGODB_URI)
+      throw new Error("config: MONGODB_URI is required in teams mode");
+    if (!process.env.TENURE_USER_ID)
+      throw new Error("config: TENURE_USER_ID is required in teams mode");
+  }
 
   if (typeof merged.mongodb_uri !== "string")
     throw new Error("config: mongodb_uri must be a string");
@@ -50,9 +61,11 @@ export function loadBootstrapConfig(path = CONFIG_PATH): BootstrapConfig {
   let config: BootstrapConfig;
 
   if (!existsSync(path)) {
-    console.log(`No config found at ${path}, generating defaults...`);
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, CONFIG_TOML(DEFAULT));
+    if (process.env.TENURE_MODE !== "teams") {
+      console.log(`No config found at ${path}, generating defaults...`);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, CONFIG_TOML(DEFAULT));
+    }
     config = DEFAULT;
   } else {
     const raw = parseToml(readFileSync(path, "utf8")) as Record<
@@ -72,6 +85,15 @@ export function loadBootstrapConfig(path = CONFIG_PATH): BootstrapConfig {
   if (envMongoUri) {
     config.mongodb_uri = envMongoUri;
   }
+
+  const envMongoDb = process.env.TENURE_MONGODB_DB;
+  if (envMongoDb) config.mongodb_db = envMongoDb;
+
+  const envUserId = process.env.TENURE_USER_ID;
+  if (envUserId) config.user_id = envUserId;
+
+  const envMasterKeyPath = process.env.TENURE_MASTER_KEY_PATH;
+  if (envMasterKeyPath) config.master_key_path = envMasterKeyPath;
 
   return config;
 }

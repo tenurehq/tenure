@@ -7,8 +7,7 @@ const MAX_RETRY_MS = 30_000;
 
 export function startBeliefChangeStream(
   col: Collection<Belief>,
-  encryptedCol: Collection<Belief>,
-  userId: string,
+  encryptedCol: Collection<Belief>
 ): () => void {
   let stopped = false;
   let resumeToken: ResumeToken | undefined;
@@ -22,16 +21,15 @@ export function startBeliefChangeStream(
           $or: [
             { operationType: "insert" },
             { operationType: "update" },
-            { operationType: "replace" },
-            { operationType: "delete" },
-          ],
-        },
-      },
+            { operationType: "replace" }
+          ]
+        }
+      }
     ];
 
     const stream = col.watch(pipeline, {
       fullDocument: "updateLookup",
-      ...(resumeToken ? { resumeAfter: resumeToken } : {}),
+      ...(resumeToken ? { resumeAfter: resumeToken } : {})
     });
 
     stream.on("change", async (event) => {
@@ -40,13 +38,12 @@ export function startBeliefChangeStream(
 
       if (event.operationType === "insert") {
         const doc = await encryptedCol.findOne({
-          _id: event.documentKey._id,
-          user_id: userId,
+          _id: event.documentKey._id
         });
         if (!doc) return;
-        registry.broadcast(userId, {
+        registry.broadcast(doc.user_id, {
           type: "belief_upserted",
-          belief: redactForClient(doc),
+          belief: redactForClient(doc)
         });
         return;
       }
@@ -56,31 +53,22 @@ export function startBeliefChangeStream(
         event.operationType === "replace"
       ) {
         const doc = await encryptedCol.findOne({
-          _id: event.documentKey._id,
-          user_id: userId,
+          _id: event.documentKey._id
         });
         if (!doc) return;
 
         if (doc.superseded_by != null) {
-          registry.broadcast(userId, {
+          registry.broadcast(doc.user_id, {
             type: "belief_superseded",
-            id: doc._id,
+            id: doc._id
           });
         } else {
-          registry.broadcast(userId, {
+          registry.broadcast(doc.user_id, {
             type: "belief_upserted",
-            belief: redactForClient(doc),
+            belief: redactForClient(doc)
           });
         }
         return;
-      }
-
-      if (event.operationType === "delete") {
-        const id = event.documentKey._id as string;
-        registry.broadcast(userId, {
-          type: "belief_superseded",
-          id,
-        });
       }
     });
 

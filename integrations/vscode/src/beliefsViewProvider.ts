@@ -107,7 +107,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
   private categorizedBeliefs: CategorizedBeliefs = {
     file: [],
     project: [],
-    universal: [],
+    universal: []
   };
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -122,19 +122,19 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
 
   constructor(
     private readonly tokenStore: TokenStore,
-    private readonly extensionUri: vscode.Uri,
+    private readonly extensionUri: vscode.Uri
   ) {}
 
   resolveWebviewView(
     webviewView: vscode.WebviewView,
     _context: vscode.WebviewViewResolveContext,
-    _token: vscode.CancellationToken,
+    _token: vscode.CancellationToken
   ): void {
     this.view = webviewView;
 
     webviewView.webview.options = {
       enableScripts: true,
-      localResourceRoots: [this.extensionUri],
+      localResourceRoots: [this.extensionUri]
     };
 
     webviewView.webview.html = this.buildShell();
@@ -169,7 +169,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
           msg.why,
           scope,
           msg.beliefType,
-          scopeLevel === "file" ? this.currentActiveFile : null,
+          scopeLevel === "file" ? this.currentActiveFile : null
         );
       }
       if (msg.command === "openOnboarding") {
@@ -179,7 +179,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
         vscode.commands.executeCommand(
           "tenure.handleClientAction",
           msg.clientId,
-          msg.action,
+          msg.action
         );
       }
       if (msg.command === "openInstall") {
@@ -189,8 +189,12 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
         this.send({
           type: "set_toggle",
           toggle: msg.toggle,
-          value: msg.value,
+          value: msg.value
         });
+      }
+
+      if (msg.command === "configureDeployment") {
+        vscode.commands.executeCommand("tenure.configureDeployment");
       }
     });
   }
@@ -211,7 +215,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
     this.send({
       type: "fetch_categorized_beliefs",
       scope,
-      active_file: activeFile,
+      active_file: activeFile
     });
   }
 
@@ -223,7 +227,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
       this.send({
         type: "fetch_categorized_beliefs",
         scope: this.currentScope,
-        active_file: this.currentActiveFile,
+        active_file: this.currentActiveFile
       });
     }
   }
@@ -237,7 +241,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
     whyItMatters: string,
     scope: string[],
     beliefType: "decision" | "preference" | "entity" | "relation" = "decision",
-    activeFileOverride?: string | null,
+    activeFileOverride?: string | null
   ): void {
     const canonicalName = content
       .toLowerCase()
@@ -262,7 +266,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
           canonical_name: canonicalName,
           active_file: activeFile,
           active_language: this.pendingWorkspaceState?.active_language ?? null,
-          project_scope: this.currentScope,
+          project_scope: this.currentScope
         });
       })
       .catch(() => {});
@@ -329,14 +333,14 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
   sendFetchFileBeliefs(
     filePath: string,
     scope: string,
-    fileUri: vscode.Uri,
+    fileUri: vscode.Uri
   ): void {
     this.currentActiveFile = filePath;
     this.currentActiveFileUri = fileUri;
     this.send({
       type: "fetch_categorized_beliefs",
       scope,
-      active_file: filePath,
+      active_file: filePath
     });
   }
 
@@ -369,7 +373,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
     const wsUrl = baseUrl.replace(/^http/, "ws") + "/v1/ws/beliefs";
 
     const socket = new WebSocket(wsUrl, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${token}` }
     });
     this.socket = socket;
 
@@ -390,7 +394,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
           this.send({
             type: "fetch_categorized_beliefs",
             scope: this.currentScope,
-            active_file: this.currentActiveFile,
+            active_file: this.currentActiveFile
           });
           this.send({ type: "fetch_toggles" });
         }
@@ -430,7 +434,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
         this.categorizedBeliefs = {
           file: msg.file,
           project: msg.project,
-          universal: msg.universal,
+          universal: msg.universal
         };
         this.beliefs = [...msg.file, ...msg.project, ...msg.universal];
         this.pushCategorizedState();
@@ -478,7 +482,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
         this.send({
           type: "fetch_categorized_beliefs",
           scope,
-          active_file: msg.active_file,
+          active_file: msg.active_file
         });
         break;
       }
@@ -486,7 +490,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
         this.view?.webview.postMessage({
           type: "toggles_state",
           injection: msg.injection,
-          extraction: msg.extraction,
+          extraction: msg.extraction
         });
         break;
       }
@@ -537,7 +541,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
       totalActive:
         this.categorizedBeliefs.file.length +
         this.categorizedBeliefs.project.length +
-        this.categorizedBeliefs.universal.length,
+        this.categorizedBeliefs.universal.length
     });
   }
 
@@ -545,7 +549,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
     this.send({
       type: "patch_belief",
       id,
-      patch: { pinned: !currentlyPinned },
+      patch: { pinned: !currentlyPinned }
     });
   }
 
@@ -568,7 +572,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     const delay = Math.min(
       BASE_RECONNECT_MS * Math.pow(2, this.reconnectAttempt),
-      MAX_RECONNECT_MS,
+      MAX_RECONNECT_MS
     );
     this.reconnectAttempt++;
     this.reconnectTimer = setTimeout(() => {
@@ -958,6 +962,10 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
           document.getElementById("onboarding-banner").style.display = "block";
           document.getElementById("main-header").style.display = "none";
           document.getElementById("beliefs-container").style.display = "none";
+          document.getElementById("record-belief-bar").style.display = "none";
+          break;
+        case "disconnected":
+          renderEmpty("Not connected", "Tenure server not found.", "<span class=\\"link\\" onclick=\\"post('configureDeployment')\\">Install locally</span> &nbsp;|&nbsp; <span class=\\"link\\" onclick=\\"post('configureDeployment')\\">Connect to Tenure Teams</span>");
           document.getElementById("record-belief-bar").style.display = "none";
           break;
         case "client_status": {

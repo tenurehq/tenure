@@ -27,11 +27,19 @@ metadata:
 
 # Tenure - Persistent Memory for OpenClaw
 
-> **Privacy notice:** Tenure persistently stores beliefs derived from your conversations. Avoid sharing regulated, confidential, or credential data in sessions. Review and delete stored beliefs at any time via `http://localhost:5757/beliefs`.
+> **Privacy notice:** Tenure persistently stores beliefs derived from your conversations. Avoid sharing regulated, confidential, or credential data in sessions. Review and delete stored beliefs at any time via `$BASE_URL/beliefs` or your configured Tenure URL.
 >
-> **Local-only by default:** The default `baseUrl` is `http://localhost:5757`. Do not change it to a remote endpoint unless you intentionally trust that host with your memory data and provider API keys.
+> **Local by default:** The default `baseUrl` is `http://localhost:5757`. Only change it to a remote or enterprise endpoint if you intentionally trust that host with your memory data and provider API keys.
 
 ## Installing Tenure
+
+First, resolve the configured Tenure endpoint:
+
+```bash
+BASE_URL=$(openclaw config get plugins.entries.tenure.baseUrl 2>/dev/null || echo "http://localhost:5757")
+```
+
+If `BASE_URL` is not `http://localhost:5757`, you are connecting to an enterprise/self-hosted server. Skip Steps 1-5 (Docker) and go directly to Step 6.
 
 Run steps in order. Tell the user what you are doing before each step.
 
@@ -83,36 +91,59 @@ if [ $ATTEMPTS -ge 30 ]; then echo "timeout"; else echo "ready"; fi
 
 If timeout: `docker compose -f "$HOME/.tenure/docker-compose.yml" logs tenure`
 
-### Step 6 - Read the token
+### Step 6 - Resolve the token
+
+Local (`$BASE_URL` is `http://localhost:5757`):
 
 ```bash
-cat "$HOME/.tenure/token"
+TENURE_TOKEN=$(cat "$HOME/.tenure/token")
 ```
 
-Windows: `Get-Content "$env:USERPROFILE\.tenure\token"`
+Windows local:
+
+```powershell
+$TENURE_TOKEN = Get-Content "$env:USERPROFILE\.tenure\token"
+```
 
 If the file does not exist, Tenure has not finished first-run setup - wait a few seconds and retry, or check logs.
 
-Note: the token is also auto-read from this file at runtime when `TENURE_TOKEN` is not set. Treat it as a secret - do not share it or paste it into chat.
+Enterprise (`$BASE_URL` is not `http://localhost:5757`): ask the user for their Tenure API token. Do not proceed until they provide it. Then set:
 
-### Step 7 - Persist a reference to the token
+```bash
+export TENURE_TOKEN="PASTE_TOKEN_HERE"
+```
 
-Store a file path reference rather than the token value itself, so the secret is read from disk at runtime and is not duplicated in config:
+Treat it as a secret - do not share it or paste it into chat.
+
+### Step 7 - Persist the token
+
+Local: store a file path reference so the secret stays on disk:
 
 ```bash
 echo 'TENURE_TOKEN_FILE=$HOME/.tenure/token' >> "$HOME/.openclaw/.env"
 ```
 
-Windows:
+Windows local:
 
 ```powershell
 Add-Content "$env:USERPROFILE\.openclaw\.env" "TENURE_TOKEN_FILE=$env:USERPROFILE\.tenure\token"
 ```
 
+Enterprise: store the token value directly:
+
+```bash
+echo "TENURE_TOKEN=$TENURE_TOKEN" >> "$HOME/.openclaw/.env"
+```
+
+Windows enterprise:
+
+```powershell
+Add-Content "$env:USERPROFILE\.openclaw\.env" "TENURE_TOKEN=$TENURE_TOKEN"
+```
+
 ### Step 8 - Register the Tenure provider in OpenClaw
 
 ```bash
-TENURE_TOKEN=$(cat "$HOME/.tenure/token")
 openclaw config patch --stdin << EOF
 {
   models: {
@@ -120,7 +151,7 @@ openclaw config patch --stdin << EOF
     providers: {
       tenure: {
         // Only change baseUrl if you intentionally trust a remote Tenure endpoint
-        baseUrl: "http://localhost:5757/v1",
+        baseUrl: "${BASE_URL}/v1",
         apiKey: "$TENURE_TOKEN",
         api: "openai-completions",
         request: { allowPrivateNetwork: true }
@@ -131,7 +162,7 @@ openclaw config patch --stdin << EOF
 EOF
 ```
 
-Windows: read token with `$token = Get-Content "$env:USERPROFILE\.tenure\token"` and substitute `$token` in the patch.
+Windows: substitute `$TENURE_TOKEN` in the patch with the token value obtained in Step 6.
 
 Then validate - do not proceed if this fails:
 
@@ -191,7 +222,7 @@ Tell the user:
 >
 > Your token is stored at `~/.tenure/token`. Keep it secret - do not share it or paste it into chat.
 >
-> UI: `http://localhost:5757`
+> UI: `$BASE_URL`
 >
 > Run **!tenure onboarding** when you are ready to set up your memory - takes about 2 minutes.
 >
@@ -207,7 +238,7 @@ Run this flow when the user invokes `!tenure onboarding`. Use `$TENURE_TOKEN` fo
 
 ### Stage 1 - Provider setup
 
-Tell the user: "Your provider API key will be sent to the local Tenure service at `localhost:5757` over HTTP. Only continue if you trust your local environment. Do not use a remote `baseUrl` unless you trust that endpoint with your credentials."
+Tell the user: "Your provider API key will be sent to the Tenure service at $BASE_URL. Only continue if you trust your local environment. Do not use a remote `baseUrl` unless you trust that endpoint with your credentials."
 
 Ask: "Which provider do you want Tenure to use - Anthropic or OpenAI?"
 
@@ -226,7 +257,7 @@ For **Generic OpenAI**, ask: "Do you have a custom base URL? (Leave blank for th
 For **Bedrock Access Gateway** and **LiteLLM**, a base URL is required - ask for it and do not proceed without one.
 
 ```bash
-curl -sf -X PUT http://localhost:5757/admin/providers/openai \
+curl -sf -X PUT $BASE_URL/admin/providers/openai \
   -H "Authorization: Bearer $TENURE_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -243,7 +274,7 @@ Omit `base_url` from the body if the user left it blank.
 Ask only for their API key. No base URL or endpoint flavor is needed - the Anthropic adapter ignores both.
 
 ```bash
-curl -sf -X PUT http://localhost:5757/admin/providers/anthropic \
+curl -sf -X PUT $BASE_URL/admin/providers/anthropic \
   -H "Authorization: Bearer $TENURE_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"api_key":"USER_KEY"}'
@@ -254,14 +285,14 @@ curl -sf -X PUT http://localhost:5757/admin/providers/anthropic \
 ### Stage 2 - Model selection
 
 ```bash
-curl -sf http://localhost:5757/v1/onboarding/probe-models/PROVIDER_ID \
+curl -sf $BASE_URL/v1/onboarding/probe-models/PROVIDER_ID \
   -H "Authorization: Bearer $TENURE_TOKEN"
 ```
 
 Present top 2-3 models where `supported: true`. Ask user to pick one, then validate:
 
 ```bash
-curl -sf -X POST http://localhost:5757/v1/onboarding/validate-model \
+curl -sf -X POST $BASE_URL/v1/onboarding/validate-model \
   -H "Authorization: Bearer $TENURE_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"provider_id":"PROVIDER_ID","model_id":"CHOSEN_MODEL"}'
@@ -282,7 +313,7 @@ openclaw models set "tenure/CHOSEN_MODEL"
 ### Stage 3 - Onboarding questions
 
 ```bash
-curl -sf http://localhost:5757/v1/onboarding/questions \
+curl -sf $BASE_URL/v1/onboarding/questions \
   -H "Authorization: Bearer $TENURE_TOKEN"
 ```
 
@@ -307,7 +338,7 @@ Rules for the conversation:
 ### Stage 4 - Commit
 
 ```bash
-curl -sf -X POST http://localhost:5757/v1/onboarding/complete \
+curl -sf -X POST $BASE_URL/v1/onboarding/complete \
   -H "Authorization: Bearer $TENURE_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"answers": ANSWERS_ARRAY}'
@@ -316,7 +347,7 @@ curl -sf -X POST http://localhost:5757/v1/onboarding/complete \
 If response contains `draft_id`:
 
 ```bash
-curl -sf -X POST http://localhost:5757/v1/onboarding/commit \
+curl -sf -X POST $BASE_URL/v1/onboarding/commit \
   -H "Authorization: Bearer $TENURE_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"draft_id":"DRAFT_ID"}'
@@ -328,13 +359,13 @@ If `belief_count` is 0 or `parse_failed` is true, skip commit and tell the user 
 
 > "You are all set. N beliefs saved to your world model. Tenure will carry your context into every session automatically.
 >
-> View and edit your beliefs at http://localhost:5757/beliefs"
+> View and edit your beliefs at `$BASE_URL/beliefs`"
 
 ---
 
 ## Agent notes
 
-- `allowPrivateNetwork: true` is required - without it OpenClaw cannot reach localhost:5757.
+- `allowPrivateNetwork: true` is required for local installs - without it OpenClaw cannot reach localhost:5757. Enterprise/self-hosted endpoints typically do not need this.
 - The token is a plain file at `~/.tenure/token`. The plugin reads it automatically at runtime. Never echo the token value into chat or logs.
 - No models array is needed in the provider block at install time - populated during onboarding Stage 2.
 - `!extract`, `!inject`, and `!scope` are intercepted by Tenure at the proxy level. Do not handle them. If they stop working, Tenure is unreachable - check health and logs.

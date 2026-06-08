@@ -115,6 +115,10 @@
       {
         "command": "tenure.runOnboarding",
         "title": "Tenure: Run Setup"
+      },
+      {
+        "command": "tenure.configureDeployment",
+        "title": "Tenure: Configure Deployment"
       }
     ],
     "menus": {
