@@ -38,14 +38,14 @@ annotations:
   artifacthub.io/category: ai-machine-learning
   artifacthub.io/license: MIT
   artifacthub.io/links: |
-  - name: Documentation
-    url: https://tenureai.dev/docs
-  - name: Website
-    url: https://tenureai.dev
-  - name: Research Paper
-    url: https://arxiv.org/abs/2605.11325
-  - name: Support
-    url: https://github.com/tenurehq/tenure/issues
+    - name: Documentation
+      url: https://tenureai.dev/docs
+    - name: Website
+      url: https://tenureai.dev
+    - name: Research Paper
+      url: https://arxiv.org/abs/2605.11325
+    - name: Support
+      url: https://github.com/tenurehq/tenure/issues
   artifacthub.io/changes: |
     - kind: added
       description: Initial Helm chart release
