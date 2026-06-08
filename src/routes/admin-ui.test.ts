@@ -30,7 +30,7 @@ test("GET /admin embeds token from query parameter", async (t) => {
   const app = buildApp();
   const res = await app.inject({
     method: "GET",
-    url: "/admin?token=my-secret-token",
+    url: "/admin?token=my-secret-token"
   });
 
   t.true(res.body.includes('"my-secret-token"'));
@@ -49,7 +49,7 @@ test("GET /admin escapes special characters in token", async (t) => {
   const app = buildApp();
   const res = await app.inject({
     method: "GET",
-    url: "/admin?token=</script><img>",
+    url: "/admin?token=</script><img>"
   });
 
   t.false(res.body.includes("</script><img>"));
@@ -57,7 +57,7 @@ test("GET /admin escapes special characters in token", async (t) => {
     res.body.includes("\\u003c") ||
       res.body.includes("&lt;") ||
       res.body.includes("<\\/script>") ||
-      res.body.includes(JSON.stringify("</script><img>")),
+      res.body.includes(JSON.stringify("</script><img>"))
   );
 });
 
@@ -127,5 +127,5 @@ test("GET /admin includes maintenance section with compaction button", async (t)
   const res = await app.inject({ method: "GET", url: "/admin" });
 
   t.true(res.body.includes("runCompaction"));
-  t.true(res.body.includes("Run compaction now"));
+  t.true(res.body.includes("Merge redundant beliefs"));
 });
