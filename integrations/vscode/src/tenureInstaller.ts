@@ -14,10 +14,16 @@ const IS_WIN = platform() === "win32";
 
 export type InstallResult = "running" | "already_running" | "failed";
 
-export async function isTenureHealthy(port = DEFAULT_PORT): Promise<boolean> {
+export async function isTenureHealthy(
+  baseUrl?: string,
+  port = DEFAULT_PORT
+): Promise<boolean> {
+  const url = baseUrl
+    ? `${baseUrl.replace(/\/$/, "")}/healthz`
+    : `http://localhost:${port}/healthz`;
   try {
-    const res = await fetch(`http://localhost:${port}/healthz`, {
-      signal: AbortSignal.timeout(2_000),
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(2_000)
     });
     return res.ok;
   } catch {
@@ -50,7 +56,7 @@ export async function readTenureToken(): Promise<string | null> {
     const envFile = join(tenureDir, ".env");
     const { stdout } = await execAsync(
       `docker compose -f "${composeFile}" --env-file "${envFile}" run --rm tenure node dist/index.js token`,
-      { timeout: 15_000 },
+      { timeout: 15_000 }
     );
     const token = stdout.trim();
     if (token.length > 0) return token;
@@ -61,7 +67,7 @@ export async function readTenureToken(): Promise<string | null> {
 
 export async function ensureTenureRunning(
   context: vscode.ExtensionContext,
-  onProgress: (msg: string) => void,
+  onProgress: (msg: string) => void
 ): Promise<InstallResult> {
   if (await isTenureHealthy()) {
     await maybeAutoSaveToken(context);
@@ -74,11 +80,11 @@ export async function ensureTenureRunning(
     const action = await vscode.window.showErrorMessage(
       "Tenure requires Docker Desktop. Please start Docker Desktop and try again.",
       "Download Docker",
-      "Cancel",
+      "Cancel"
     );
     if (action === "Download Docker") {
       vscode.env.openExternal(
-        vscode.Uri.parse("https://docs.docker.com/get-docker/"),
+        vscode.Uri.parse("https://docs.docker.com/get-docker/")
       );
     }
     return "failed";
@@ -87,7 +93,7 @@ export async function ensureTenureRunning(
   onProgress("Checking port availability…");
   if (await isPortInUse(DEFAULT_PORT)) {
     await vscode.window.showErrorMessage(
-      `Port ${DEFAULT_PORT} is already in use by another process. Tenure cannot start.`,
+      `Port ${DEFAULT_PORT} is already in use by another process. Tenure cannot start.`
     );
     return "failed";
   }
@@ -118,12 +124,12 @@ export async function ensureTenureRunning(
       await vscode.commands.executeCommand(
         "setContext",
         "tenure.tokenConfigured",
-        true,
+        true
       );
     } else {
       vscode.window.showWarningMessage(
         "Tenure is running but the token could not be read automatically. " +
-          "Please run 'Tenure: Set API Token' and paste the value from ~/.tenure/token.",
+          "Please run 'Tenure: Set API Token' and paste the value from ~/.tenure/token."
       );
     }
 
@@ -133,7 +139,7 @@ export async function ensureTenureRunning(
     const action = await vscode.window.showErrorMessage(
       `Tenure setup failed: ${message}`,
       "Retry in Terminal",
-      "Cancel",
+      "Cancel"
     );
     if (action === "Retry in Terminal") {
       installTenureInTerminal();
@@ -143,7 +149,7 @@ export async function ensureTenureRunning(
 }
 
 async function maybeAutoSaveToken(
-  context: vscode.ExtensionContext,
+  context: vscode.ExtensionContext
 ): Promise<void> {
   const existing = await context.secrets.get("tenure.apiToken");
   if (existing) return;
@@ -155,11 +161,11 @@ async function maybeAutoSaveToken(
   await vscode.commands.executeCommand(
     "setContext",
     "tenure.tokenConfigured",
-    true,
+    true
   );
 
   vscode.window.showInformationMessage(
-    "Tenure is running and your token has been saved automatically.",
+    "Tenure is running and your token has been saved automatically."
   );
 }
 
@@ -171,7 +177,7 @@ function runInit(): Promise<void> {
   return run(
     "docker",
     ["run", "--rm", "-v", volumeMount, "tenureai/tenure:latest", "init"],
-    "Docker init failed. Is Docker running?",
+    "Docker init failed. Is Docker running?"
   );
 }
 
@@ -187,9 +193,9 @@ function runComposeUp(): Promise<void> {
       "--env-file",
       join(tenureDir, ".env"),
       "up",
-      "-d",
+      "-d"
     ],
-    "Docker Compose failed. Is Docker running?",
+    "Docker Compose failed. Is Docker running?"
   );
 }
 
@@ -204,9 +210,9 @@ function runComposePull(): Promise<void> {
       join(tenureDir, "docker-compose.yml"),
       "--env-file",
       join(tenureDir, ".env"),
-      "pull",
+      "pull"
     ],
-    "Docker Compose pull failed.",
+    "Docker Compose pull failed."
   );
 }
 
@@ -223,9 +229,9 @@ function runComposeRecreate(): Promise<void> {
       join(tenureDir, ".env"),
       "up",
       "-d",
-      "--force-recreate",
+      "--force-recreate"
     ],
-    "Docker Compose recreate failed.",
+    "Docker Compose recreate failed."
   );
 }
 
@@ -247,31 +253,31 @@ async function pollHealth(attempts = 30, intervalMs = 2_000): Promise<void> {
   }
   throw new Error(
     "Tenure did not become healthy after 60 seconds. " +
-      "Run: docker compose -f ~/.tenure/docker-compose.yml logs tenure",
+      "Run: docker compose -f ~/.tenure/docker-compose.yml logs tenure"
   );
 }
 
 export function installTenureInTerminal(): void {
   const terminal = vscode.window.createTerminal({
     name: "Tenure Setup",
-    iconPath: new vscode.ThemeIcon("symbol-misc"),
+    iconPath: new vscode.ThemeIcon("symbol-misc")
   });
   terminal.show();
 
   if (IS_WIN) {
     terminal.sendText(
-      `docker run --rm -v "$env:USERPROFILE\\.tenure:/app/.tenure" tenureai/tenure:latest init`,
+      `docker run --rm -v "$env:USERPROFILE\\.tenure:/app/.tenure" tenureai/tenure:latest init`
     );
     terminal.sendText(
       `docker compose -f "$env:USERPROFILE\\.tenure\\docker-compose.yml" ` +
-        `--env-file "$env:USERPROFILE\\.tenure\\.env" up -d`,
+        `--env-file "$env:USERPROFILE\\.tenure\\.env" up -d`
     );
     terminal.sendText(`Get-Content "$env:USERPROFILE\\.tenure\\token"`);
   } else {
     terminal.sendText(
       `docker run --rm -v "$HOME/.tenure:/app/.tenure" tenureai/tenure:latest init && ` +
         `docker compose -f "$HOME/.tenure/docker-compose.yml" ` +
-        `--env-file "$HOME/.tenure/.env" up -d`,
+        `--env-file "$HOME/.tenure/.env" up -d`
     );
     terminal.sendText(`cat "$HOME/.tenure/token"`);
   }
@@ -292,9 +298,8 @@ function run(cmd: string, args: string[], errorHint?: string): Promise<void> {
       if (code !== 0) {
         reject(
           new Error(
-            errorHint ??
-              (stderr || stdout || `${cmd} exited with code ${code}`),
-          ),
+            errorHint ?? (stderr || stdout || `${cmd} exited with code ${code}`)
+          )
         );
       } else {
         resolve();
@@ -311,7 +316,7 @@ async function isPortInUse(port: number): Promise<boolean> {
       return stdout.trim().length > 0;
     } else {
       const { stdout } = await execAsync(
-        `lsof -i :${port} -sTCP:LISTEN -t 2>/dev/null || true`,
+        `lsof -i :${port} -sTCP:LISTEN -t 2>/dev/null || true`
       );
       return stdout.trim().length > 0;
     }

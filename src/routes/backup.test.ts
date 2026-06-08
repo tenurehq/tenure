@@ -27,7 +27,7 @@ function makeRuntimeConfig() {
     managed_history_token_cap: 120000,
     error_retention_days: 30,
     strict_model_tiers: true,
-    extraction_enabled: true,
+    extraction_enabled: true
   };
 }
 
@@ -46,7 +46,7 @@ function makeBelief() {
       session_id: "s1",
       turn_id: "t1",
       extracted_at: new Date("2025-01-01"),
-      source_model: "anthropic:claude-haiku-4-5-20251001",
+      source_model: "anthropic:claude-haiku-4-5-20251001"
     },
     epistemic_status: "active",
     confidence: 0.9,
@@ -58,9 +58,22 @@ function makeBelief() {
     resolved_at: null,
     change_log: [],
     created_at: new Date("2025-01-01"),
-    updated_at: new Date("2025-01-02"),
+    updated_at: new Date("2025-01-02")
   };
 }
+
+test.beforeEach((t) => {
+  const deps = makeDeps();
+  const app = Fastify();
+
+  app.addHook("onRequest", async (req: any) => {
+    req.tenureUserId = USER_ID;
+    req.tenureAuthMethod = "proxy";
+  });
+
+  registerBackupRoutes(app, deps);
+  t.context = { app, deps };
+});
 
 function toArrayStub(data: unknown[]) {
   return { toArray: sinon.stub().resolves(data) };
@@ -73,55 +86,48 @@ function makeDeps(): BackupDeps {
         return {
           find: sinon.stub().returns(toArrayStub([makeBelief()])),
           findOne: sinon.stub().resolves(null),
-          insertMany: sinon.stub().resolves({ insertedCount: 1 }),
+          insertMany: sinon.stub().resolves({ insertedCount: 1 })
         };
       }
       if (name === "persona_cache") {
         return {
           findOne: sinon.stub().resolves(null),
-          replaceOne: sinon.stub().resolves(),
+          replaceOne: sinon.stub().resolves()
         };
       }
       if (name === "compaction_log") {
         return {
           find: sinon.stub().returns(toArrayStub([])),
-          insertMany: sinon.stub().resolves(),
+          insertMany: sinon.stub().resolves()
         };
       }
       if (name === "sessions") {
         return {
           find: sinon.stub().returns(toArrayStub([])),
-          replaceOne: sinon.stub().resolves(),
+          replaceOne: sinon.stub().resolves()
         };
       }
       return {
         find: sinon.stub().returns(toArrayStub([])),
-        findOne: sinon.stub().resolves(null),
+        findOne: sinon.stub().resolves(null)
       };
-    }),
+    })
   } as unknown as BackupDeps["db"];
 
   const runtimeStore = {
     load: sinon.stub().resolves(makeRuntimeConfig()),
-    set: sinon.stub().resolves(),
+    set: sinon.stub().resolves()
   } as unknown as BackupDeps["runtimeStore"];
 
-  return { db, runtimeStore, userId: USER_ID };
+  return { db, runtimeStore };
 }
-
-test.beforeEach((t) => {
-  const deps = makeDeps();
-  const app = Fastify();
-  registerBackupRoutes(app, deps);
-  t.context = { app, deps };
-});
 
 test("POST /v1/backup/export returns 400 when passphrase is missing", async (t) => {
   const res = await t.context.app.inject({
     method: "POST",
     url: "/v1/backup/export",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({}),
+    body: JSON.stringify({})
   });
 
   t.is(res.statusCode, 400);
@@ -134,7 +140,7 @@ test("POST /v1/backup/export returns 400 when passphrase is too short", async (t
     method: "POST",
     url: "/v1/backup/export",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ passphrase: "short" }),
+    body: JSON.stringify({ passphrase: "short" })
   });
 
   t.is(res.statusCode, 400);
@@ -147,14 +153,14 @@ test("POST /v1/backup/export returns encrypted binary archive", async (t) => {
     method: "POST",
     url: "/v1/backup/export",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ passphrase: "valid-passphrase-here" }),
+    body: JSON.stringify({ passphrase: "valid-passphrase-here" })
   });
 
   t.is(res.statusCode, 200);
   t.is(res.headers["content-type"], "application/octet-stream");
   t.regex(
     res.headers["content-disposition"] as string,
-    /attachment.*tenure-backup.*\.enc/,
+    /attachment.*tenure-backup.*\.enc/
   );
   t.truthy(res.headers["x-tenure-export-version"]);
   t.true(res.rawPayload.length > 0);
@@ -166,7 +172,7 @@ test("POST /v1/backup/export produces archive that can be decrypted", async (t) 
     method: "POST",
     url: "/v1/backup/export",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ passphrase }),
+    body: JSON.stringify({ passphrase })
   });
 
   t.is(res.statusCode, 200);
@@ -184,7 +190,7 @@ test("POST /v1/backup/export produces archive that can be decrypted", async (t) 
 test("GET /v1/backup/preview returns export summary", async (t) => {
   const res = await t.context.app.inject({
     method: "GET",
-    url: "/v1/backup/preview",
+    url: "/v1/backup/preview"
   });
 
   t.is(res.statusCode, 200);
@@ -204,7 +210,7 @@ test("GET /v1/backup/preview returns export summary", async (t) => {
 test("GET /v1/backup/preview does not include actual belief content", async (t) => {
   const res = await t.context.app.inject({
     method: "GET",
-    url: "/v1/backup/preview",
+    url: "/v1/backup/preview"
   });
 
   const body = JSON.parse(res.body);
@@ -217,7 +223,7 @@ test("POST /v1/backup/import returns 400 when passphrase is missing", async (t) 
     method: "POST",
     url: "/v1/backup/import",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ archive: "abc" }),
+    body: JSON.stringify({ archive: "abc" })
   });
 
   t.is(res.statusCode, 400);
@@ -230,7 +236,7 @@ test("POST /v1/backup/import returns 400 when archive is missing", async (t) => 
     method: "POST",
     url: "/v1/backup/import",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ passphrase: "valid-pass" }),
+    body: JSON.stringify({ passphrase: "valid-pass" })
   });
 
   t.is(res.statusCode, 400);
@@ -242,7 +248,7 @@ test("POST /v1/backup/import returns 401 on wrong passphrase", async (t) => {
   const payload = makeExportPayload();
   const encrypted = encryptArchive(
     Buffer.from(JSON.stringify(payload), "utf-8"),
-    "correct-pass",
+    "correct-pass"
   );
   const base64 = encrypted.toString("base64");
 
@@ -250,7 +256,7 @@ test("POST /v1/backup/import returns 401 on wrong passphrase", async (t) => {
     method: "POST",
     url: "/v1/backup/import",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ passphrase: "wrong-pass", archive: base64 }),
+    body: JSON.stringify({ passphrase: "wrong-pass", archive: base64 })
   });
 
   t.is(res.statusCode, 401);
@@ -263,7 +269,7 @@ test("POST /v1/backup/import returns 422 on unsupported version", async (t) => {
   const passphrase = "test-passphrase";
   const encrypted = encryptArchive(
     Buffer.from(JSON.stringify(payload), "utf-8"),
-    passphrase,
+    passphrase
   );
   const base64 = encrypted.toString("base64");
 
@@ -271,7 +277,7 @@ test("POST /v1/backup/import returns 422 on unsupported version", async (t) => {
     method: "POST",
     url: "/v1/backup/import",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ passphrase, archive: base64 }),
+    body: JSON.stringify({ passphrase, archive: base64 })
   });
 
   t.is(res.statusCode, 422);
@@ -284,7 +290,7 @@ test("POST /v1/backup/import succeeds with valid archive", async (t) => {
   const passphrase = "import-test-pass";
   const encrypted = encryptArchive(
     Buffer.from(JSON.stringify(payload), "utf-8"),
-    passphrase,
+    passphrase
   );
   const base64 = encrypted.toString("base64");
 
@@ -292,7 +298,7 @@ test("POST /v1/backup/import succeeds with valid archive", async (t) => {
     method: "POST",
     url: "/v1/backup/import",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ passphrase, archive: base64 }),
+    body: JSON.stringify({ passphrase, archive: base64 })
   });
 
   t.is(res.statusCode, 200);
@@ -310,7 +316,7 @@ test("POST /v1/backup/import respects skip_existing option", async (t) => {
   const passphrase = "import-pass";
   const encrypted = encryptArchive(
     Buffer.from(JSON.stringify(payload), "utf-8"),
-    passphrase,
+    passphrase
   );
   const base64 = encrypted.toString("base64");
 
@@ -321,8 +327,8 @@ test("POST /v1/backup/import respects skip_existing option", async (t) => {
     body: JSON.stringify({
       passphrase,
       archive: base64,
-      skip_existing: true,
-    }),
+      skip_existing: true
+    })
   });
 
   t.is(res.statusCode, 200);
@@ -333,7 +339,7 @@ test("POST /v1/backup/import respects import_config option", async (t) => {
   const passphrase = "import-pass";
   const encrypted = encryptArchive(
     Buffer.from(JSON.stringify(payload), "utf-8"),
-    passphrase,
+    passphrase
   );
   const base64 = encrypted.toString("base64");
 
@@ -344,8 +350,8 @@ test("POST /v1/backup/import respects import_config option", async (t) => {
     body: JSON.stringify({
       passphrase,
       archive: base64,
-      import_config: false,
-    }),
+      import_config: false
+    })
   });
 
   t.is(res.statusCode, 200);
@@ -357,7 +363,7 @@ function makeExportPayload(): TenureExport {
   return {
     version: 1,
     exported_at: "2025-01-15T10:00:00.000Z",
-    user_id: "original-user",
+    user_id: USER_ID,
     beliefs: [
       {
         _id: "belief-import-1",
@@ -372,7 +378,7 @@ function makeExportPayload(): TenureExport {
           session_id: "s1",
           turn_id: "t1",
           extracted_at: "2025-01-01T00:00:00.000Z",
-          source_model: "anthropic:claude-haiku-4-5-20251001",
+          source_model: "anthropic:claude-haiku-4-5-20251001"
         },
         epistemic_status: "active",
         confidence: 0.85,
@@ -384,8 +390,8 @@ function makeExportPayload(): TenureExport {
         resolved_at: null,
         change_log: [],
         created_at: "2025-01-01T00:00:00.000Z",
-        updated_at: "2025-01-05T00:00:00.000Z",
-      },
+        updated_at: "2025-01-05T00:00:00.000Z"
+      }
     ],
     runtime_config: {
       default_provider: "anthropic",
@@ -399,10 +405,11 @@ function makeExportPayload(): TenureExport {
       managed_history_token_cap: 120000,
       error_retention_days: 30,
       strict_model_tiers: true,
-      extraction_enabled: true,
+      extraction_enabled: true
     },
     persona_cache: null,
     compaction_log: [],
     sessions: [],
+    injection_audit: []
   };
 }

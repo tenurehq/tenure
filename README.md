@@ -1,6 +1,8 @@
 # Tenure
 
-Persistent AI memory that follows you across every tool, session, and interface. Fully local.
+Open-source AI memory layer for engineering teams. Automatically inject
+knowledge, coding standards, and project context into every AI session across VS Code, Claude Code, Cursor, Cline, Continue, and other
+clients.
 
 ![Build](https://github.com/tenurehq/tenure/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
@@ -81,7 +83,7 @@ export function makeUserRepository(db: Db): UserRepository {
     async findById(id, ctx) {
       const doc = await col.findOne(
         { _id: new ObjectId(id) },
-        { session: ctx?.session },
+        { session: ctx?.session }
       );
       return doc ? toUser(doc) : null;
     },
@@ -89,11 +91,11 @@ export function makeUserRepository(db: Db): UserRepository {
       const doc: UserDoc = {
         _id: new ObjectId(),
         ...data,
-        createdAt: new Date(),
+        createdAt: new Date()
       };
       await col.insertOne(doc, { session: ctx?.session });
       return toUser(doc);
-    },
+    }
   };
 }
 ```

@@ -3,14 +3,26 @@ import type { FastifyInstance } from "fastify";
 export function registerAuditUiRoute(app: FastifyInstance): void {
   app.get<{ Querystring: { token?: string } }>("/audit", async (req, reply) => {
     reply.header("content-type", "text/html; charset=utf-8");
-    return reply.send(buildAuditHtml(req.query.token ?? ""));
+    const nonce = (reply.raw as any).cspNonce as string;
+    return reply.send(
+      buildAuditHtml(req.query.token ?? "", req.tenureUserId, nonce)
+    );
   });
 }
 
-function buildAuditHtml(embeddedToken: string): string {
+function buildAuditHtml(
+  embeddedToken: string,
+  ssoUserId?: string,
+  nonce?: string
+): string {
+  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+  const isTeams = process.env.TENURE_MODE === "teams";
+
   const tokenJS = embeddedToken
     ? JSON.stringify(embeddedToken).replace(/</g, "\\u003c")
-    : `new URLSearchParams(location.search).get("token") || localStorage.getItem("mp_token") || ""`;
+    : isTeams
+    ? `new URLSearchParams(location.search).get("token") || ""`
+    : `new URLSearchParams(location.search).get("token") || localStorage.getItem(STORAGE_KEY) || ""`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -80,10 +92,17 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 .toast-error { background: #2a1212; border: 1px solid var(--danger); color: var(--danger); }
 @keyframes slideup { from { opacity: 0; transform: translateY(.4rem); } to { opacity: 1; transform: none; } }
 </style>
+${
+  ssoUserId
+    ? `<script${nonceAttr}>window.__TENURE_SSO_USER__ = ${JSON.stringify(
+        ssoUserId
+      )};</script>`
+    : ""
+}
 </head>
 <body>
 <div id="app"><div class="loading">Loading...</div></div>
-<script>
+<script${nonceAttr}>
 const STORAGE_KEY = "mp_token";
 let token = ${tokenJS};
 let records = [];
@@ -144,7 +163,7 @@ async function init() {
   } catch (e) {
     if (e.message !== "unauthorized") {
       app.innerHTML = \`<div class="loading"><p style="color:var(--danger)">\${esc(e.message)}</p>
-        <button class="btn" onclick="init()">Retry</button></div>\`;
+        <button class="btn" data-action="retry">Retry</button></div>\`;
     }
   }
 }
@@ -188,8 +207,8 @@ function render() {
         </select>
         <input class="input-sm" id="filter-belief" type="text" placeholder="Filter by belief ID"
           value="\${esc(filterBelief)}" style="width:200px">
-        <button class="btn btn-primary" onclick="applyFilters()">Filter</button>
-        <button class="btn" onclick="clearFilters()">Clear</button>
+        <button class="btn btn-primary" data-action="apply-filters">Filter</button>
+        <button class="btn" data-action="clear-filters">Clear</button>
         <span style="margin-left:auto;font-size:.78rem;color:var(--muted)">\${total} record\${total === 1 ? "" : "s"}</span>
       </div>
       \${records.length === 0
@@ -197,9 +216,9 @@ function render() {
         : records.map(renderRecord).join("")}
       \${totalPages > 1 ? \`
         <div class="pagination">
-          <button class="btn" \${page === 0 ? "disabled" : ""} onclick="prevPage()">Previous</button>
+          <button class="btn" \${page === 0 ? "disabled" : ""} data-action="prev-page">Previous</button>
           <span style="font-size:.8rem;color:var(--muted);line-height:2">Page \${page + 1} of \${totalPages}</span>
-          <button class="btn" \${page >= totalPages - 1 ? "disabled" : ""} onclick="nextPage()">Next</button>
+          <button class="btn" \${page >= totalPages - 1 ? "disabled" : ""} data-action="next-page">Next</button>
         </div>
       \` : ""}
     </div>
@@ -214,7 +233,7 @@ function renderRecord(r) {
   const qCount = r.injected_beliefs?.open_questions?.length ?? 0;
 
   return \`
-    <div class="record" onclick="openDetail('\${esc(r._id)}')">
+    <div class="record" data-id="\${esc(r._id)}">
       <div class="record-header">
         <span class="record-query">\${esc(truncate(r.user_query, 120))}</span>
         <span class="record-time">\${fmtDateTime(r.created_at)}</span>
@@ -261,7 +280,6 @@ function renderDetail() {
 
   const overlay = document.createElement("div");
   overlay.className = "detail-overlay";
-  overlay.onclick = (e) => { if (e.target === overlay) closeDetail(); };
 
   const pinned = r.injected_beliefs?.pinned_facts ?? [];
   const relevant = r.injected_beliefs?.relevant_beliefs ?? [];
@@ -297,7 +315,7 @@ function renderDetail() {
       \` : ""}
 
       <div style="display:flex;justify-content:flex-end;margin-top:1.25rem;border-top:1px solid var(--border);padding-top:1rem">
-        <button class="btn btn-primary" onclick="closeDetail()">Close</button>
+        <button class="btn btn-primary" data-action="close-detail">Close</button>
       </div>
     </div>
   \`;
@@ -362,7 +380,7 @@ function showTokenScreen(err) {
       <p style="color:var(--muted);font-size:.875rem;margin-bottom:1.5rem">Enter your API token.</p>
       \${err ? \`<div style="color:var(--danger);font-size:.8rem;margin-bottom:.75rem">\${esc(err)}</div>\` : ""}
       <input id="tok" type="password" placeholder="your-token-here" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:monospace;font-size:.9rem;padding:.75rem 1rem;outline:none;margin-bottom:.75rem">
-      <button class="btn btn-primary" style="width:100%" onclick="handleToken()">Continue</button>
+      <button class="btn btn-primary" style="width:100%" data-action="token-submit">Continue</button>
     </div>
   </div>\`;
   document.getElementById("tok")?.focus();
@@ -376,7 +394,40 @@ function handleToken() {
   init();
 }
 
-token ? init() : showTokenScreen();
+document.addEventListener("click", e => {
+  const record = e.target.closest(".record");
+  if (record && !e.target.closest("button, a")) {
+    const id = record.dataset.id;
+    if (id) { openDetail(id); return; }
+  }
+
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  switch (el.dataset.action) {
+    case "apply-filters": applyFilters(); break;
+    case "clear-filters": clearFilters(); break;
+    case "prev-page": prevPage(); break;
+    case "next-page": nextPage(); break;
+    case "close-detail": closeDetail(); break;
+    case "token-submit": handleToken(); break;
+  }
+
+  if (e.target.classList.contains("detail-overlay")) {
+    closeDetail();
+    return;
+  }
+});
+
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && detailRecord) closeDetail();
+  if (e.key === "Enter" && document.getElementById("tok")) handleToken();
+});
+
+if (window.__TENURE_SSO_USER__) {
+  init();
+} else {
+  token ? init() : showTokenScreen();
+}
 
 async function loadTaxDashboard() {
   try {

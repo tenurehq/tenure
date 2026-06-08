@@ -7,7 +7,7 @@ import type { ErrorLog } from "../types/error.js";
 import type { PersonaDoc } from "../context/personaCache.js";
 import type {
   CompactionLogEntry,
-  BeliefContradiction,
+  BeliefContradiction
 } from "../jobs/compactionRunner.js";
 import type { InjectionAuditRecord } from "../types/injectionAudit.js";
 
@@ -45,6 +45,30 @@ export interface TopicIndexEntry {
   updated_at: Date;
 }
 
+export interface ApiTokenDoc {
+  _id: string;
+  token_hash: string;
+  name: string;
+  user_id: string;
+  created_at: Date;
+  last_used_at?: Date | null;
+  revoked_at?: Date | null;
+}
+
+export interface ScimUserDoc {
+  _id: string;
+  userName: string;
+  active: boolean;
+  externalId?: string;
+  name?: { givenName?: string; familyName?: string };
+  emails?: Array<{ value: string; type?: string; primary?: boolean }>;
+  meta: {
+    resourceType: "User";
+    created: Date;
+    lastModified: Date;
+  };
+}
+
 export interface Collections {
   db: Db;
   beliefs_plain: Collection<Belief>;
@@ -61,6 +85,8 @@ export interface Collections {
   onboarding_drafts: Collection<OnboardingDraftDoc>;
   file_meta: Collection<FileMetaDoc>;
   injection_audit: Collection<InjectionAuditRecord>;
+  api_tokens: Collection<ApiTokenDoc>;
+  scim_users: Collection<ScimUserDoc>;
 }
 
 export function getCollections(db: Db, plainDb?: Db): Collections {
@@ -81,5 +107,7 @@ export function getCollections(db: Db, plainDb?: Db): Collections {
     onboarding_drafts: db.collection<OnboardingDraftDoc>("onboarding_drafts"),
     file_meta: db.collection<FileMetaDoc>("file_meta"),
     injection_audit: db.collection<InjectionAuditRecord>("injection_audit"),
+    api_tokens: db.collection<ApiTokenDoc>("api_tokens"),
+    scim_users: db.collection<ScimUserDoc>("scim_users")
   };
 }

@@ -26,7 +26,7 @@ const SEARCH_INDEXES: SearchIndexMeta[] = [
         {
           name: "aliases_light",
           tokenizer: { type: "whitespace" },
-          tokenFilters: [{ type: "lowercase" }, { type: "englishPossessive" }],
+          tokenFilters: [{ type: "lowercase" }, { type: "englishPossessive" }]
         },
         {
           name: "whole_name_analyzer",
@@ -34,9 +34,9 @@ const SEARCH_INDEXES: SearchIndexMeta[] = [
           tokenizer: {
             type: "regexCaptureGroup",
             pattern: "[^,;|]+",
-            group: 0,
+            group: 0
           },
-          tokenFilters: [{ type: "lowercase" }, { type: "englishPossessive" }],
+          tokenFilters: [{ type: "lowercase" }, { type: "englishPossessive" }]
         },
         {
           name: "canonical_query_search_analyzer",
@@ -75,15 +75,15 @@ const SEARCH_INDEXES: SearchIndexMeta[] = [
                 "this",
                 "how",
                 "what",
-                "does",
-              ],
+                "does"
+              ]
             },
             {
               type: "shingle",
               minShingleSize: 2,
-              maxShingleSize: 2,
-            },
-          ],
+              maxShingleSize: 2
+            }
+          ]
         },
         {
           name: "alias_search_analyzer",
@@ -94,10 +94,10 @@ const SEARCH_INDEXES: SearchIndexMeta[] = [
             {
               type: "shingle",
               minShingleSize: 2,
-              maxShingleSize: 2,
-            },
-          ],
-        },
+              maxShingleSize: 2
+            }
+          ]
+        }
       ],
       mappings: {
         dynamic: false,
@@ -113,9 +113,9 @@ const SEARCH_INDEXES: SearchIndexMeta[] = [
               phrase: {
                 type: "string",
                 analyzer: "whole_name_analyzer",
-                searchAnalyzer: "canonical_query_search_analyzer",
-              },
-            },
+                searchAnalyzer: "canonical_query_search_analyzer"
+              }
+            }
           },
           aliases: {
             type: "string",
@@ -125,9 +125,9 @@ const SEARCH_INDEXES: SearchIndexMeta[] = [
               shingle: {
                 type: "string",
                 analyzer: "whole_name_analyzer",
-                searchAnalyzer: "alias_search_analyzer",
-              },
-            },
+                searchAnalyzer: "alias_search_analyzer"
+              }
+            }
           },
           participants: { type: "token" },
           relation_type: { type: "token" },
@@ -137,10 +137,10 @@ const SEARCH_INDEXES: SearchIndexMeta[] = [
           scope: { type: "token" },
           reinforcement_count: { type: "number" },
           confidence: { type: "number" },
-          subtype: { type: "token" },
-        },
-      },
-    },
+          subtype: { type: "token" }
+        }
+      }
+    }
   },
   {
     name: "turns_search",
@@ -155,18 +155,18 @@ const SEARCH_INDEXES: SearchIndexMeta[] = [
           scope: { type: "token" },
           sessionId: { type: "token" },
           userMessage: { type: "string", analyzer: "lucene.standard" },
-          assistantMessage: { type: "string", analyzer: "lucene.standard" },
-        },
-      },
-    },
-  },
+          assistantMessage: { type: "string", analyzer: "lucene.standard" }
+        }
+      }
+    }
+  }
 ];
 
 export async function ensureIndexes(cols: Collections): Promise<void> {
   await cols.turns.createIndexes([
     { key: { sessionId: 1, turnIndex: 1 }, unique: true },
     { key: { userId: 1, createdAt: -1 } },
-    { key: { userId: 1, scope: 1, createdAt: -1 } },
+    { key: { userId: 1, scope: 1, createdAt: -1 } }
   ]);
 
   await cols.sessions.createIndexes([{ key: { userId: 1, lastUsedAt: -1 } }]);
@@ -178,18 +178,18 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
       unique: true,
       partialFilterExpression: {
         superseded_by: null,
-        resolved_at: null,
-      },
+        resolved_at: null
+      }
     },
     { key: { user_id: 1, scope: 1, superseded_by: 1 } },
     {
       key: { user_id: 1, aliases: 1 },
-      partialFilterExpression: { superseded_by: null },
+      partialFilterExpression: { superseded_by: null }
     },
     { key: { user_id: 1, pinned: 1 } },
     {
       key: { user_id: 1, last_reinforced_at: -1 },
-      partialFilterExpression: { superseded_by: null },
+      partialFilterExpression: { superseded_by: null }
     },
     {
       key: { user_id: 1, "origin_context.active_file": 1, scope: 1 },
@@ -197,64 +197,79 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
       partialFilterExpression: {
         superseded_by: null,
         resolved_at: null,
-        "origin_context.active_file": { $type: "string" },
-      },
-    },
+        "origin_context.active_file": { $type: "string" }
+      }
+    }
   ]);
 
   await cols.jobs.createIndexes([
     {
       key: { status: 1, run_after: 1, created_at: 1 },
-      partialFilterExpression: { status: "pending" },
+      partialFilterExpression: { status: "pending" }
     },
     { key: { turn_id: 1, status: 1 } },
     {
       key: { completed_at: 1 },
-      expireAfterSeconds: 60 * 60 * 24 * 7,
+      expireAfterSeconds: 60 * 60 * 24 * 7
     },
-    { key: { user_id: 1, created_at: -1 } },
+    { key: { user_id: 1, created_at: -1 } }
   ]);
 
   await cols.errors.createIndexes([
     { key: { occurred_at: 1 }, expireAfterSeconds: 60 * 60 * 24 * 30 },
     { key: { severity: 1, occurred_at: -1 } },
-    { key: { resolved: 1, occurred_at: -1 } },
+    { key: { resolved: 1, occurred_at: -1 } }
   ]);
 
   await cols.topic_index.createIndexes([
     { key: { user_id: 1, topic: 1 }, unique: true },
-    { key: { user_id: 1, updated_at: -1 } },
+    { key: { user_id: 1, updated_at: -1 } }
   ]);
 
   await cols.config.createIndexes([{ key: { key: 1 }, unique: true }]);
 
   await cols.persona_cache.createIndexes([
     { key: { generated_at: -1 } },
-    { key: { beliefs_hash: 1 } },
+    { key: { beliefs_hash: 1 } }
   ]);
 
   await cols.compaction_log.createIndex(
     { user_id: 1, scope: 1, ran_at: -1 },
-    { name: "compaction_log_cooldown" },
+    { name: "compaction_log_cooldown" }
   );
 
   await cols.contradictions.createIndexes([
     {
       key: { user_id: 1, agent_id: 1, scope: 1, status: 1 },
-      name: "contradictions_agent_scope_status",
+      name: "contradictions_agent_scope_status"
     },
     {
       key: { user_id: 1, status: 1, detected_at: -1 },
-      name: "contradictions_pending_recent",
-    },
+      name: "contradictions_pending_recent"
+    }
   ]);
 
   await cols.onboarding_drafts.createIndexes([
     {
       key: { created_at: 1 },
-      expireAfterSeconds: 60 * 60 * 24 * 7,
+      expireAfterSeconds: 60 * 60 * 24 * 7
     },
-    { key: { user_id: 1 } },
+    { key: { user_id: 1 } }
+  ]);
+
+  await cols.api_tokens.createIndexes([
+    {
+      key: { token_hash: 1 },
+      unique: true,
+      partialFilterExpression: { revoked_at: null }
+    },
+    { key: { user_id: 1, created_at: -1 } },
+    { key: { token_hash: 1, revoked_at: 1 } }
+  ]);
+
+  await cols.scim_users.createIndexes([
+    { key: { userName: 1 }, unique: true },
+    { key: { externalId: 1 } }
   ]);
 
   await cols.injection_audit.createIndexes([
@@ -262,29 +277,29 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
     { key: { user_id: 1, scope: 1, created_at: -1 }, name: "audit_user_scope" },
     {
       key: { user_id: 1, "injected_beliefs.pinned_facts._id": 1 },
-      name: "audit_by_pinned_belief",
+      name: "audit_by_pinned_belief"
     },
     {
       key: { user_id: 1, "injected_beliefs.relevant_beliefs._id": 1 },
-      name: "audit_by_relevant_belief",
+      name: "audit_by_relevant_belief"
     },
     {
       key: { user_id: 1, orientation_tax: 1, created_at: -1 },
-      name: "audit_orientation_tax",
-    },
+      name: "audit_orientation_tax"
+    }
   ]);
 
   const taxEventsCol = cols.db.collection("orientation_tax_events");
   await taxEventsCol.createIndexes([
     {
       key: { user_id: 1, scopes: 1, created_at: -1 },
-      name: "tax_events_scope",
+      name: "tax_events_scope"
     },
     {
       key: { created_at: 1 },
       expireAfterSeconds: 60 * 60 * 24 * 30,
-      name: "tax_events_ttl",
-    },
+      name: "tax_events_ttl"
+    }
   ]);
 }
 
@@ -316,7 +331,7 @@ export async function ensureSearchIndexes(db: Db): Promise<void> {
         console.log(
           `Dropping outdated search index: ${idx.name} (v${
             existing?.version ?? "?"
-          })`,
+          })`
         );
         await collection.dropSearchIndex(idx.name);
         await waitForIndexDrop(collection, idx.name);
@@ -328,7 +343,7 @@ export async function ensureSearchIndexes(db: Db): Promise<void> {
     console.log(`Creating search index: ${idx.name} (v${idx.version})`);
     await collection.createSearchIndex({
       name: idx.name,
-      definition: idx.definition,
+      definition: idx.definition
     });
 
     await waitForIndexReady(collection, idx.name);
@@ -336,7 +351,7 @@ export async function ensureSearchIndexes(db: Db): Promise<void> {
     await meta.updateOne(
       { name: idx.name },
       { $set: { name: idx.name, version: idx.version, updatedAt: new Date() } },
-      { upsert: true },
+      { upsert: true }
     );
 
     console.log(`Search index ${idx.name} v${idx.version} is ready`);
@@ -346,7 +361,7 @@ export async function ensureSearchIndexes(db: Db): Promise<void> {
 async function waitForIndexDrop(
   collection: Collection,
   name: string,
-  timeoutMs = 60_000,
+  timeoutMs = 60_000
 ): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -362,7 +377,7 @@ async function waitForIndexDrop(
 async function waitForIndexReady(
   collection: Collection,
   name: string,
-  timeoutMs = 120_000,
+  timeoutMs = 120_000
 ): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {

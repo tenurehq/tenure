@@ -4,12 +4,11 @@ import type { InjectionAuditRecord } from "../types/injectionAudit.js";
 
 export interface AuditDeps {
   injectionAudit: Collection<InjectionAuditRecord>;
-  userId: string;
 }
 
 export function registerAuditRoutes(
   app: FastifyInstance,
-  deps: AuditDeps,
+  deps: AuditDeps
 ): void {
   app.get<{
     Querystring: {
@@ -21,10 +20,12 @@ export function registerAuditRoutes(
       scope?: string;
     };
   }>("/admin/audit/injections", async (req) => {
+    const userId = req.tenureUserId;
+
     const limit = Math.min(parseInt(req.query.limit ?? "50", 10) || 50, 200);
     const skip = parseInt(req.query.skip ?? "0", 10) || 0;
 
-    const filter: Record<string, unknown> = { user_id: deps.userId };
+    const filter: Record<string, unknown> = { user_id: userId };
 
     if (req.query.start || req.query.end) {
       const createdAt: Record<string, unknown> = {};
@@ -45,7 +46,7 @@ export function registerAuditRoutes(
       filter.$or = [
         { "injected_beliefs.pinned_facts._id": req.query.belief_id },
         { "injected_beliefs.relevant_beliefs._id": req.query.belief_id },
-        { "injected_beliefs.open_questions._id": req.query.belief_id },
+        { "injected_beliefs.open_questions._id": req.query.belief_id }
       ];
     }
 
@@ -60,7 +61,7 @@ export function registerAuditRoutes(
         .skip(skip)
         .limit(limit)
         .toArray(),
-      deps.injectionAudit.countDocuments(filter),
+      deps.injectionAudit.countDocuments(filter)
     ]);
 
     return { records, total, limit, skip };
@@ -69,9 +70,11 @@ export function registerAuditRoutes(
   app.get<{ Params: { id: string } }>(
     "/admin/audit/injections/:id",
     async (req, reply) => {
+      const userId = req.tenureUserId;
+
       const record = await deps.injectionAudit.findOne({
         _id: req.params.id,
-        user_id: deps.userId,
+        user_id: userId
       });
 
       if (!record) {
@@ -79,12 +82,14 @@ export function registerAuditRoutes(
       }
 
       return { record };
-    },
+    }
   );
 
-  app.get("/admin/audit/scopes", async () => {
+  app.get("/admin/audit/scopes", async (req) => {
+    const userId = req.tenureUserId;
+
     const raw = await deps.injectionAudit.distinct("scope", {
-      user_id: deps.userId,
+      user_id: userId
     });
     const scopes = [...new Set(raw.flat().filter(Boolean))].sort();
     return { scopes };
@@ -93,46 +98,48 @@ export function registerAuditRoutes(
   app.get<{ Querystring: { days?: string } }>(
     "/admin/audit/orientation-tax",
     async (req) => {
+      const userId = req.tenureUserId;
+
       const days = Math.min(parseInt(req.query.days ?? "30", 10) || 30, 365);
       const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
       const baseFilter = {
-        user_id: deps.userId,
-        created_at: { $gte: since },
+        user_id: userId,
+        created_at: { $gte: since }
       };
 
       const midpoint = new Date(
-        since.getTime() + (days * 24 * 60 * 60 * 1000) / 2,
+        since.getTime() + (days * 24 * 60 * 60 * 1000) / 2
       );
 
       const [taxPaid, totalWithBeliefs, taxPaidFirstHalf, taxPaidSecondHalf] =
         await Promise.all([
           deps.injectionAudit.countDocuments({
             ...baseFilter,
-            orientation_tax: true,
+            orientation_tax: true
           }),
           deps.injectionAudit.countDocuments({
             ...baseFilter,
             belief_count: { $gt: 0 },
-            injected: true,
+            injected: true
           }),
           deps.injectionAudit.countDocuments({
-            user_id: deps.userId,
+            user_id: userId,
             created_at: { $gte: since, $lt: midpoint },
-            orientation_tax: true,
+            orientation_tax: true
           }),
           deps.injectionAudit.countDocuments({
-            user_id: deps.userId,
+            user_id: userId,
             created_at: { $gte: midpoint },
-            orientation_tax: true,
-          }),
+            orientation_tax: true
+          })
         ]);
 
       const taxPrevented = Math.max(0, totalWithBeliefs - taxPaid);
       const taxRatePctChange =
         taxPaidFirstHalf > 0 && taxPaidSecondHalf >= 0
           ? Math.round(
-              ((taxPaidSecondHalf - taxPaidFirstHalf) / taxPaidFirstHalf) * 100,
+              ((taxPaidSecondHalf - taxPaidFirstHalf) / taxPaidFirstHalf) * 100
             )
           : null;
 
@@ -142,8 +149,8 @@ export function registerAuditRoutes(
         orientation_tax_prevented: taxPrevented,
         total_injected_turns: totalWithBeliefs,
         tax_rate_trend_pct: taxRatePctChange,
-        estimated_minutes_saved: taxPrevented,
+        estimated_minutes_saved: taxPrevented
       };
-    },
+    }
   );
 }

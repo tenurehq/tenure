@@ -1,3 +1,4 @@
+import "./telemetry.js";
 import { loadBootstrapConfig } from "./config/bootstrap.js";
 import { buildApp } from "./app.js";
 import { MongoClient } from "mongodb";
@@ -5,6 +6,11 @@ import { MongoClient } from "mongodb";
 const subcommand = process.argv[2];
 
 if (subcommand === "token") {
+  if (process.env.TENURE_MODE === "teams") {
+    console.error("The 'token' subcommand is disabled in teams mode.");
+    process.exit(1);
+  }
+
   const config = loadBootstrapConfig();
   const client = new MongoClient(config.mongodb_uri);
   try {
@@ -17,7 +23,6 @@ if (subcommand === "token") {
       console.error("No token found. Has Tenure been started at least once?");
       process.exit(1);
     }
-    console.log(doc.api_token);
   } finally {
     await client.close();
   }

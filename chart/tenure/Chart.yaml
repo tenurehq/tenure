@@ -1,0 +1,51 @@
+apiVersion: v2
+name: tenure
+description:
+  Open-source AI memory layer for engineering teams. Automatically inject
+  organizational knowledge, coding standards, and project context into every
+  AI session across VS Code, Claude Code, Cursor, Cline, Continue, and other
+  clients.
+type: application
+version: 1.0.0
+appVersion: "1.0.20"
+icon: https://raw.githubusercontent.com/tenurehq/tenure/main/assets/tenure-logo.png
+home: https://tenureai.dev
+sources:
+  - https://github.com/tenurehq/tenure
+keywords:
+  - ai
+  - memory
+  - context
+  - llm
+  - rag
+  - vscode
+  - copilot
+  - claude-code
+  - cursor
+  - continue
+  - agent
+  - agent-memory
+  - knowledge-base
+  - engineering
+  - anthropic
+  - openai
+  - mcp
+  - kubernetes
+maintainers:
+  - name: Jeff Flynt
+    email: jeff@tenureai.dev
+annotations:
+  artifacthub.io/category: ai-machine-learning
+  artifacthub.io/license: MIT
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://tenureai.dev/docs
+    - name: Website
+      url: https://tenureai.dev
+    - name: Research Paper
+      url: https://arxiv.org/abs/2605.11325
+    - name: Support
+      url: https://github.com/tenurehq/tenure/issues
+  artifacthub.io/changes: |
+    - kind: added
+      description: Initial Helm chart release

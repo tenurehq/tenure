@@ -16,13 +16,15 @@ export interface AppConfigBootstrap {
 
 export async function loadAppConfig(
   db: Db,
-  bootstrap: AppConfigBootstrap = {},
+  bootstrap: AppConfigBootstrap = {}
 ): Promise<AppConfig> {
   const col = db.collection<AppConfig & { _id: string }>("config");
   const existing = await col.findOne({ _id: "app" });
   if (existing) return existing;
 
-  const token = `mp_${randomBytes(24).toString("base64url")}`;
+  const token =
+    process.env.TENURE_API_TOKEN ??
+    `mp_${randomBytes(24).toString("base64url")}`;
   const doc = { _id: "app" as const, api_token: token };
   await col.insertOne(doc);
 
@@ -36,15 +38,15 @@ export async function loadAppConfig(
             "default_model",
             "openai_base_url",
             "anthropic_base_url",
-            "openai_endpoint_flavor",
-          ].includes(key),
+            "openai_endpoint_flavor"
+          ].includes(key)
       )
       .map(([key, value]) => ({
         key,
         value: key === "scope_auto_detect" ? true : value,
         encrypted: false,
-        updatedAt: new Date(),
-      })),
+        updatedAt: new Date()
+      }))
   );
 
   const tokenDir = process.env.TENURE_HOME ?? resolve(homedir(), ".tenure");
@@ -55,13 +57,19 @@ export async function loadAppConfig(
 }
 
 export async function rotateApiToken(db: Db): Promise<string> {
-  const { randomBytes } = await import("node:crypto");
+  if (process.env.TENURE_MODE === "teams") {
+    throw new Error(
+      "Token rotation is disabled in teams mode. " +
+        "Update the Kubernetes secret and roll the deployment."
+    );
+  }
+
   const token = `mp_${randomBytes(24).toString("base64url")}`;
   const col = db.collection<AppConfig & { _id: string }>("config");
   await col.updateOne(
     { _id: "app" },
     { $set: { api_token: token } },
-    { upsert: true },
+    { upsert: true }
   );
   return token;
 }
@@ -69,7 +77,7 @@ export async function rotateApiToken(db: Db): Promise<string> {
 export function writeTokenAndPrintBanner(
   token: string,
   tokenPath: string,
-  port: number,
+  port: number
 ): void {
   mkdirSync(dirname(tokenPath), { recursive: true });
   try {
@@ -79,7 +87,7 @@ export function writeTokenAndPrintBanner(
       throw new Error(
         `Token file already exists at ${tokenPath} but no matching DB config was found. ` +
           `This usually means the database was reset. Remove the file to generate a fresh token, ` +
-          `or restore the DB from backup.`,
+          `or restore the DB from backup.`
       );
     }
     throw err;
