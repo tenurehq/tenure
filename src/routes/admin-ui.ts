@@ -1,16 +1,34 @@
 import type { FastifyInstance } from "fastify";
 
+const isTeams = process.env.TENURE_MODE === "teams";
+
 export function registerAdminUiRoute(app: FastifyInstance): void {
   app.get<{ Querystring: { token?: string } }>("/admin", async (req, reply) => {
     reply.header("content-type", "text/html; charset=utf-8");
-    return reply.send(buildAdminHtml(req.query.token ?? ""));
+    const nonce = (reply.raw as any).cspNonce as string | undefined;
+    return reply.send(
+      buildAdminHtml(req.query.token ?? "", isTeams, req.tenureUserId, nonce)
+    );
   });
 }
 
-function buildAdminHtml(embeddedToken: string): string {
+function buildAdminHtml(
+  embeddedToken: string,
+  isTeams: boolean,
+  ssoUserId?: string,
+  nonce?: string
+): string {
   const tokenJS = embeddedToken
     ? JSON.stringify(embeddedToken).replace(/</g, "\\u003c")
     : `new URLSearchParams(location.search).get("token") || localStorage.getItem("mp_token") || ""`;
+
+  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+
+  const ssoConfig = ssoUserId
+    ? `<script${nonceAttr}>window.__TENURE_SSO_USER__ = ${JSON.stringify(
+        ssoUserId
+      )};</script>`
+    : "";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -94,10 +112,11 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 @keyframes slideup { from { opacity: 0; transform: translateY(.4rem); } to { opacity: 1; transform: none; } }
 .logo { display: block; margin: 0 auto 2rem; width: 120px; }
 </style>
+${ssoConfig}
 </head>
 <body>
 <div id="app"><div class="loading">Loading…</div></div>
-<script>
+<script${nonceAttr}>
 const STORAGE_KEY = "mp_token";
 let token = ${tokenJS};
 
@@ -131,7 +150,7 @@ const FLAVORS = [
 ];
 
 function flavorById(id) {
-  return FLAVORS.find(f => f.id === id) ?? FLAVORS[0];
+  return FLAVORS.find(f => f.id === id) ?? FLAVORS;
 }
 
 async function apiFetch(method, path, body) {
@@ -161,13 +180,14 @@ async function init() {
     cfg = await cfgRes.json();
     providers = (await provRes.json()).providers ?? [];
     render();
+    ${isTeams ? "loadTokens();" : ""}
     loadPersona()
     loadErrors();
   } catch (e) {
     if (e.message !== "unauthorized") {
       app.innerHTML = \`<div class="loading">
         <p style="color:var(--danger);margin-bottom:1rem">\${esc(e.message)}</p>
-        <button class="btn" onclick="init()">Retry</button>
+        <button class="btn" data-action="retry">Retry</button>
       </div>\`;
     }
   }
@@ -181,6 +201,7 @@ function navHtml() {
     <div class="nav-links">
       <a class="nav-link" href="/beliefs">World Model</a>
       <a class="nav-link active" href="/admin">Settings</a>
+      <a class="nav-link" href="/audit">Audit</a> 
       <a class="nav-link" href="/onboarding">Onboarding</a>
     </div>
   </nav>\`;
@@ -213,8 +234,8 @@ function render() {
                   \${defaultModel ? \`<option value="\${esc(defaultModel)}" selected>\${esc(defaultModel)}</option>\` : ""}
                 </select>
               </div>
-              <button class="btn" onclick="loadModels()">Browse</button>
-              <button class="btn btn-primary" onclick="saveModel()">Save</button>
+              <button class="btn" data-action="load-models">Browse</button>
+              <button class="btn btn-primary" data-action="save-model">Save</button>
             </div>
             <div class="hint">Used for belief extraction and onboarding. Must meet the minimum tier floor.</div>
           </div>
@@ -232,7 +253,7 @@ function render() {
           <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;flex-shrink:0">
             <input type="checkbox" id="extraction-enabled"
               \${cfg.extraction_enabled !== false ? "checked" : ""}
-              onchange="setExtractionEnabled(this.checked)"
+              data-action="set-extraction-enabled"
               style="opacity:0;width:0;height:0;position:absolute">
             <span id="extraction-track" style="
               position:absolute;inset:0;border-radius:11px;transition:background .2s;
@@ -257,7 +278,7 @@ function render() {
           <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;flex-shrink:0">
             <input type="checkbox" id="injection-enabled"
               \${cfg.injection_enabled !== false ? "checked" : ""}
-              onchange="setInjectionEnabled(this.checked)"
+              data-action="set-injection-enabled"
               style="opacity:0;width:0;height:0;position:absolute">
             <span id="injection-track" style="
               position:absolute;inset:0;border-radius:11px;transition:background .2s;
@@ -288,7 +309,7 @@ function render() {
                 <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;flex-shrink:0">
                   <input type="checkbox" id="scope-auto-detect"
                     \${cfg.scope_auto_detect !== false ? "checked" : ""}
-                    onchange="setScopeAutoDetect(this.checked)"
+                    data-action="set-scope-auto-detect"
                     style="opacity:0;width:0;height:0;position:absolute">
                   <span id="scope-auto-track" style="
                     position:absolute;inset:0;border-radius:11px;transition:background .2s;
@@ -317,7 +338,7 @@ function render() {
             <div id="persona-universal" style="margin-top:.5rem;font-size:.82rem;color:var(--text);line-height:1.5;min-height:2rem;background:var(--surface2);border-radius:5px;padding:.65rem .75rem;white-space:pre-wrap">Loading…</div>
           </div>
           <div style="display:flex;justify-content:flex-end;margin-top:.75rem">
-            <button class="btn btn-primary" onclick="regeneratePersona()">Regenerate</button>
+            <button class="btn btn-primary" data-action="regenerate-persona">Regenerate</button>
           </div>
         </div>
       </div>
@@ -325,7 +346,7 @@ function render() {
       
 
       <div class="section">
-        <button class="advanced-toggle" onclick="toggleAdvanced()">
+        <button class="advanced-toggle" data-action="toggle-advanced">
           <span id="adv-arrow">▶</span> Advanced
         </button>
         <div class="advanced-content" id="adv-content">
@@ -349,7 +370,7 @@ function render() {
                 <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer;flex-shrink:0">
                   <input type="checkbox" id="strict-model-tiers"
                     \${cfg.strict_model_tiers !== false ? "checked" : ""}
-                    onchange="setStrictModelTiers(this.checked)"
+                    data-action="set-strict-model-tiers"
                     style="opacity:0;width:0;height:0;position:absolute">
                   <span id="strict-tiers-track" style="
                     position:absolute;inset:0;border-radius:11px;transition:background .2s;
@@ -376,24 +397,48 @@ function render() {
               <div class="hint">Controls how aggressively past turns are collapsed from session history. Aggressive is recommended for most users.</div>
             </div>
             <div style="display:flex;justify-content:flex-end;margin-top:1rem">
-              <button class="btn btn-primary" onclick="saveAdvanced()">Save</button>
+              <button class="btn btn-primary" data-action="save-advanced">Save</button>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="section">
-        <div class="section-title">API Token</div>
-        <div class="card">
-          <div class="field">
-            <label>Token rotation</label>
-            <div class="hint">Generates a new token immediately. Your current session will end — copy the new token before closing this dialog.</div>
-          </div>
-          <div style="display:flex;justify-content:flex-end">
-            <button class="btn btn-danger" onclick="rotateToken()">Rotate token…</button>
+      ${
+        !isTeams
+          ? `
+        <div class="section">
+          <div class="section-title">API Token</div>
+          <div class="card">
+            <div class="field">
+              <label>Token rotation</label>
+              <div class="hint">Generates a new token immediately. Your current session will end. Copy the new token before closing this dialog.</div>
+            </div>
+            <div style="display:flex;justify-content:flex-end">
+              <button class="btn btn-danger" data-action="rotate-token">Rotate token…</button>
+            </div>
           </div>
         </div>
-      </div>
+        `
+          : `
+        <div class="section">
+          <div class="section-title">Access Tokens</div>
+          <div class="card">
+            <div class="field">
+              <label>Personal access tokens</label>
+              <div class="hint">Generate tokens for VSCode, OpenWebUI, or CI. Copy the token immediately, it is shown only once.</div>
+            </div>
+            <div id="token-list" style="margin-top:.75rem"></div>
+            <div class="row" style="margin-top:.75rem">
+              <div class="field" style="flex:1;margin:0">
+                <input id="new-token-name" type="text" placeholder="Token name (e.g. VSCode Laptop)" style="width:100%">
+              </div>
+              <button class="btn btn-primary" data-action="create-token">Generate</button>
+            </div>
+            <div id="new-token-result" style="margin-top:.5rem;font-size:.85rem;color:var(--ok);display:none"></div>
+          </div>
+        </div>
+        `
+      }
 
       <div class="section">
         <div class="section-title">Maintenance</div>
@@ -404,7 +449,7 @@ function render() {
             every 30 minutes — trigger manually after a large import or onboarding run.</div>
           </div>
           <div style="display:flex;justify-content:flex-end;margin-top:.75rem">
-            <button class="btn btn-primary" id="compact-btn" onclick="runCompaction()">
+            <button class="btn btn-primary" id="compact-btn" data-action="run-compaction">
               Merge redundant beliefs
             </button>
           </div>
@@ -421,8 +466,8 @@ function render() {
           </div>
           <div id="error-log" style="margin-top:.75rem;font-size:.8rem;color:var(--muted)">Loading...</div>
           <div style="display:flex;justify-content:flex-end;margin-top:.75rem;gap:.5rem">
-            <button class="btn" onclick="copyErrors()">Copy to clipboard</button>
-            <button class="btn" onclick="loadErrors()">Refresh</button>
+            <button class="btn" data-action="copy-errors">Copy to clipboard</button>
+            <button class="btn" data-action="load-errors">Refresh</button>
           </div>
         </div>
       </div>
@@ -445,8 +490,8 @@ function render() {
             <div class="field" style="flex:1;margin:0">
               <input id="export-passphrase" type="password" placeholder="Passphrase (min 8 characters)" autocomplete="off">
             </div>
-            <button class="btn" onclick="loadBackupPreview()">Preview</button>
-            <button class="btn btn-primary" onclick="exportBackup()">Export</button>
+            <button class="btn" data-action="load-backup-preview">Preview</button>
+            <button class="btn btn-primary" data-action="export-backup">Export</button>
           </div>
         </div>
         <div class="card" style="margin-top:.5rem">
@@ -461,7 +506,7 @@ function render() {
             <div class="field" style="flex:1;margin:0">
               <input id="import-passphrase" type="password" placeholder="Passphrase" autocomplete="off">
             </div>
-            <button class="btn btn-primary" onclick="importBackup()">Import</button>
+            <button class="btn btn-primary" data-action="import-backup">Import</button>
           </div>
           <div style="display:flex;gap:.75rem;margin-top:.75rem">
             <label style="font-size:.75rem;color:var(--muted);display:flex;align-items:center;gap:.35rem">
@@ -503,7 +548,7 @@ function providerCard(p) {
       \${isOpenAI ? \`
       <div class="field">
         <label>Endpoint type</label>
-        <select id="flavor-\${esc(p.id)}" onchange="onAdminFlavorChange('\${esc(p.id)}', this.value)">
+        <select id="flavor-\${esc(p.id)}" data-action="on-admin-flavor-change" data-provider-id="\${esc(p.id)}">
           \${FLAVORS.map(f => \`<option value="\${f.id}" \${f.id === currentFlavor ? "selected" : ""}>\${f.label}</option>\`).join("")}
         </select>
       </div>
@@ -515,8 +560,8 @@ function providerCard(p) {
         <div class="hint" id="flavor-hint-\${esc(p.id)}">\${esc(flavor.hint)}</div>
       </div>\` : ""}
       <div class="row" style="justify-content:flex-end;margin-top:.25rem">
-        \${configured ? \`<button class="btn btn-danger" onclick="removeProvider('\${esc(p.id)}')">Disconnect</button>\` : ""}
-        <button class="btn btn-primary" onclick="saveProvider('\${esc(p.id)}')">Save</button>
+        \${configured ? \`<button class="btn btn-danger" data-action="remove-provider" data-provider-id="\${esc(p.id)}">Disconnect</button>\` : ""}
+        <button class="btn btn-primary" data-action="save-provider" data-provider-id="\${esc(p.id)}">Save</button>
       </div>
     </div>
   \`;
@@ -699,13 +744,69 @@ async function setExtractionEnabled(enabled) {
     }
 
     toast(
-      enabled ? "Extraction enabled" : "Extraction paused — existing beliefs still injected",
+      enabled ? "Extraction enabled" : "Extraction paused - existing beliefs still injected",
       "ok",
     );
   } catch (e) {
     toast(e.message, "error");
     const cb = document.getElementById("extraction-enabled");
     if (cb) cb.checked = !enabled;
+  }
+}
+
+async function loadTokens() {
+  const el = document.getElementById("token-list");
+  if (!el) return;
+  try {
+    const res = await apiFetch("GET", "/admin/tokens");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message ?? \`HTTP \${res.status}\`);
+    if (!data.tokens?.length) {
+      el.innerHTML = '<span style="color:var(--muted);font-size:.8rem">No active tokens.</span>';
+      return;
+    }
+    el.innerHTML = data.tokens.map(t => \`
+      <div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface2);border-radius:4px;padding:.5rem .65rem;margin-bottom:.4rem">
+        <div>
+          <div style="font-size:.85rem">\${esc(t.name)}</div>
+          <div style="font-size:.72rem;color:var(--muted)">Created \${new Date(t.created_at).toLocaleDateString()}</div>
+        </div>
+        <button class="btn btn-danger" data-action="revoke-token" data-token-id="\${esc(t._id)}">Revoke</button>
+      </div>
+    \`).join("");
+  } catch (e) {
+    if (el) el.innerHTML = '<span style="color:var(--danger);font-size:.8rem">Failed to load tokens.</span>';
+  }
+}
+
+async function createToken() {
+  const name = document.getElementById("new-token-name")?.value?.trim();
+  if (!name) { toast("Enter a token name", "error"); return; }
+  try {
+    const res = await apiFetch("POST", "/admin/tokens", { name });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message ?? \`HTTP \${res.status}\`);
+    const resultEl = document.getElementById("new-token-result");
+    if (resultEl) {
+      resultEl.style.display = "block";
+      resultEl.innerHTML = \`Token created. Copy it now, it will not be shown again.<br><code style="background:var(--surface2);padding:.25rem .4rem;border-radius:3px;word-break:break-all">\${esc(data.token)}</code>\`;
+    }
+    document.getElementById("new-token-name").value = "";
+    loadTokens();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+
+async function revokeToken(id) {
+  if (!confirm("Revoke this token? Any clients using it will immediately lose access.")) return;
+  try {
+    const res = await apiFetch("DELETE", \`/admin/tokens/\${id}\`);
+    if (!res.ok) throw new Error(\`HTTP \${res.status}\`);
+    toast("Token revoked", "ok");
+    loadTokens();
+  } catch (e) {
+    toast(e.message, "error");
   }
 }
 
@@ -717,7 +818,7 @@ function showTokenScreen(err) {
     \${err ? \`<div class="err-msg">\${esc(err)}</div>\` : ""}
     <label for="tok">API Token</label>
     <input id="tok" type="password" placeholder="your-token-here" autocomplete="off">
-    <button class="btn btn-primary" style="width:100%" onclick="handleToken()">Continue</button>
+    <button class="btn btn-primary" data-action="handle-token" style="width:100%">Continue</button>
   </div></div>\`;
   const inp = document.getElementById("tok");
   inp?.focus();
@@ -744,7 +845,7 @@ async function rotateToken() {
     if (!res.ok) throw new Error(data?.error?.message ?? \`HTTP \${res.status}\`);
 
     const newToken = data.token;
-    alert(\`New token:\n\n\${newToken}\n\nCopy this now, then click OK to continue.\`);
+    alert(\`New token:\\n\\n\${newToken}\\n\\nCopy this now, then click OK to continue.\`);
 
 
     token = newToken;
@@ -785,7 +886,7 @@ async function exportBackup() {
 
 async function importBackup() {
   const fileInput = document.getElementById("import-file");
-  const file = fileInput?.files?.[0];
+ const file = fileInput?.files?.[0];
   const passphrase = document.getElementById("import-passphrase")?.value ?? "";
 
   if (!file) { toast("Select a backup file", "error"); return; }
@@ -892,7 +993,7 @@ async function setScopeAutoDetect(enabled) {
     toast(
       enabled
         ? "Scope auto-detection enabled"
-        : "Scope set to explicit only — use !scope to set manually",
+        : "Scope set to explicit only, use !scope to set manually",
       "ok",
     );
   } catch (e) {
@@ -924,7 +1025,7 @@ async function setInjectionEnabled(enabled) {
     toast(
       enabled
         ? "Belief injection enabled"
-        : "Injection paused — model has no world model context. Extraction still running.",
+        : "Injection paused, model has no world model context. Extraction still running.",
       "ok",
     );
   } catch (e) {
@@ -933,6 +1034,8 @@ async function setInjectionEnabled(enabled) {
     if (cb) cb.checked = !enabled;
   }
 }
+
+
 
 async function runCompaction() {
   const btn = document.getElementById("compact-btn");
@@ -948,7 +1051,7 @@ async function runCompaction() {
     toast(e.message, "error");
     if (status) status.innerHTML = \`<span style="color:var(--danger)">\${esc(e.message)}</span>\`;
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = "Run compaction now"; }
+    if (btn) { btn.disabled = false; btn.textContent = "Merge redundant beliefs"; }
   }
 }
 
@@ -958,7 +1061,7 @@ async function loadPersona() {
     if (!res.ok) throw new Error(\`HTTP \${res.status}\`);
     const data = await res.json();
     const el = document.getElementById("persona-universal");
-    if (el) el.textContent = data.universal || "(No persona generated yet — run onboarding or wait for extraction to build one)";
+    if (el) el.textContent = data.universal || "(No persona generated yet, run onboarding or wait for extraction to build one)";
   } catch (e) {
     const el = document.getElementById("persona-universal");
     if (el) el.textContent = "(Could not load persona)";
@@ -987,10 +1090,10 @@ async function loadErrors() {
         <div style="color:var(--text);font-size:.8rem;word-break:break-word;margin-bottom:.35rem">\${esc(e.message)}</div>
         <div style="display:flex;flex-wrap:wrap;gap:.4rem .75rem;font-size:.72rem;color:var(--muted)">
           \${e.provider ? \`<span>provider: <code style="color:var(--text)">\${esc(e.provider)}</code></span>\` : ""}
-          \${e.model ? \`<span>model: <code style="color:var(--text)">\${esc(e.model)}</code></span>\` : ""}
-          \${e.session_id ? \`<span>session: <code style="color:var(--text)">\${esc(e.session_id)}</code></span>\` : ""}
-          \${e.turn_id ? \`<span>turn: <code style="color:var(--text)">\${esc(e.turn_id)}</code></span>\` : ""}
-          \${e.exception_type ? \`<span>exception: <code style="color:var(--text)">\${esc(e.exception_type)}</code></span>\` : ""}
+          \${e.model           ? \`<span>model: <code style="color:var(--text)">\${esc(e.model)}</code></span>\` : ""}
+          \${e.session_id      ? \`<span>session: <code style="color:var(--text)">\${esc(e.session_id)}</code></span>\` : ""}
+          \${e.turn_id         ? \`<span>turn: <code style="color:var(--text)">\${esc(e.turn_id)}</code></span>\` : ""}
+          \${e.exception_type  ? \`<span>exception: <code style="color:var(--text)">\${esc(e.exception_type)}</code></span>\` : ""}
           \${e.user_impacted ? \`<span style="color:var(--danger)">user impacted</span>\` : ""}
           \${e.passthrough_succeeded === true ? \`<span style="color:var(--ok)">response delivered</span>\` : e.passthrough_succeeded === false ? \`<span style="color:var(--danger)">response failed</span>\` : ""}
         </div>
@@ -1051,7 +1154,50 @@ function toast(msg, type) {
   setTimeout(() => el.remove(), 2800);
 }
 
-token ? init() : showTokenScreen();
+document.addEventListener("click", e => {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  const action = el.dataset.action;
+  switch (action) {
+    case "retry": init(); break;
+    case "load-models": loadModels(); break;
+    case "save-model": saveModel(); break;
+    case "toggle-advanced": toggleAdvanced(); break;
+    case "save-advanced": saveAdvanced(); break;
+    case "rotate-token": rotateToken(); break;
+    case "create-token": createToken(); break;
+    case "revoke-token": revokeToken(el.dataset.tokenId); break;
+    case "run-compaction": runCompaction(); break;
+    case "copy-errors": copyErrors(); break;
+    case "load-errors": loadErrors(); break;
+    case "load-backup-preview": loadBackupPreview(); break;
+    case "export-backup": exportBackup(); break;
+    case "import-backup": importBackup(); break;
+    case "handle-token": handleToken(); break;
+    case "save-provider": saveProvider(el.dataset.providerId); break;
+    case "remove-provider": removeProvider(el.dataset.providerId); break;
+    case "regenerate-persona": regeneratePersona(); break;
+  }
+});
+
+document.addEventListener("change", e => {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  const action = el.dataset.action;
+  switch (action) {
+    case "set-extraction-enabled": setExtractionEnabled(el.checked); break;
+    case "set-injection-enabled": setInjectionEnabled(el.checked); break;
+    case "set-scope-auto-detect": setScopeAutoDetect(el.checked); break;
+    case "set-strict-model-tiers": setStrictModelTiers(el.checked); break;
+    case "on-admin-flavor-change": onAdminFlavorChange(el.dataset.providerId, el.value); break;
+  }
+});
+
+if (window.__TENURE_SSO_USER__) {
+  init(); 
+} else {
+  token ? init() : showTokenScreen();
+}
 <\/script>
 </body>
 </html>`;

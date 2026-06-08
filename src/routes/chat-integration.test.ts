@@ -1,2541 +1,964 @@
-import anyTest, { type TestFn } from "ava";
+/**
+ * chat.beliefs.integration.test.ts
+ *
+ * Tests that beliefs are correctly injected into the system prompt sent to the
+ * provider, and that the injection audit record is written to MongoDB.
+ *
+ * Two paths are tested separately:
+ *
+ *   1. PINNED FACTS PATH — beliefs with `pinned: true` are fetched via a
+ *      regular MongoDB query in BeliefsReader.listPinnedFacts(). No Atlas
+ *      Search involved. searchText is stubbed to return [] so only pinned
+ *      facts flow through.
+ *
+ *   2. SIMULATED ATLAS PATH — searchText is stubbed to return seeded beliefs
+ *      as if Atlas had matched them. This exercises the full relevantBeliefs
+ *      branch of ContextBuilder including score projection and the injection
+ *      audit snapshot.
+ *
+ * What is REAL:
+ *   - SessionManager, ExtractionJobQueue, BeliefsReader (regular queries),
+ *     ContextBuilder, InjectionAuditLogger, PersonaCache — all against
+ *     in-memory MongoDB
+ *   - The system prompt is built by the real buildSystemPrompt()
+ *   - The adapter receives the real assembled system prompt — we spy on
+ *     adapter.call() to assert on what it was actually passed
+ *
+ * What is STUBBED:
+ *   - adapter.call() / callStream() — no real LLM
+ *   - BeliefsReader.searchText() — returns [] or a seeded set depending on
+ *     the test; Atlas Search is not available in MongoMemoryServer
+ *   - BeliefsReader.expandRelationParticipants() — always []
+ */
+
+process.env.OIDC_PROXY_HEADER = "x-test-user";
+
+import test from "ava";
+import sinon from "sinon";
 import Fastify, { type FastifyInstance } from "fastify";
 import { MongoMemoryServer } from "mongodb-memory-server";
-import { Collection, MongoClient, type Db } from "mongodb";
-import sinon from "sinon";
+import { MongoClient, type Db } from "mongodb";
+import { randomUUID, createHash } from "node:crypto";
 
 import { registerChatRoute, type ChatDeps } from "../routes/chat.js";
 import { SessionManager } from "../session/manager.js";
-import { HistoryManager } from "../history/manager.js";
 import { ContextBuilder } from "../context/contextBuilder.js";
+import { BeliefsReader, type ScoredBelief } from "../context/beliefsReader.js";
+import { PersonaCache } from "../context/personaCache.js";
 import { ProviderRegistry } from "../providers/registry.js";
 import { ExtractionJobQueue } from "../jobs/queue.js";
-import type { ProviderAdapter, StreamEvent } from "../providers/types.ts";
-import { SIDECAR_BEGIN, SIDECAR_END } from "../sidecar/splitter.js";
-import { ExtractionWorker } from "../extraction/worker.js";
-import { RuntimeConfigStore } from "../config/runtime.ts";
-import { ErrorLogger } from "../errors/logger.ts";
-import { Session } from "../types/session.ts";
 import { WorkspaceStateCache } from "../workspace/stateCache.js";
-import { OpenAIAdapter } from "../providers/openai.ts";
-
-const test = anyTest.serial as TestFn;
+import { InjectionAuditLogger } from "../audit/injectionAuditLogger.js";
+import { getCollections, type Collections } from "../db/collections.js";
+import { ensureIndexes } from "../db/indexes.js";
+import type { ProviderAdapter } from "../providers/types.js";
+import type { Belief } from "../types/belief.js";
+import { SIDECAR_BEGIN, SIDECAR_END } from "../sidecar/splitter.js";
 
 let mongod: MongoMemoryServer;
-let client: MongoClient;
+let mongoClient: MongoClient;
 let db: Db;
+let cols: Collections;
 
 test.before(async () => {
   mongod = await MongoMemoryServer.create();
-  client = new MongoClient(mongod.getUri());
-  await client.connect();
-  db = client.db("test");
-  await db.collection("turns").createIndex({ content: "text" });
+  mongoClient = new MongoClient(mongod.getUri());
+  await mongoClient.connect();
+  db = mongoClient.db("tenure_beliefs_test");
+  cols = getCollections(db);
+  await ensureIndexes(cols);
 });
 
 test.after.always(async () => {
-  await client.close();
-  await mongod.stop();
+  await mongoClient?.close();
+  await mongod?.stop();
 });
 
 test.beforeEach(async () => {
   await Promise.all([
-    db.collection("sessions").deleteMany({}),
-    db.collection("turns").deleteMany({}),
-    db.collection("jobs").deleteMany({}),
-    db.collection("beliefs").deleteMany({}),
+    cols.sessions.deleteMany({}),
+    cols.jobs.deleteMany({}),
+    cols.beliefs.deleteMany({}),
+    cols.turns.deleteMany({}),
+    cols.persona_cache.deleteMany({}),
+    cols.injection_audit.deleteMany({}),
+    cols.api_tokens.deleteMany({}),
+    db.collection("workspace_state").deleteMany({})
   ]);
-
-  const start = Date.now();
-  while (Date.now() - start < 500) {
-    await new Promise((r) => setTimeout(r, 30));
-    const n = await db.collection("turns").countDocuments({});
-    if (n === 0) break;
-    await db.collection("turns").deleteMany({});
-  }
+  sinon.restore();
 });
 
-const USER_ID = "user-integration";
-const SESSION_ID = "session-integration";
-const PROVIDER_ID = "anthropic";
-const MODEL = "claude-haiku-4-5-20251001";
+const USER_ID = "belief-test-user";
+const MODEL = "claude-sonnet-4-5";
+const PROXY_HEADER = "x-test-user";
+const SCOPE = ["domain:code/typescript"];
 
-type ProviderResponse = Awaited<ReturnType<OpenAIAdapter["call"]>>;
-
-function makeProviderResponse(
-  content: string,
-  overrides: Partial<ProviderResponse> = {},
-): ProviderResponse {
+function makeBelief(
+  overrides: Partial<Belief> & { canonical_name: string; content: string }
+): Belief {
+  const { canonical_name, content, ...rest } = overrides;
   return {
+    _id: randomUUID(),
+    user_id: USER_ID,
+    canonical_name,
     content,
-    model: MODEL,
-    finish_reason: "stop",
-    usage: { input_tokens: 10, output_tokens: 20 },
-    ...overrides,
+    type: "fact" as Belief["type"],
+    subtype: null,
+    aliases: [],
+    scope: SCOPE,
+    pinned: false,
+    epistemic_status: "active",
+    confidence: 0.9,
+    why_it_matters: "",
+    resolved_at: null,
+    superseded_by: null,
+    agent_id: null,
+    reinforcement_count: 0,
+    last_reinforced_at: new Date(),
+    user_edited: false,
+    created_at: new Date(),
+    updated_at: new Date(),
+    change_log: [],
+    provenance: {
+      session_id: "test-session",
+      turn_id: "test-turn",
+      extracted_at: new Date(),
+      source_model: "test-model"
+    },
+    ...rest
   };
 }
 
-function makeStubAdapter(response: ProviderResponse): OpenAIAdapter {
-  return {
-    id: PROVIDER_ID,
-    call: sinon.stub().resolves(response),
-    callStream: sinon.stub(),
-    listModels: sinon.stub().resolves([]),
-  } as unknown as OpenAIAdapter;
-}
+type StubbedChatAdapter = ProviderAdapter & {
+  call: sinon.SinonStub;
+  callStream: sinon.SinonStub;
+  listModels: sinon.SinonStub;
+};
 
-function makeSidecar(turnSignal = "substantive", extras: object = {}): string {
-  const payload = {
-    turn_signal: turnSignal,
-    new_beliefs: [],
-    belief_updates: [],
-    ...extras,
-  };
-  return `${SIDECAR_BEGIN}\n${JSON.stringify(payload)}\n${SIDECAR_END}`;
-}
-
-async function buildApp(
-  adapterOrResponse: OpenAIAdapter | ProviderResponse,
-): Promise<{
+interface AppBundle {
   app: FastifyInstance;
   deps: ChatDeps;
-}> {
-  const adapter =
-    "id" in adapterOrResponse
-      ? (adapterOrResponse as OpenAIAdapter)
-      : makeStubAdapter(adapterOrResponse as ProviderResponse);
+  adapter: StubbedChatAdapter;
+  searchTextStub: sinon.SinonStub;
+}
+
+interface SecureAppBundle extends AppBundle {
+  rootToken: string;
+  rootUserId: string;
+}
+
+async function buildDeps(): Promise<Omit<AppBundle, "app">> {
+  const adapterStub = {
+    id: "anthropic",
+    call: sinon.stub().resolves({
+      content: "Here is my response",
+      model: MODEL,
+      finish_reason: "stop",
+      usage: { input_tokens: 10, output_tokens: 20 },
+      toolCalls: []
+    }),
+    callStream: sinon.stub(),
+    listModels: sinon.stub().resolves([])
+  } as unknown as StubbedChatAdapter;
 
   const registry = new ProviderRegistry();
-  registry.register(adapter);
+  registry.register(adapterStub as unknown as ProviderAdapter);
 
-  const sessions = new SessionManager(db);
-  const history = new HistoryManager(db);
-  const context = new ContextBuilder(
-    {
-      listByScope: sinon.stub().resolves([]),
-      listPinnedOpenQuestions: sinon.stub().resolves([]),
-    } as any,
-    { get: sinon.stub().resolves(null) } as any,
-  );
-  const jobs = new ExtractionJobQueue(db);
-  const extractionWorker = {
-    processById: sinon.stub().resolves(),
-    sweep: sinon.stub().resolves(0),
-  };
-
-  const runtimeStore = {
-    load: sinon.stub().resolves({ extraction_enabled: true }),
-    set: sinon.stub().resolves(),
-  };
+  const beliefsReader = new BeliefsReader(cols.beliefs);
+  const searchTextStub = sinon.stub(beliefsReader, "searchText").resolves([]);
+  sinon.stub(beliefsReader, "expandRelationParticipants").resolves([]);
 
   const deps: ChatDeps = {
-    sessions,
-
-    context,
+    sessions: new SessionManager(db),
+    context: new ContextBuilder(
+      beliefsReader,
+      new PersonaCache(cols.persona_cache)
+    ),
     providers: registry,
-    jobs,
-    userId: USER_ID,
-    extractionWorker: extractionWorker as unknown as ExtractionWorker,
-    runtimeStore: runtimeStore as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
+    jobs: new ExtractionJobQueue(db),
+    extractionWorker: {
+      processById: sinon.stub().resolves(),
+      sweep: sinon.stub().resolves(0)
+    } as any,
+    runtimeStore: {
+      load: sinon.stub().resolves({
+        extraction_enabled: true,
+        injection_enabled: true,
+        managed_history_token_cap: 120_000,
+        compaction_mode: "aggressive",
+        scope_auto_detect: true,
+        ide_extraction_enabled: true
+      }),
+      set: sinon.stub().resolves()
+    } as any,
+    errorLogger: { log: sinon.stub().resolves() } as any,
+    workspaceState: new WorkspaceStateCache(db),
+    injectionAudit: new InjectionAuditLogger(cols.injection_audit)
   };
 
-  const app = Fastify();
+  return { deps, adapter: adapterStub, searchTextStub };
+}
+
+async function buildApp(): Promise<AppBundle> {
+  const { deps, adapter, searchTextStub } = await buildDeps();
+  const app = Fastify({ logger: false });
+
+  app.addHook("onRequest", async (req: any) => {
+    const userId = req.headers[PROXY_HEADER] as string | undefined;
+    if (userId) {
+      req.tenureUserId = userId;
+      req.tenureAuthMethod = "proxy";
+    }
+  });
+
   registerChatRoute(app, deps);
   await app.ready();
 
-  await sessions.getOrCreate(SESSION_ID, USER_ID);
-  await sessions.update(SESSION_ID, USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
+  return { app, deps, adapter, searchTextStub };
+}
+
+async function buildSecureApp(): Promise<SecureAppBundle> {
+  const { deps, adapter, searchTextStub } = await buildDeps();
+  const app = Fastify({ logger: false });
+  const rootToken = "root-secret-token";
+  const rootUserId = "root-user";
+
+  app.addHook("onRequest", async (req: any, reply: any) => {
+    const proxyHeader = process.env.OIDC_PROXY_HEADER?.toLowerCase() || "";
+    const pathOnly = req.url.split("?")[0];
+
+    if (proxyHeader) {
+      const userId = req.headers[proxyHeader] as string | undefined;
+      if (userId) {
+        req.tenureUserId = userId;
+        req.tenureAuthMethod = "proxy";
+        return;
+      }
+    }
+
+    const requiresAuth =
+      pathOnly.startsWith("/v1/") ||
+      (pathOnly.startsWith("/admin/") && pathOnly !== "/admin/");
+
+    if (!requiresAuth) return;
+
+    const auth = req.headers.authorization ?? "";
+    const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+    if (!bearer) {
+      return reply.code(401).send({ error: { message: "unauthorized" } });
+    }
+
+    if (bearer === rootToken) {
+      req.tenureUserId = rootUserId;
+      req.tenureAuthMethod = "root";
+      return;
+    }
+
+    const hash = createHash("sha256").update(bearer).digest("hex");
+    const pat = await cols.api_tokens.findOne({
+      token_hash: hash,
+      revoked_at: null
+    });
+
+    if (pat) {
+      const allowed = new Set([
+        "/v1/chat/completions",
+        "/v1/messages",
+        "/v1/models",
+        "/v1/ws/beliefs"
+      ]);
+      if (!allowed.has(pathOnly)) {
+        return reply.code(403).send({ error: { message: "forbidden" } });
+      }
+      req.tenureUserId = pat.user_id;
+      req.tenureAuthMethod = "pat";
+      return;
+    }
+
+    return reply.code(401).send({ error: { message: "unauthorized" } });
   });
 
-  return { app, deps };
+  registerChatRoute(app, deps);
+  app.get("/admin/config", async (_req, reply) => reply.send({ ok: true }));
+  await app.ready();
+
+  return { app, deps, adapter, searchTextStub, rootToken, rootUserId };
 }
 
 async function post(
   app: FastifyInstance,
-  body: object,
-  headers: Record<string, string> = {},
+  body: Record<string, unknown>,
+  headers: Record<string, string> = {}
 ) {
   return app.inject({
     method: "POST",
     url: "/v1/chat/completions",
     headers: {
       "content-type": "application/json",
-      "x-session-id": SESSION_ID,
-      ...headers,
+      [PROXY_HEADER]: USER_ID,
+      ...headers
     },
-    body: JSON.stringify({ model: MODEL, ...body }),
+    body: JSON.stringify({ model: MODEL, ...body })
   });
 }
 
-function streamEvents(
-  deltas: string[],
-  end: Partial<StreamEvent> = {},
-): StreamEvent[] {
-  return [
-    ...deltas.map((d): StreamEvent => ({ type: "content_delta", delta: d })),
-    {
-      type: "stream_end",
-      model: end.model ?? MODEL,
-      finish_reason: end.finish_reason ?? "stop",
-      usage: end.usage ?? { input_tokens: 15, output_tokens: 25 },
-    },
-  ];
-}
-
-function makeStreamAdapter(events: StreamEvent[]): OpenAIAdapter {
-  return {
-    id: PROVIDER_ID,
-    call: sinon.stub().resolves(makeProviderResponse("non-stream fallback")),
-    async *callStream() {
-      for (const e of events) yield e;
-    },
-    listModels: sinon.stub().resolves([]),
-  } as unknown as OpenAIAdapter;
-}
-
-function failingStreamAdapter(
-  preErrorDeltas: string[],
-  error: Error,
-): OpenAIAdapter {
-  return {
-    id: PROVIDER_ID,
-    call: sinon.stub().resolves(makeProviderResponse("non-stream fallback")),
-    async *callStream() {
-      for (const d of preErrorDeltas) {
-        yield { type: "content_delta" as const, delta: d };
-      }
-      throw error;
-    },
-    listModels: sinon.stub().resolves([]),
-  } as unknown as OpenAIAdapter;
-}
-
-interface SSEFrame {
-  id?: string;
-  object?: string;
-  model?: string;
-  created?: number;
-  choices?: Array<{
-    index: number;
-    delta: { role?: string; content?: string };
-    finish_reason: string | null;
-  }>;
-  usage?: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
-  error?: { message: string; type: string };
-}
-
-function parseSSE(body: string): { frames: SSEFrame[]; done: boolean } {
-  const frames: SSEFrame[] = [];
-  let done = false;
-  for (const chunk of body.split("\n\n")) {
-    const lines = chunk.trim().split("\n");
-    let dataPayload: string | null = null;
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith("data: ")) {
-        dataPayload = trimmed.slice(6);
-      }
-    }
-    if (dataPayload === null) continue;
-    if (dataPayload === "[DONE]") {
-      done = true;
-      continue;
-    }
-    frames.push(JSON.parse(dataPayload) as SSEFrame);
-  }
-  return { frames, done };
-}
-
-function concatDeltas(frames: SSEFrame[]): string {
-  return frames.map((f) => f.choices?.[0]?.delta?.content ?? "").join("");
-}
-
-async function waitForDoc(
-  col: Collection,
+async function waitForDoc<T extends object>(
+  collection: { findOne: (filter: any) => Promise<T | null> },
   filter: Record<string, unknown>,
-  timeoutMs = 2000,
-): Promise<Record<string, unknown> | null> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const doc = await col.findOne(filter);
-    if (doc) return doc as Record<string, unknown>;
+  timeoutMs = 2_000
+): Promise<T | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const doc = await collection.findOne(filter);
+    if (doc) return doc;
     await new Promise((r) => setTimeout(r, 25));
   }
   return null;
 }
 
-test("returns 200 with a well-formed chat completion envelope", async (t) => {
-  const { app } = await buildApp(makeProviderResponse("Hello!"));
-  const res = await post(app, {
-    messages: [{ role: "user", content: "Hi" }],
+test.serial(
+  "pinned facts: injected into system prompt, audit record written",
+  async (t) => {
+    const pinnedFact = makeBelief({
+      canonical_name: "Prefer functional components",
+      content:
+        "Always use functional components with hooks, never class components.",
+      pinned: true,
+      scope: SCOPE
+    });
+
+    const pinnedQuestion = makeBelief({
+      canonical_name: "Migration timeline unclear",
+      content: "Should we migrate the auth module to the new SDK before Q3?",
+      type: "open_question",
+      pinned: true,
+      scope: SCOPE
+    });
+
+    await cols.beliefs.insertMany([pinnedFact, pinnedQuestion]);
+
+    const { app, adapter } = await buildApp();
+
+    const res = await post(app, {
+      messages: [
+        { role: "user", content: "How should I structure my React components?" }
+      ],
+      metadata: { scope: SCOPE }
+    });
+
+    t.is(res.statusCode, 200);
+
+    const callArgs = adapter.call.getCall(0).args;
+    const systemPrompt =
+      typeof callArgs === "string" ? callArgs : JSON.stringify(callArgs);
+
+    t.true(
+      systemPrompt.includes("Prefer functional components") ||
+        systemPrompt.includes("functional components with hooks"),
+      "pinned fact content should appear in the system prompt sent to the adapter"
+    );
+
+    const auditRecord = await waitForDoc(cols.injection_audit as any, {
+      user_id: USER_ID
+    });
+
+    t.truthy(
+      auditRecord,
+      "injection audit record should be written to MongoDB"
+    );
+
+    const record = auditRecord as any;
+    t.is(record.user_id, USER_ID);
+    t.deepEqual(record.scope, SCOPE);
+    t.true(record.injected, "injected flag should be true");
+
+    const pinnedSnapshots = record.injected_beliefs.pinned_facts;
+    t.true(
+      pinnedSnapshots.length >= 1,
+      "at least one pinned fact snapshot expected"
+    );
+
+    const factSnapshot = pinnedSnapshots.find(
+      (s: any) => s.canonical_name === "Prefer functional components"
+    );
+    t.truthy(factSnapshot, "pinned fact snapshot should be recorded");
+    t.is(factSnapshot.content, pinnedFact.content);
+    t.is(factSnapshot.pinned, true);
+
+    await app.close();
+  }
+);
+
+test.serial(
+  "pinned facts: injection disabled when injection_enabled is false in runtime config",
+  async (t) => {
+    await cols.beliefs.insertOne(
+      makeBelief({
+        canonical_name: "Should not appear",
+        content: "This belief must not reach the adapter system prompt.",
+        pinned: true,
+        scope: SCOPE
+      })
+    );
+
+    const { app, adapter, deps } = await buildApp();
+
+    (deps.runtimeStore.load as sinon.SinonStub).resolves({
+      extraction_enabled: true,
+      injection_enabled: false,
+      managed_history_token_cap: 120_000,
+      compaction_mode: "aggressive",
+      scope_auto_detect: true
+    });
+
+    const res = await post(app, {
+      messages: [{ role: "user", content: "Tell me about React." }],
+      metadata: { scope: SCOPE }
+    });
+
+    t.is(res.statusCode, 200);
+
+    const systemPrompt =
+      typeof adapter.call.getCall(0).args === "string"
+        ? adapter.call.getCall(0).args
+        : JSON.stringify(adapter.call.getCall(0).args);
+
+    t.false(
+      systemPrompt.includes("Should not appear"),
+      "belief content must not appear in system prompt when injection is disabled"
+    );
+
+    const auditRecord = await waitForDoc(
+      cols.injection_audit as any,
+      { user_id: USER_ID },
+      300
+    );
+    t.truthy(
+      auditRecord,
+      "audit record should still be written even when injection is disabled"
+    );
+
+    const record = auditRecord as any;
+    t.false(
+      record.injected,
+      "injected flag should be false when injection is disabled"
+    );
+
+    await app.close();
+  }
+);
+
+test.serial(
+  "atlas path: relevant beliefs returned by searchText are injected and audited",
+  async (t) => {
+    const relevantBelief = makeBelief({
+      canonical_name: "Use strict TypeScript config",
+      content:
+        "Always enable strict mode and noUncheckedIndexedAccess in tsconfig.",
+      pinned: false,
+      scope: SCOPE
+    });
+
+    await cols.beliefs.insertOne(relevantBelief);
+
+    const { app, adapter, searchTextStub } = await buildApp();
+
+    const scoredBelief: ScoredBelief = { ...relevantBelief, _searchScore: 8.5 };
+    searchTextStub.resolves([scoredBelief]);
+
+    const res = await post(app, {
+      messages: [
+        { role: "user", content: "How do I configure TypeScript strictly?" }
+      ],
+      metadata: { scope: SCOPE }
+    });
+
+    t.is(res.statusCode, 200);
+
+    const systemPrompt =
+      typeof adapter.call.getCall(0).args === "string"
+        ? adapter.call.getCall(0).args
+        : JSON.stringify(adapter.call.getCall(0).args);
+
+    t.true(
+      systemPrompt.includes("Use strict TypeScript config") ||
+        systemPrompt.includes("noUncheckedIndexedAccess"),
+      "Atlas-matched belief should appear in the system prompt"
+    );
+
+    t.true(searchTextStub.calledOnce);
+    const [calledUserId, , calledScope] = searchTextStub.getCall(0).args;
+    t.is(calledUserId, USER_ID);
+    t.deepEqual(calledScope, SCOPE);
+
+    const auditRecord = await waitForDoc(cols.injection_audit as any, {
+      user_id: USER_ID
+    });
+
+    t.truthy(auditRecord);
+    const record = auditRecord as any;
+
+    const relevantSnapshots = record.injected_beliefs.relevant_beliefs;
+    t.true(relevantSnapshots.length >= 1, "relevant belief snapshot expected");
+
+    const snapshot = relevantSnapshots.find(
+      (s: any) => s.canonical_name === "Use strict TypeScript config"
+    );
+    t.truthy(snapshot, "relevant belief snapshot should be recorded in audit");
+    t.is(snapshot.content, relevantBelief.content);
+    t.is(snapshot.pinned, false);
+
+    await app.close();
+  }
+);
+
+test.serial(
+  "atlas path: both pinned facts and search results appear together in system prompt",
+  async (t) => {
+    const pinned = makeBelief({
+      canonical_name: "Always use ESM imports",
+      content:
+        "Use .js extensions on all local imports, even for TypeScript files.",
+      pinned: true,
+      scope: SCOPE
+    });
+
+    const relevant = makeBelief({
+      canonical_name: "Prefer type over interface for unions",
+      content:
+        "Use the type keyword when defining union or intersection types.",
+      pinned: false,
+      scope: SCOPE
+    });
+
+    await cols.beliefs.insertMany([pinned, relevant]);
+
+    const { app, adapter, searchTextStub } = await buildApp();
+    searchTextStub.resolves([
+      { ...relevant, _searchScore: 7.2 } as ScoredBelief
+    ]);
+
+    const res = await post(app, {
+      messages: [
+        { role: "user", content: "What are our TypeScript conventions?" }
+      ],
+      metadata: { scope: SCOPE }
+    });
+
+    t.is(res.statusCode, 200);
+
+    const systemPrompt =
+      typeof adapter.call.getCall(0).args === "string"
+        ? adapter.call.getCall(0).args
+        : JSON.stringify(adapter.call.getCall(0).args);
+
+    t.true(
+      systemPrompt.includes("ESM imports") ||
+        systemPrompt.includes(".js extensions"),
+      "pinned fact should be in system prompt"
+    );
+    t.true(
+      systemPrompt.includes("type over interface") ||
+        systemPrompt.includes("union"),
+      "Atlas-matched relevant belief should also be in system prompt"
+    );
+
+    const auditRecord = await waitForDoc(cols.injection_audit as any, {
+      user_id: USER_ID
+    });
+    t.truthy(auditRecord);
+
+    const record = auditRecord as any;
+    t.is(record.injected_beliefs.pinned_facts.length, 1);
+    t.is(record.injected_beliefs.relevant_beliefs.length, 1);
+    t.is(record.belief_count, 2);
+
+    await app.close();
+  }
+);
+
+test.serial(
+  "IDE turn: project and language headers drive IDE scope in system prompt and job payload",
+  async (t) => {
+    const { app, deps, adapter } = await buildApp();
+
+    const enqueueStub = sinon.stub().resolves(randomUUID());
+    deps.jobs = { enqueue: enqueueStub } as any;
+
+    const res = await post(
+      app,
+      {
+        messages: [
+          { role: "user", content: "How do I write a React component?" }
+        ],
+        metadata: { scope: SCOPE }
+      },
+      {
+        "x-tenure-ide": "1",
+        "x-tenure-project": "My Project",
+        "x-tenure-language": "typescript"
+      }
+    );
+
+    t.is(res.statusCode, 200);
+
+    const systemPrompt =
+      typeof adapter.call.getCall(0).args === "string"
+        ? adapter.call.getCall(0).args
+        : JSON.stringify(adapter.call.getCall(0).args);
+
+    t.true(
+      systemPrompt.includes("project:my-project"),
+      "IDE project scope should appear in system prompt"
+    );
+
+    await new Promise((r) => setTimeout(r, 100));
+    t.is(enqueueStub.callCount, 1);
+
+    const jobPayload = enqueueStub.getCall(0).args[0];
+    t.is(jobPayload.extractionMode, "ide");
+    t.is(jobPayload.workspaceContext?.project_scope, "project:my-project");
+    t.is(jobPayload.workspaceContext?.language_scope, "domain:code/typescript");
+
+    await app.close();
+  }
+);
+
+test.serial(
+  "IDE turn: falls back to WorkspaceStateCache when headers are absent",
+  async (t) => {
+    const { app, deps, adapter } = await buildApp();
+
+    await deps.workspaceState!.set(USER_ID, {
+      workspace_root: "/home/user/workspace",
+      project_name: "FallbackProject",
+      git_remote: null,
+      active_file: null,
+      active_language: null,
+      updated_at: new Date()
+    });
+
+    const res = await post(
+      app,
+      {
+        messages: [{ role: "user", content: "Hello" }],
+        metadata: { scope: SCOPE }
+      },
+      { "x-tenure-ide": "1" }
+    );
+
+    t.is(res.statusCode, 200);
+
+    const systemPrompt =
+      typeof adapter.call.getCall(0).args === "string"
+        ? adapter.call.getCall(0).args
+        : JSON.stringify(adapter.call.getCall(0).args);
+
+    t.true(
+      systemPrompt.includes("project:fallbackproject"),
+      "workspace state project scope should drive the system prompt"
+    );
+
+    await app.close();
+  }
+);
+
+test.serial("auth: missing auth header returns 401", async (t) => {
+  const { app } = await buildSecureApp();
+  const res = await app.inject({
+    method: "POST",
+    url: "/v1/chat/completions",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model: MODEL,
+      messages: [{ role: "user", content: "hi" }]
+    })
   });
-  t.is(res.statusCode, 200);
-  const body = JSON.parse(res.body);
-  t.is(body.object, "chat.completion");
-  t.is(body.choices[0].message.role, "assistant");
-  t.is(body.choices[0].message.content, "Hello!");
-  t.is(body.choices[0].finish_reason, "stop");
-  t.is(body.usage.prompt_tokens, 10);
-  t.is(body.usage.completion_tokens, 20);
-  t.is(body.usage.total_tokens, 30);
+  t.is(res.statusCode, 401);
+  await app.close();
 });
 
-test("sidecar is stripped from visible content", async (t) => {
-  const sidecar = makeSidecar("substantive");
-  const { app } = await buildApp(
-    makeProviderResponse(`The answer is 42.\n${sidecar}`),
-  );
-  const res = await post(app, {
-    messages: [{ role: "user", content: "What is the answer?" }],
+test.serial("auth: invalid bearer token returns 401", async (t) => {
+  const { app } = await buildSecureApp();
+  const res = await app.inject({
+    method: "POST",
+    url: "/v1/chat/completions",
+    headers: {
+      "content-type": "application/json",
+      authorization: "Bearer invalid-token"
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      messages: [{ role: "user", content: "hi" }]
+    })
   });
-  const body = JSON.parse(res.body);
-  t.is(body.choices[0].message.content, "The answer is 42.");
-  t.false(body.choices[0].message.content.includes(SIDECAR_BEGIN));
+  t.is(res.statusCode, 401);
+  await app.close();
 });
 
-test("extraction job is enqueued after a successful call", async (t) => {
-  const { app } = await buildApp(makeProviderResponse("Queued."));
-  await post(app, { messages: [{ role: "user", content: "Queue me" }] });
+test.serial(
+  "auth: valid PAT authenticates as the token owner, not root",
+  async (t) => {
+    const patToken = "pat-valid-token-abc";
+    const patHash = createHash("sha256").update(patToken).digest("hex");
+    await cols.api_tokens.insertOne({
+      _id: randomUUID(),
+      token_hash: patHash,
+      name: "Test PAT",
+      user_id: "pat-user-id",
+      created_at: new Date()
+    });
 
-  const job = await waitForDoc(db.collection("jobs"), {
-    "payload.user_message": "Queue me",
+    const { app, deps } = await buildSecureApp();
+    const getOrCreateSpy = sinon.spy(deps.sessions, "getOrCreate");
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${patToken}`
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [{ role: "user", content: "hi" }]
+      })
+    });
+
+    t.is(res.statusCode, 200);
+    t.is(getOrCreateSpy.callCount, 1);
+    t.is(getOrCreateSpy.getCall(0).args[1], "pat-user-id");
+
+    await app.close();
+  }
+);
+
+test.serial("auth: revoked PAT returns 401", async (t) => {
+  const patToken = "pat-revoked-token";
+  const patHash = createHash("sha256").update(patToken).digest("hex");
+  await cols.api_tokens.insertOne({
+    _id: randomUUID(),
+    token_hash: patHash,
+    name: "Revoked PAT",
+    user_id: "revoked-user",
+    created_at: new Date(),
+    revoked_at: new Date()
   });
-  t.truthy(job);
-  t.is((job as any)!.payload.assistant_message, "Queued.");
-  t.is(job!.status, "pending");
+
+  const { app } = await buildSecureApp();
+  const res = await app.inject({
+    method: "POST",
+    url: "/v1/chat/completions",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${patToken}`
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      messages: [{ role: "user", content: "hi" }]
+    })
+  });
+
+  t.is(res.statusCode, 401);
+  await app.close();
 });
 
-test("session lastUsedAt is touched after a successful call", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate(SESSION_ID, USER_ID);
-  const before = (await sessions.get(SESSION_ID, USER_ID))!.lastUsedAt;
-
-  await new Promise((r) => setTimeout(r, 10));
-
-  const { app } = await buildApp(makeProviderResponse("Touched."));
-  await post(app, { messages: [{ role: "user", content: "Touch" }] });
-
-  await waitForDoc(db.collection("turns"), {
-    sessionId: SESSION_ID,
-    userMessage: "Touch",
+test.serial("auth: PAT on non-allowed path returns 403", async (t) => {
+  const patToken = "pat-admin-token";
+  const patHash = createHash("sha256").update(patToken).digest("hex");
+  await cols.api_tokens.insertOne({
+    _id: randomUUID(),
+    token_hash: patHash,
+    name: "Admin PAT",
+    user_id: "admin-user",
+    created_at: new Date()
   });
 
-  const after = (await sessions.get(SESSION_ID, USER_ID))!.lastUsedAt;
-  t.true(after > before);
+  const { app } = await buildSecureApp();
+  const res = await app.inject({
+    method: "GET",
+    url: "/admin/config",
+    headers: { authorization: `Bearer ${patToken}` }
+  });
+
+  t.is(res.statusCode, 403);
+  await app.close();
 });
 
-test("returns 400 when messages array is missing", async (t) => {
-  const { app } = await buildApp(makeProviderResponse("x"));
-  const res = await post(app, {});
+test.serial("malformed: missing messages returns 400", async (t) => {
+  const { app } = await buildApp();
+  const res = await post(app, { model: MODEL });
   t.is(res.statusCode, 400);
-  const body = JSON.parse(res.body);
-  t.truthy(body.error?.message);
+  t.true(
+    res.json().error.message.toLowerCase().includes("messages"),
+    "error should mention messages"
+  );
+  await app.close();
 });
 
-test("returns 400 when messages array is empty", async (t) => {
-  const { app } = await buildApp(makeProviderResponse("x"));
+test.serial("malformed: missing model returns 400", async (t) => {
+  const { app } = await buildApp();
+  const res = await app.inject({
+    method: "POST",
+    url: "/v1/chat/completions",
+    headers: {
+      "content-type": "application/json",
+      [PROXY_HEADER]: USER_ID
+    },
+    body: JSON.stringify({ messages: [{ role: "user", content: "hi" }] })
+  });
+  t.is(res.statusCode, 400);
+  t.true(
+    res.json().error.message.toLowerCase().includes("model"),
+    "error should mention model"
+  );
+  await app.close();
+});
+
+test.serial("malformed: empty messages array returns 400", async (t) => {
+  const { app } = await buildApp();
   const res = await post(app, { messages: [] });
   t.is(res.statusCode, 400);
-});
-
-test("auto-binds unbound session and returns 200", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("unbound-session", USER_ID);
-
-  const adapter = makeStubAdapter(makeProviderResponse("Auto-bound!"));
-  const registry = new ProviderRegistry();
-  registry.register(adapter);
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon.stub().resolves({ extraction_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-  });
-  await app.ready();
-
-  const res = await post(
-    app,
-    { messages: [{ role: "user", content: "Hi" }] },
-    { "x-session-id": "unbound-session" },
+  t.true(
+    res.json().error.message.toLowerCase().includes("messages"),
+    "error should mention messages"
   );
-  t.is(res.statusCode, 200);
-  t.is(JSON.parse(res.body).choices[0].message.content, "Auto-bound!");
-
-  const bound = await sessions.get("unbound-session", USER_ID);
-  t.is(bound!.providerId, PROVIDER_ID);
-  t.is(bound!.model, MODEL);
+  await app.close();
 });
 
-test("returns 502 when provider throws", async (t) => {
-  const failingAdapter = {
-    id: PROVIDER_ID,
-    call: sinon.stub().rejects(new Error("upstream down")),
-  } as unknown as OpenAIAdapter;
-  const { app } = await buildApp(failingAdapter);
+test.serial("malformed: unsupported model tier returns 422", async (t) => {
+  const { app } = await buildApp();
   const res = await post(app, {
-    messages: [{ role: "user", content: "Hi" }],
+    messages: [{ role: "user", content: "hi" }],
+    model: "gpt-3.5-turbo"
   });
-  t.is(res.statusCode, 502);
-  const body = JSON.parse(res.body);
-  t.is(body.error.type, "provider_error");
-  t.is(body.error.message, "upstream down");
+  t.is(res.statusCode, 422);
+  t.is(res.json().error.type, "model_not_supported");
+  await app.close();
 });
 
-test("returns 502 when provider is not registered", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-unregistered", USER_ID);
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: new ProviderRegistry(),
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon.stub().resolves({ extraction_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
+test.serial("malformed: invalid JSON body returns 400", async (t) => {
+  const { app } = await buildApp();
+  const res = await app.inject({
+    method: "POST",
+    url: "/v1/chat/completions",
+    headers: {
+      "content-type": "application/json",
+      [PROXY_HEADER]: USER_ID
+    },
+    body: "{ invalid json"
   });
-  await app.ready();
-
-  const res = await post(
-    app,
-    { messages: [{ role: "user", content: "Hi" }] },
-    { "x-session-id": "sess-unregistered" },
-  );
-  t.is(res.statusCode, 502);
-  const body = JSON.parse(res.body);
-  t.is(body.error.type, "provider_not_configured");
+  t.is(res.statusCode, 400);
+  await app.close();
 });
 
-test("response is still returned when side-effect writes fail", async (t) => {
-  const { app, deps } = await buildApp(makeProviderResponse("Still works."));
-  sinon.stub(deps.jobs, "enqueue").rejects(new Error("mongo down"));
+test.serial(
+  "streaming: SSE shape, content-type, and [DONE] terminator",
+  async (t) => {
+    const { app, adapter } = await buildApp();
 
-  const res = await post(app, {
-    messages: [{ role: "user", content: "Hi" }],
-  });
-  t.is(res.statusCode, 200);
-  t.is(JSON.parse(res.body).choices[0].message.content, "Still works.");
-});
+    adapter.callStream.callsFake(async function* () {
+      yield { type: "content_delta", delta: "Hello" };
+      yield { type: "content_delta", delta: " world" };
+      yield {
+        type: "stream_end",
+        model: MODEL,
+        finish_reason: "stop",
+        usage: { input_tokens: 2, output_tokens: 2 }
+      };
+    });
 
-test("response is still returned when context assembly fails", async (t) => {
-  const { app, deps } = await buildApp(makeProviderResponse("Still works."));
-  sinon.stub(deps.context, "build").rejects(new Error("beliefs db down"));
+    const res = await post(app, {
+      messages: [{ role: "user", content: "Hi" }],
+      stream: true
+    });
 
-  const res = await post(app, {
-    messages: [{ role: "user", content: "Hi" }],
-  });
-  t.is(res.statusCode, 200);
-  t.is(JSON.parse(res.body).choices[0].message.content, "Still works.");
-});
+    t.is(res.statusCode, 200);
+    t.true(
+      (res.headers["content-type"] as string).includes("text/event-stream")
+    );
 
-test("streaming: returns 200 with text/event-stream content-type", async (t) => {
-  const events = streamEvents(["Hello!"]);
-  const { app } = await buildApp(makeStreamAdapter(events));
+    const body = res.body as string;
+    t.true(body.includes("data: [DONE]"));
 
-  const res = await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Hi" }],
-  });
+    const events = body
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith("data: ") && l !== "data: [DONE]")
+      .map((l) => JSON.parse(l.slice(6)));
 
-  t.is(res.statusCode, 200);
-  t.is(res.headers["content-type"], "text/event-stream");
-  t.is(res.headers["cache-control"], "no-cache");
-});
+    t.is(events[0].object, "chat.completion.chunk");
+    t.is(events[0].choices[0].delta.role, "assistant");
 
-test("streaming: response body terminates with data: [DONE]", async (t) => {
-  const events = streamEvents(["Done."]);
-  const { app } = await buildApp(makeStreamAdapter(events));
+    const last = events[events.length - 1];
+    t.is(last.choices[0].finish_reason, "stop");
+    t.truthy(last.usage);
 
-  const res = await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Hi" }],
-  });
-
-  const { done } = parseSSE(res.body);
-  t.true(done);
-  t.true(res.body.trimEnd().endsWith("data: [DONE]"));
-});
-
-test("streaming: first frame contains assistant role delta", async (t) => {
-  const events = streamEvents(["Hi"]);
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  const res = await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Hello" }],
-  });
-
-  const { frames } = parseSSE(res.body);
-  t.true(frames.length >= 2);
-  t.is(frames[0].choices![0].delta.role, "assistant");
-  t.is(frames[0].choices![0].delta.content, "");
-});
-
-test("streaming: all frames share the same chatcmpl-* id", async (t) => {
-  const events = streamEvents(["A", "B", "C"]);
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  const res = await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Go" }],
-  });
-
-  const { frames } = parseSSE(res.body);
-  const ids = new Set(frames.map((f) => f.id));
-  t.is(ids.size, 1);
-  t.regex([...ids][0]!, /^chatcmpl-/);
-});
-
-test("streaming: all frames have object chat.completion.chunk", async (t) => {
-  const events = streamEvents(["X"]);
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  const res = await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Go" }],
-  });
-
-  const { frames } = parseSSE(res.body);
-  for (const frame of frames) {
-    t.is(frame.object, "chat.completion.chunk");
+    await app.close();
   }
-});
-
-test("streaming: content deltas reconstruct the full visible message", async (t) => {
-  const events = streamEvents([
-    "This is a longer message that should ",
-    "be flushed in parts because it exceeds ",
-    "the holdback buffer significantly.",
-  ]);
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  const res = await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Tell me something" }],
-  });
-
-  const { frames } = parseSSE(res.body);
-  const reconstructed = concatDeltas(frames);
-
-  t.is(
-    reconstructed,
-    "This is a longer message that should be flushed in parts because it exceeds the holdback buffer significantly.",
-  );
-});
-
-test("streaming: short message below holdback is flushed after loop", async (t) => {
-  const events = streamEvents(["Short."]);
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  const res = await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Hi" }],
-  });
-
-  const { frames } = parseSSE(res.body);
-  const content = concatDeltas(frames);
-  t.is(content, "Short.");
-});
-
-test("streaming: sidecar content never appears in any delta", async (t) => {
-  const sidecarPayload = JSON.stringify({
-    turn_signal: "substantive",
-    new_beliefs: [],
-    belief_updates: [],
-  });
-  const events: StreamEvent[] = [
-    { type: "content_delta", delta: "The answer is 42." },
-    {
-      type: "content_delta",
-      delta: `\n${SIDECAR_BEGIN}\n`,
-    },
-    {
-      type: "content_delta",
-      delta: `${sidecarPayload}\n${SIDECAR_END}`,
-    },
-    {
-      type: "stream_end",
-      model: MODEL,
-      finish_reason: "stop",
-      usage: { input_tokens: 10, output_tokens: 20 },
-    },
-  ];
-
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  const res = await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "What is the answer?" }],
-  });
-
-  const { frames } = parseSSE(res.body);
-  const fullContent = concatDeltas(frames);
-
-  t.false(fullContent.includes(SIDECAR_BEGIN));
-  t.false(fullContent.includes(SIDECAR_END));
-  t.false(fullContent.includes("turn_signal"));
-  t.false(fullContent.includes("new_beliefs"));
-});
-
-test("streaming: visible content before sidecar is flushed to client", async (t) => {
-  const sidecar = makeSidecar("acknowledgment");
-  const visiblePart =
-    "Here is a detailed answer that is long enough to flush before the sidecar marker appears in the stream. ";
-
-  const events: StreamEvent[] = [
-    { type: "content_delta", delta: visiblePart },
-    { type: "content_delta", delta: `\n${sidecar}` },
-    {
-      type: "stream_end",
-      model: MODEL,
-      finish_reason: "stop",
-      usage: { input_tokens: 10, output_tokens: 30 },
-    },
-  ];
-
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  const res = await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Explain" }],
-  });
-
-  const { frames } = parseSSE(res.body);
-  const content = concatDeltas(frames);
-
-  t.true(content.includes("Here is a detailed answer"));
-  t.false(content.includes(SIDECAR_BEGIN));
-});
-
-test("streaming: final content frame has finish_reason and usage", async (t) => {
-  const events = streamEvents(["Result."], {
-    finish_reason: "stop",
-    usage: { input_tokens: 42, output_tokens: 84 },
-  });
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  const res = await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Go" }],
-  });
-
-  const { frames } = parseSSE(res.body);
-  const last = frames[frames.length - 1];
-
-  t.is(last.choices![0].finish_reason, "stop");
-  t.is(last.usage!.prompt_tokens, 42);
-  t.is(last.usage!.completion_tokens, 84);
-  t.is(last.usage!.total_tokens, 126);
-});
-
-test("streaming: finish_reason length is propagated", async (t) => {
-  const events = streamEvents(["Truncated"], {
-    finish_reason: "length",
-    usage: { input_tokens: 5, output_tokens: 100 },
-  });
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  const res = await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Write a lot" }],
-  });
-
-  const { frames } = parseSSE(res.body);
-  const last = frames[frames.length - 1];
-  t.is(last.choices![0].finish_reason, "length");
-});
-
-test("streaming: extraction job is enqueued after stream completes", async (t) => {
-  const events = streamEvents(["Extracted."]);
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Extract this" }],
-  });
-
-  const job = await waitForDoc(db.collection("jobs"), {
-    "payload.user_message": "Extract this",
-  });
-
-  t.truthy(job);
-  t.is((job as any).payload.assistant_message, "Extracted.");
-  t.is(job!.status, "pending");
-});
-
-test("streaming: session lastUsedAt is touched after stream", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate(SESSION_ID, USER_ID);
-  const before = (await sessions.get(SESSION_ID, USER_ID))!.lastUsedAt;
-  await new Promise((r) => setTimeout(r, 10));
-
-  const events = streamEvents(["Touched."]);
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Touch stream" }],
-  });
-
-  await new Promise((r) => setTimeout(r, 250));
-  const after = (await sessions.get(SESSION_ID, USER_ID))!.lastUsedAt;
-  t.true(after > before);
-});
-
-test("streaming: sidecar parse_status is captured on extraction job", async (t) => {
-  const sidecar = makeSidecar("substantive");
-  const events: StreamEvent[] = [
-    { type: "content_delta", delta: `Visible.\n${sidecar}` },
-    {
-      type: "stream_end",
-      model: MODEL,
-      finish_reason: "stop",
-      usage: { input_tokens: 5, output_tokens: 10 },
-    },
-  ];
-
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Sidecar stream" }],
-  });
-
-  const job = await waitForDoc(db.collection("jobs"), {
-    "payload.user_message": "Sidecar stream",
-  });
-
-  t.truthy(job);
-  t.is((job as any)!.payload.parse_status, "parsed");
-});
-
-test("streaming: provider error mid-stream emits error frame then [DONE]", async (t) => {
-  const adapter = failingStreamAdapter(
-    ["partial content"],
-    new Error("connection reset"),
-  );
-  const { app } = await buildApp(adapter);
-
-  const res = await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Fail" }],
-  });
-
-  const { frames, done } = parseSSE(res.body);
-  t.true(done);
-
-  const errorFrame = frames.find((f) => f.error != null);
-  t.truthy(errorFrame);
-  t.is(errorFrame!.error!.message, "connection reset");
-  t.is(errorFrame!.error!.type, "provider_error");
-});
-
-test("streaming: no turn or job written on provider error", async (t) => {
-  const adapter = failingStreamAdapter(
-    ["partial"],
-    new Error("upstream crash"),
-  );
-  const { app } = await buildApp(adapter);
-
-  await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Error no persist" }],
-  });
-
-  await new Promise((r) => setTimeout(r, 250));
-
-  const turn = await db
-    .collection("turns")
-    .findOne({ userMessage: "Error no persist" });
-  const job = await db
-    .collection("jobs")
-    .findOne({ "payload.user_message": "Error no persist" });
-
-  t.is(turn, null);
-  t.is(job, null);
-});
-
-test("streaming: falls back to non-streaming when adapter lacks callStream", async (t) => {
-  const adapter = {
-    id: PROVIDER_ID,
-    call: sinon.stub().resolves(makeProviderResponse("Non-streamed.")),
-  } as unknown as OpenAIAdapter;
-  const { app } = await buildApp(adapter);
-
-  const res = await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Hi" }],
-  });
-
-  t.is(res.statusCode, 200);
-  const body = JSON.parse(res.body);
-  t.is(body.object, "chat.completion");
-  t.is(body.choices[0].message.content, "Non-streamed.");
-});
-
-test("streaming: model from stream_end is used in final frame", async (t) => {
-  const events = streamEvents(["Ok."], {
-    model: "claude-sonnet-4-20250514",
-  });
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  const res = await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Which model?" }],
-  });
-
-  const { frames } = parseSSE(res.body);
-  const last = frames[frames.length - 1];
-  t.is(last.model, "claude-sonnet-4-20250514");
-});
-
-test("extraction worker processById is called after a successful turn", async (t) => {
-  const { app, deps } = await buildApp(makeProviderResponse("Processed."));
-  const spy = deps.extractionWorker.processById as sinon.SinonStub;
-
-  const res = await post(app, {
-    messages: [{ role: "user", content: "Trigger worker" }],
-  });
-  t.is(res.statusCode, 200);
-
-  await new Promise((r) => setTimeout(r, 50));
-
-  t.true(spy.calledOnce, "processById called once");
-
-  const job = await db.collection("jobs").findOne({
-    "payload.user_message": "Trigger worker",
-  });
-  t.truthy(job);
-  t.is(spy.firstCall.args[0], job!._id, "called with the enqueued job id");
-});
-
-test("extraction worker processById is NOT called when job enqueue fails", async (t) => {
-  const { app, deps } = await buildApp(makeProviderResponse("Still works."));
-  sinon.stub(deps.jobs, "enqueue").rejects(new Error("queue down"));
-  const spy = deps.extractionWorker.processById as sinon.SinonStub;
-
-  const res = await post(app, {
-    messages: [{ role: "user", content: "No worker call" }],
-  });
-  t.is(res.statusCode, 200);
-  await new Promise((r) => setTimeout(r, 50));
-
-  t.false(spy.called, "processById not called when enqueue fails");
-});
-
-test("extraction worker is NOT called when extraction_enabled is false", async (t) => {
-  const { app, deps } = await buildApp(makeProviderResponse("No extraction."));
-
-  (deps.runtimeStore.load as sinon.SinonStub).resolves({
-    extraction_enabled: false,
-  });
-
-  const spy = deps.extractionWorker.processById as sinon.SinonStub;
-
-  const res = await post(app, {
-    messages: [{ role: "user", content: "Don't extract this" }],
-  });
-  t.is(res.statusCode, 200);
-
-  await new Promise((r) => setTimeout(r, 50));
-  t.false(spy.called, "processById not called when extraction disabled");
-});
-
-test("no extraction job enqueued when extraction_enabled is false", async (t) => {
-  const { app, deps } = await buildApp(makeProviderResponse("No job."));
-
-  (deps.runtimeStore.load as sinon.SinonStub).resolves({
-    extraction_enabled: false,
-  });
-
-  await post(app, {
-    messages: [{ role: "user", content: "No job please" }],
-  });
-
-  await new Promise((r) => setTimeout(r, 100));
-
-  const job = await db
-    .collection("jobs")
-    .findOne({ "payload.user_message": "No job please" });
-  t.is(job, null);
-});
-
-test("streaming: extraction worker NOT called when extraction_enabled is false", async (t) => {
-  const events = streamEvents(["No extract stream."]);
-  const { app, deps } = await buildApp(makeStreamAdapter(events));
-
-  (deps.runtimeStore.load as sinon.SinonStub).resolves({
-    extraction_enabled: false,
-  });
-
-  const spy = deps.extractionWorker.processById as sinon.SinonStub;
-
-  await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "Stream no extract" }],
-  });
-
-  await new Promise((r) => setTimeout(r, 100));
-  t.false(
-    spy.called,
-    "processById not called on streaming when extraction disabled",
-  );
-});
-
-test("response still returned when runtimeStore.load fails", async (t) => {
-  const { app, deps } = await buildApp(makeProviderResponse("Still works."));
-
-  (deps.runtimeStore.load as sinon.SinonStub).rejects(
-    new Error("config db down"),
-  );
-
-  const res = await post(app, {
-    messages: [{ role: "user", content: "Config failure" }],
-  });
-
-  t.is(res.statusCode, 200);
-  t.is(JSON.parse(res.body).choices[0].message.content, "Still works.");
-});
-
-test("!scope command returns synthetic acknowledgment without calling LLM", async (t) => {
-  const adapter = makeStubAdapter(
-    makeProviderResponse("Should not be called."),
-  );
-  const { app } = await buildApp(adapter);
-
-  const res = await post(app, {
-    messages: [{ role: "user", content: "!scope domain:code" }],
-  });
-
-  t.is(res.statusCode, 200);
-  const body = JSON.parse(res.body);
-  t.is(body.object, "chat.completion");
-  t.is(body.choices[0].finish_reason, "stop");
-  t.true(body.choices[0].message.content.includes("domain:code"));
-  t.false((adapter.call as sinon.SinonStub).called);
-});
-
-test("!scope command updates session activeScope", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-scope-cmd", USER_ID);
-  await sessions.update("sess-scope-cmd", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-    activeScope: [],
-  });
-
-  const registry = new ProviderRegistry();
-  registry.register(makeStubAdapter(makeProviderResponse("Unused.")));
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon.stub().resolves({ extraction_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-  });
-  await app.ready();
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "!scope domain:writing" }] },
-    { "x-session-id": "sess-scope-cmd" },
-  );
-
-  const updated = await sessions.get("sess-scope-cmd", USER_ID);
-  t.deepEqual(updated!.activeScope, ["domain:writing"]);
-});
-
-test("!scope command tenure reflects new scope immediately", async (t) => {
-  const { app } = await buildApp(makeProviderResponse("Unused."));
-
-  const res = await post(app, {
-    messages: [{ role: "user", content: "!scope domain:code domain:writing" }],
-  });
-
-  const body = JSON.parse(res.body);
-  t.deepEqual(body.tenure.scope, ["domain:code", "domain:writing"]);
-});
-
-test("!scope command tenure parse_status is missing since no LLM fired", async (t) => {
-  const { app } = await buildApp(makeProviderResponse("Unused."));
-
-  const res = await post(app, {
-    messages: [{ role: "user", content: "!scope domain:code" }],
-  });
-
-  const body = JSON.parse(res.body);
-  t.is(body.tenure.parse_status, "missing");
-});
-
-test("!scope command tenure degraded is false", async (t) => {
-  const { app } = await buildApp(makeProviderResponse("Unused."));
-
-  const res = await post(app, {
-    messages: [{ role: "user", content: "!scope domain:code" }],
-  });
-
-  const body = JSON.parse(res.body);
-  t.false(body.tenure.degraded);
-});
-
-test("!scope command does not write a turn to history", async (t) => {
-  const { app } = await buildApp(makeProviderResponse("Unused."));
-
-  await post(app, {
-    messages: [{ role: "user", content: "!scope domain:code" }],
-  });
-
-  await new Promise((r) => setTimeout(r, 150));
-
-  const turn = await db.collection("turns").findOne({
-    sessionId: SESSION_ID,
-    userMessage: "!scope domain:code",
-  });
-  t.is(turn, null);
-});
-
-test("!scope command does not enqueue an extraction job", async (t) => {
-  const { app } = await buildApp(makeProviderResponse("Unused."));
-
-  await post(app, {
-    messages: [{ role: "user", content: "!scope domain:hobby" }],
-  });
-
-  await new Promise((r) => setTimeout(r, 150));
-
-  const job = await db.collection("jobs").findOne({
-    "payload.user_message": "!scope domain:hobby",
-  });
-  t.is(job, null);
-});
-
-test("!scope with no argument returns usage hint without calling LLM", async (t) => {
-  const adapter = makeStubAdapter(makeProviderResponse("Unused."));
-  const { app } = await buildApp(adapter);
-
-  const res = await post(app, {
-    messages: [{ role: "user", content: "!scope" }],
-  });
-
-  t.is(res.statusCode, 200);
-  const body = JSON.parse(res.body);
-  t.true(body.choices[0].message.content.includes("No scope provided"));
-  t.false((adapter.call as sinon.SinonStub).called);
-});
-
-test("set scope prefix also intercepts without calling LLM", async (t) => {
-  const adapter = makeStubAdapter(makeProviderResponse("Unused."));
-  const { app } = await buildApp(adapter);
-
-  const res = await post(app, {
-    messages: [{ role: "user", content: "set scope domain:code" }],
-  });
-
-  t.is(res.statusCode, 200);
-  const body = JSON.parse(res.body);
-  t.true(body.choices[0].message.content.includes("domain:code"));
-  t.false((adapter.call as sinon.SinonStub).called);
-});
-
-test("scope command mid-session changes scope for subsequent turn", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-mid-change", USER_ID);
-  await sessions.update("sess-mid-change", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-    activeScope: ["domain:code"],
-  });
-
-  const adapter = makeStubAdapter(makeProviderResponse("Reply."));
-  const registry = new ProviderRegistry();
-  registry.register(adapter);
-
-  const contextBuild = sinon.stub().resolves({
-    personaPrelude: "",
-    pinnedFactsJson: "[]",
-    expandedQuery: "",
-    queryWasNoisy: false,
-    relevantBeliefsJson: "[]",
-    openQuestionsJson: "[]",
-    beliefCount: 0,
-    questionCount: 0,
-    truncated: false,
-    searchScores: [],
-  });
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-
-    context: { build: contextBuild } as any,
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon.stub().resolves({ extraction_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-  });
-  await app.ready();
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "!scope domain:writing" }] },
-    { "x-session-id": "sess-mid-change" },
-  );
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "What should I write next?" }] },
-    { "x-session-id": "sess-mid-change" },
-  );
-
-  t.true(contextBuild.calledOnce);
-  t.deepEqual(contextBuild.firstCall.args[1], ["domain:writing"]);
-});
-
-test("streaming: !scope command returns non-streaming JSON even when stream:true", async (t) => {
-  const events = streamEvents(["Should not appear."]);
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  const res = await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "!scope domain:code" }],
-  });
-
-  t.is(res.statusCode, 200);
-  t.not(res.headers["content-type"], "text/event-stream");
-  const body = JSON.parse(res.body);
-  t.is(body.object, "chat.completion");
-  t.true(body.choices[0].message.content.includes("domain:code"));
-});
-
-test("first-turn scope detection runs when scopeDetector is configured and activeScope is empty", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-detect", USER_ID);
-  await sessions.update("sess-detect", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-    activeScope: [],
-  });
-
-  const detectorCall = sinon.stub().resolves({
-    content: '["domain:code"]',
-    model: "gpt-4o-mini",
-    provider: "openai",
-    finish_reason: "stop",
-    usage: { input_tokens: 5, output_tokens: 3 },
-  });
-
-  const mainAdapter = makeStubAdapter(makeProviderResponse("Main reply."));
-  const registry = new ProviderRegistry();
-  registry.register(mainAdapter);
-
-  const contextBuild = sinon.stub().resolves({
-    personaPrelude: "",
-    pinnedFactsJson: "[]",
-    expandedQuery: "",
-    queryWasNoisy: false,
-    relevantBeliefsJson: "[]",
-    openQuestionsJson: "[]",
-    beliefCount: 0,
-    questionCount: 0,
-    truncated: false,
-    searchScores: [],
-  });
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-
-    context: { build: contextBuild } as any,
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon.stub().resolves({ extraction_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-    scopeDetector: {
-      db: db as any,
-      adapter: () => ({ id: "openai", call: detectorCall }),
-      modelId: "gpt-4o-mini",
-    },
-  });
-  await app.ready();
-
-  const res = await post(
-    app,
-    {
-      messages: [
-        { role: "user", content: "How do I structure my TypeScript project?" },
-      ],
-    },
-    { "x-session-id": "sess-detect" },
-  );
-
-  t.is(res.statusCode, 200);
-  t.is(JSON.parse(res.body).choices[0].message.content, "Main reply.");
-
-  t.true(detectorCall.calledOnce);
-
-  t.true(contextBuild.calledOnce);
-  t.deepEqual(contextBuild.firstCall.args[1], ["domain:code"]);
-
-  const updated = await sessions.get("sess-detect", USER_ID);
-  t.deepEqual(updated!.activeScope, ["domain:code"]);
-});
-
-test("first-turn scope detection does not run when activeScope is already set", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-already-scoped", USER_ID);
-  await sessions.update("sess-already-scoped", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-    activeScope: ["domain:code"],
-  });
-
-  const detectorCall = sinon.stub().resolves({
-    content: '["domain:writing"]',
-    model: "gpt-4o-mini",
-    provider: "openai",
-    finish_reason: "stop",
-    usage: { input_tokens: 5, output_tokens: 3 },
-  });
-
-  const registry = new ProviderRegistry();
-  registry.register(makeStubAdapter(makeProviderResponse("Reply.")));
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon.stub().resolves({ extraction_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-    scopeDetector: {
-      db: db as any,
-      adapter: () => ({ id: "openai", call: detectorCall }),
-      modelId: "gpt-4o-mini",
-    },
-  });
-  await app.ready();
-
-  const res = await post(
-    app,
-    { messages: [{ role: "user", content: "How do I write a novel?" }] },
-    { "x-session-id": "sess-already-scoped" },
-  );
-
-  const body = JSON.parse(res.body);
-
-  t.false(detectorCall.called);
-});
-
-test("first-turn scope detection does not run when scopeDetector is not configured", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-no-detector", USER_ID);
-  await sessions.update("sess-no-detector", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-    activeScope: [],
-  });
-
-  const registry = new ProviderRegistry();
-  registry.register(makeStubAdapter(makeProviderResponse("Reply.")));
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-    runtimeStore: {
-      load: sinon.stub().resolves({ extraction_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-  });
-  await app.ready();
-
-  const res = await post(
-    app,
-    { messages: [{ role: "user", content: "Hi there" }] },
-    { "x-session-id": "sess-no-detector" },
-  );
-
-  t.is(res.statusCode, 200);
-  const body = JSON.parse(res.body);
-});
-
-test("first-turn scope detection failure degrades gracefully and still returns response", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-detect-fail", USER_ID);
-  await sessions.update("sess-detect-fail", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-    activeScope: [],
-  });
-
-  const detectorCall = sinon.stub().rejects(new Error("detector down"));
-
-  const registry = new ProviderRegistry();
-  registry.register(makeStubAdapter(makeProviderResponse("Reply anyway.")));
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon.stub().resolves({ extraction_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-    scopeDetector: {
-      db: db as any,
-      adapter: () => ({ id: "openai", call: detectorCall }),
-      modelId: "gpt-4o-mini",
-    },
-  });
-  await app.ready();
-
-  const res = await post(
-    app,
-    { messages: [{ role: "user", content: "Still works?" }] },
-    { "x-session-id": "sess-detect-fail" },
-  );
-
-  t.is(res.statusCode, 200);
-  t.is(JSON.parse(res.body).choices[0].message.content, "Reply anyway.");
-});
-
-test("first-turn scope detection only fires on turnCounter 0", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-second-turn", USER_ID);
-  await sessions.update("sess-second-turn", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-    activeScope: [],
-  });
-
-  const detectorCall = sinon.stub().resolves({
-    content: '["domain:code"]',
-    model: "gpt-4o-mini",
-    provider: "openai",
-    finish_reason: "stop",
-    usage: { input_tokens: 5, output_tokens: 3 },
-  });
-
-  const registry = new ProviderRegistry();
-  registry.register(makeStubAdapter(makeProviderResponse("Reply.")));
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon.stub().resolves({ extraction_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-    scopeDetector: {
-      db: db as any,
-      adapter: () => ({ id: "openai", call: detectorCall }),
-      modelId: "gpt-4o-mini",
-    },
-  });
-  await app.ready();
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "First message" }] },
-    { "x-session-id": "sess-second-turn" },
-  );
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "Second message" }] },
-    { "x-session-id": "sess-second-turn" },
-  );
-
-  t.is(detectorCall.callCount, 1);
-});
-
-test("!extract off returns synthetic acknowledgment without calling LLM", async (t) => {
-  const adapter = makeStubAdapter(
-    makeProviderResponse("Should not be called."),
-  );
-  const { app } = await buildApp(adapter);
-
-  const res = await post(app, {
-    messages: [{ role: "user", content: "!extract off" }],
-  });
-
-  t.is(res.statusCode, 200);
-  const body = JSON.parse(res.body);
-  t.is(body.object, "chat.completion");
-  t.is(body.choices[0].finish_reason, "stop");
-  t.false((adapter.call as sinon.SinonStub).called);
-});
-
-test("!extract off does not write a turn to history", async (t) => {
-  const { app } = await buildApp(makeProviderResponse("Unused."));
-
-  await post(app, {
-    messages: [{ role: "user", content: "!extract off" }],
-  });
-
-  await new Promise((r) => setTimeout(r, 150));
-
-  const turn = await db.collection("turns").findOne({
-    sessionId: SESSION_ID,
-    userMessage: "!extract off",
-  });
-  t.is(turn, null);
-});
-
-test("!extract off does not enqueue an extraction job", async (t) => {
-  const { app } = await buildApp(makeProviderResponse("Unused."));
-
-  await post(app, {
-    messages: [{ role: "user", content: "!extract off" }],
-  });
-
-  await new Promise((r) => setTimeout(r, 150));
-
-  const job = await db.collection("jobs").findOne({
-    "payload.user_message": "!extract off",
-  });
-  t.is(job, null);
-});
-
-test("!extract off sets extractionPaused on session", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-extract-off", USER_ID);
-  await sessions.update("sess-extract-off", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-  });
-
-  const registry = new ProviderRegistry();
-  registry.register(makeStubAdapter(makeProviderResponse("Unused.")));
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon.stub().resolves({ extraction_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-  });
-  await app.ready();
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "!extract off" }] },
-    { "x-session-id": "sess-extract-off" },
-  );
-
-  const updated = await sessions.get("sess-extract-off", USER_ID);
-  t.true((updated as any).extractionPaused);
-});
-
-test("!extract on clears extractionPaused on session", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-extract-on", USER_ID);
-  await sessions.update("sess-extract-on", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-    extractionPaused: true,
-  } as any);
-
-  const registry = new ProviderRegistry();
-  registry.register(makeStubAdapter(makeProviderResponse("Unused.")));
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon.stub().resolves({ extraction_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-  });
-  await app.ready();
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "!extract on" }] },
-    { "x-session-id": "sess-extract-on" },
-  );
-
-  const updated = await sessions.get("sess-extract-on", USER_ID);
-  t.false((updated as any).extractionPaused);
-});
-
-test("!extract global off calls runtimeStore.set with extraction_enabled false", async (t) => {
-  const runtimeSet = sinon.stub().resolves();
-  const adapter = makeStubAdapter(makeProviderResponse("Unused."));
-  const registry = new ProviderRegistry();
-  registry.register(adapter);
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions: new SessionManager(db),
-
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon.stub().resolves({ extraction_enabled: true }),
-      set: runtimeSet,
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-  });
-  await app.ready();
-
-  await db
-    .collection<Session>("sessions")
-    .deleteMany({ _id: "sess-global-extract" });
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-global-extract", USER_ID);
-  await sessions.update("sess-global-extract", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-  });
-
-  const res = await post(
-    app,
-    { messages: [{ role: "user", content: "!extract global off" }] },
-    { "x-session-id": "sess-global-extract" },
-  );
-
-  t.is(res.statusCode, 200);
-  t.true(runtimeSet.calledWith("extraction_enabled", false));
-  t.false((adapter.call as sinon.SinonStub).called);
-});
-
-test("extraction worker NOT called on subsequent turn when session extractionPaused is true", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-paused-extract", USER_ID);
-  await sessions.update("sess-paused-extract", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-    extractionPaused: true,
-  } as any);
-
-  const adapter = makeStubAdapter(makeProviderResponse("Normal reply."));
-  const registry = new ProviderRegistry();
-  registry.register(adapter);
-  const extractionWorker = {
-    processById: sinon.stub().resolves(),
-    sweep: sinon.stub().resolves(0),
-  };
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: extractionWorker as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon.stub().resolves({ extraction_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-  });
-  await app.ready();
-
-  const res = await post(
-    app,
-    { messages: [{ role: "user", content: "Normal question" }] },
-    { "x-session-id": "sess-paused-extract" },
-  );
-
-  t.is(res.statusCode, 200);
-  await new Promise((r) => setTimeout(r, 100));
-  t.false(extractionWorker.processById.called);
-});
-
-test("streaming: !extract off returns non-streaming JSON even when stream:true", async (t) => {
-  const events = streamEvents(["Should not appear."]);
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  const res = await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "!extract off" }],
-  });
-
-  t.is(res.statusCode, 200);
-  t.not(res.headers["content-type"], "text/event-stream");
-  const body = JSON.parse(res.body);
-  t.is(body.object, "chat.completion");
-});
-
-test("!inject off returns synthetic acknowledgment without calling LLM", async (t) => {
-  const adapter = makeStubAdapter(
-    makeProviderResponse("Should not be called."),
-  );
-  const { app } = await buildApp(adapter);
-
-  const res = await post(app, {
-    messages: [{ role: "user", content: "!inject off" }],
-  });
-
-  t.is(res.statusCode, 200);
-  const body = JSON.parse(res.body);
-  t.is(body.object, "chat.completion");
-  t.is(body.choices[0].finish_reason, "stop");
-  t.false((adapter.call as sinon.SinonStub).called);
-});
-
-test("!inject off does not write a turn to history", async (t) => {
-  const { app } = await buildApp(makeProviderResponse("Unused."));
-
-  await post(app, {
-    messages: [{ role: "user", content: "!inject off" }],
-  });
-
-  await new Promise((r) => setTimeout(r, 150));
-
-  const turn = await db.collection("turns").findOne({
-    sessionId: SESSION_ID,
-    userMessage: "!inject off",
-  });
-  t.is(turn, null);
-});
-
-test("!inject off does not enqueue an extraction job", async (t) => {
-  const { app } = await buildApp(makeProviderResponse("Unused."));
-
-  await post(app, {
-    messages: [{ role: "user", content: "!inject off" }],
-  });
-
-  await new Promise((r) => setTimeout(r, 150));
-
-  const job = await db.collection("jobs").findOne({
-    "payload.user_message": "!inject off",
-  });
-  t.is(job, null);
-});
-
-test("!inject off sets injectionPaused on session", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-inject-off", USER_ID);
-  await sessions.update("sess-inject-off", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-  });
-
-  const registry = new ProviderRegistry();
-  registry.register(makeStubAdapter(makeProviderResponse("Unused.")));
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon
-        .stub()
-        .resolves({ extraction_enabled: true, injection_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-  });
-  await app.ready();
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "!inject off" }] },
-    { "x-session-id": "sess-inject-off" },
-  );
-
-  const updated = await sessions.get("sess-inject-off", USER_ID);
-  t.true((updated as any).injectionPaused);
-});
-
-test("!inject on clears injectionPaused on session", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-inject-on", USER_ID);
-  await sessions.update("sess-inject-on", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-    injectionPaused: true,
-  } as any);
-
-  const registry = new ProviderRegistry();
-  registry.register(makeStubAdapter(makeProviderResponse("Unused.")));
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon
-        .stub()
-        .resolves({ extraction_enabled: true, injection_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-  });
-  await app.ready();
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "!inject on" }] },
-    { "x-session-id": "sess-inject-on" },
-  );
-
-  const updated = await sessions.get("sess-inject-on", USER_ID);
-  t.false((updated as any).injectionPaused);
-});
-
-test("!inject off: extraction still runs on subsequent turn", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-inject-off-extract", USER_ID);
-  await sessions.update("sess-inject-off-extract", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-    injectionPaused: true,
-  } as any);
-
-  const registry = new ProviderRegistry();
-  registry.register(makeStubAdapter(makeProviderResponse("Still extracts.")));
-  const extractionWorker = {
-    processById: sinon.stub().resolves(),
-    sweep: sinon.stub().resolves(0),
-  };
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: extractionWorker as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon
-        .stub()
-        .resolves({ extraction_enabled: true, injection_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-  });
-  await app.ready();
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "Extract this please" }] },
-    { "x-session-id": "sess-inject-off-extract" },
-  );
-
-  await new Promise((r) => setTimeout(r, 100));
-
-  t.true(extractionWorker.processById.called);
-});
-
-test("!inject global off calls runtimeStore.set with injection_enabled false", async (t) => {
-  const runtimeSet = sinon.stub().resolves();
-  const adapter = makeStubAdapter(makeProviderResponse("Unused."));
-  const registry = new ProviderRegistry();
-  registry.register(adapter);
-
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-global-inject", USER_ID);
-  await sessions.update("sess-global-inject", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-  });
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon
-        .stub()
-        .resolves({ extraction_enabled: true, injection_enabled: true }),
-      set: runtimeSet,
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-  });
-  await app.ready();
-
-  const res = await post(
-    app,
-    { messages: [{ role: "user", content: "!inject global off" }] },
-    { "x-session-id": "sess-global-inject" },
-  );
-
-  t.is(res.statusCode, 200);
-  t.true(runtimeSet.calledWith("injection_enabled", false));
-  t.false((adapter.call as sinon.SinonStub).called);
-});
-
-test("streaming: !inject off returns non-streaming JSON even when stream:true", async (t) => {
-  const events = streamEvents(["Should not appear."]);
-  const { app } = await buildApp(makeStreamAdapter(events));
-
-  const res = await post(app, {
-    stream: true,
-    messages: [{ role: "user", content: "!inject off" }],
-  });
-
-  t.is(res.statusCode, 200);
-  t.not(res.headers["content-type"], "text/event-stream");
-  const body = JSON.parse(res.body);
-  t.is(body.object, "chat.completion");
-});
-
-test("!extract off and !inject off are independent: both can be set simultaneously", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-both-off", USER_ID);
-  await sessions.update("sess-both-off", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-  });
-
-  const registry = new ProviderRegistry();
-  registry.register(makeStubAdapter(makeProviderResponse("Unused.")));
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon
-        .stub()
-        .resolves({ extraction_enabled: true, injection_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-  });
-  await app.ready();
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "!extract off" }] },
-    { "x-session-id": "sess-both-off" },
-  );
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "!inject off" }] },
-    { "x-session-id": "sess-both-off" },
-  );
-
-  const updated = await sessions.get("sess-both-off", USER_ID);
-  t.true((updated as any).extractionPaused);
-  t.true((updated as any).injectionPaused);
-});
-
-test("!inject off does not affect extractionPaused field", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-inject-no-extract-change", USER_ID);
-  await sessions.update("sess-inject-no-extract-change", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-    extractionPaused: false,
-  } as any);
-
-  const registry = new ProviderRegistry();
-  registry.register(makeStubAdapter(makeProviderResponse("Unused.")));
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon
-        .stub()
-        .resolves({ extraction_enabled: true, injection_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-  });
-  await app.ready();
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "!inject off" }] },
-    { "x-session-id": "sess-inject-no-extract-change" },
-  );
-
-  const updated = await sessions.get("sess-inject-no-extract-change", USER_ID);
-
-  t.false((updated as any).extractionPaused);
-  t.true((updated as any).injectionPaused);
-});
-
-test("!extract off does not affect injectionPaused field", async (t) => {
-  const sessions = new SessionManager(db);
-  await sessions.getOrCreate("sess-extract-no-inject-change", USER_ID);
-  await sessions.update("sess-extract-no-inject-change", USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-    injectionPaused: false,
-  } as any);
-
-  const registry = new ProviderRegistry();
-  registry.register(makeStubAdapter(makeProviderResponse("Unused.")));
-
-  const app = Fastify();
-  registerChatRoute(app, {
-    sessions,
-
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs: new ExtractionJobQueue(db),
-    userId: USER_ID,
-    extractionWorker: {
-      processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
-    } as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon
-        .stub()
-        .resolves({ extraction_enabled: true, injection_enabled: true }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-  });
-  await app.ready();
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "!extract off" }] },
-    { "x-session-id": "sess-extract-no-inject-change" },
-  );
-
-  const updated = await sessions.get("sess-extract-no-inject-change", USER_ID);
-
-  t.false((updated as any).injectionPaused);
-  t.true((updated as any).extractionPaused);
-});
-
-async function buildAppWithWorkspaceState(
-  adapterOrResponse: OpenAIAdapter | ProviderResponse,
-  workspaceState?: WorkspaceStateCache,
-): Promise<{
-  app: FastifyInstance;
-  deps: ChatDeps;
-}> {
-  const adapter =
-    "id" in adapterOrResponse
-      ? (adapterOrResponse as OpenAIAdapter)
-      : makeStubAdapter(adapterOrResponse as ProviderResponse);
-
-  const registry = new ProviderRegistry();
-  registry.register(adapter);
-
-  const sessions = new SessionManager(db);
-  const history = new HistoryManager(db);
-  const context = new ContextBuilder(
-    {
-      listByScope: sinon.stub().resolves([]),
-      listPinnedOpenQuestions: sinon.stub().resolves([]),
-    } as any,
-    { get: sinon.stub().resolves(null) } as any,
-  );
-  const jobs = new ExtractionJobQueue(db);
-  const extractionWorker = {
-    processById: sinon.stub().resolves(),
-    sweep: sinon.stub().resolves(0),
-  };
-
-  const runtimeStore = {
-    load: sinon.stub().resolves({ extraction_enabled: true }),
-    set: sinon.stub().resolves(),
-  };
-
-  const deps: ChatDeps = {
-    sessions,
-
-    context,
-    providers: registry,
-    jobs,
-    userId: USER_ID,
-    extractionWorker: extractionWorker as unknown as ExtractionWorker,
-    runtimeStore: runtimeStore as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-    workspaceState,
-  };
-
-  const app = Fastify();
-  registerChatRoute(app, deps);
-  await app.ready();
-
-  await sessions.getOrCreate(SESSION_ID, USER_ID);
-  await sessions.update(SESSION_ID, USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-  });
-
-  return { app, deps };
-}
-
-test("IDE turn: extraction job has extraction_mode 'ide' when x-tenure-ide header is set", async (t) => {
-  const { app } = await buildAppWithWorkspaceState(
-    makeProviderResponse("IDE reply."),
-  );
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "IDE turn test" }] },
-    { "x-tenure-ide": "1" },
-  );
-
-  const job = await waitForDoc(db.collection("jobs"), {
-    "payload.user_message": "IDE turn test",
-  });
-  t.truthy(job);
-  t.is((job as any).payload.extraction_mode, "ide");
-});
-
-test("IDE turn: extraction job has extraction_mode 'standard' when x-tenure-ide header is absent", async (t) => {
-  const { app } = await buildAppWithWorkspaceState(
-    makeProviderResponse("Standard reply."),
-  );
-
-  await post(app, {
-    messages: [{ role: "user", content: "Standard turn test" }],
-  });
-
-  const job = await waitForDoc(db.collection("jobs"), {
-    "payload.user_message": "Standard turn test",
-  });
-  t.truthy(job);
-  t.is((job as any).payload.extraction_mode, "standard");
-});
-
-test("IDE turn: workspace_context.project_scope populated from x-tenure-project header", async (t) => {
-  const { app } = await buildAppWithWorkspaceState(
-    makeProviderResponse("Project header reply."),
-  );
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "Project header flow" }] },
-    { "x-tenure-ide": "1", "x-tenure-project": "MyApp" },
-  );
-
-  const job = await waitForDoc(db.collection("jobs"), {
-    "payload.user_message": "Project header flow",
-  });
-  t.truthy(job);
-  t.is((job as any).payload.workspace_context.project_scope, "project:myapp");
-});
-
-test("IDE turn: workspace_context.project_scope populated from WorkspaceStateCache when no header", async (t) => {
-  const wsCache = new WorkspaceStateCache(db);
-  await wsCache.set(USER_ID, {
-    workspace_root: "/dev/tenure",
-    project_name: "Tenure App",
-    git_remote: null,
-    active_file: null,
-    active_language: "typescript",
-    updated_at: new Date(),
-  });
-
-  const { app } = await buildAppWithWorkspaceState(
-    makeProviderResponse("Cache reply."),
-    wsCache,
-  );
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "Cache scope flow" }] },
-    { "x-tenure-ide": "1" },
-  );
-
-  const job = await waitForDoc(db.collection("jobs"), {
-    "payload.user_message": "Cache scope flow",
-  });
-  t.truthy(job);
-  t.is(
-    (job as any).payload.workspace_context.project_scope,
-    "project:tenure-app",
-  );
-});
-
-test("IDE turn: workspace_context is absent from job when not an IDE turn", async (t) => {
-  const wsCache = new WorkspaceStateCache(db);
-  await wsCache.set(USER_ID, {
-    workspace_root: "/dev/project",
-    project_name: "project",
-    git_remote: null,
-    active_file: null,
-    active_language: "typescript",
-    updated_at: new Date(),
-  });
-
-  const { app } = await buildAppWithWorkspaceState(
-    makeProviderResponse("Non-IDE reply."),
-    wsCache,
-  );
-
-  await post(app, {
-    messages: [{ role: "user", content: "Non-IDE turn" }],
-  });
-
-  const job = await waitForDoc(db.collection("jobs"), {
-    "payload.user_message": "Non-IDE turn",
-  });
-  t.truthy(job);
-  t.is((job as any).payload.workspace_context, undefined);
-});
-
-test("IDE turn: x-tenure-project header is slugified in workspace_context", async (t) => {
-  const { app } = await buildAppWithWorkspaceState(
-    makeProviderResponse("Slugified."),
-  );
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "Slugify test" }] },
-    { "x-tenure-ide": "1", "x-tenure-project": "My Cool App!" },
-  );
-
-  const job = await waitForDoc(db.collection("jobs"), {
-    "payload.user_message": "Slugify test",
-  });
-  t.truthy(job);
-  t.is(
-    (job as any).payload.workspace_context.project_scope,
-    "project:my-cool-app",
-  );
-});
-
-test("IDE turn: no workspace_context when neither header nor cache provides project scope", async (t) => {
-  const { app } = await buildAppWithWorkspaceState(
-    makeProviderResponse("No context."),
-  );
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "No workspace context" }] },
-    { "x-tenure-ide": "1" },
-  );
-
-  const job = await waitForDoc(db.collection("jobs"), {
-    "payload.user_message": "No workspace context",
-  });
-  t.truthy(job);
-  t.is((job as any).payload.workspace_context, undefined);
-});
-
-test("IDE turn: extraction is suppressed when ide_extraction_enabled is false", async (t) => {
-  const wsCache = new WorkspaceStateCache(db);
-  await wsCache.set(USER_ID, {
-    workspace_root: "/dev",
-    project_name: "test",
-    git_remote: null,
-    active_file: null,
-    active_language: "typescript",
-    updated_at: new Date(),
-  });
-
-  const adapter = makeStubAdapter(makeProviderResponse("No extract."));
-  const registry = new ProviderRegistry();
-  registry.register(adapter);
-
-  const sessions = new SessionManager(db);
-  const history = new HistoryManager(db);
-  const jobs = new ExtractionJobQueue(db);
-  const extractionWorker = {
-    processById: sinon.stub().resolves(),
-    sweep: sinon.stub().resolves(0),
-  };
-
-  const deps: ChatDeps = {
-    sessions,
-
-    context: new ContextBuilder(
-      {
-        listByScope: sinon.stub().resolves([]),
-        listPinnedOpenQuestions: sinon.stub().resolves([]),
-      } as any,
-      { get: sinon.stub().resolves(null) } as any,
-    ),
-    providers: registry,
-    jobs,
-    userId: USER_ID,
-    extractionWorker: extractionWorker as unknown as ExtractionWorker,
-    runtimeStore: {
-      load: sinon.stub().resolves({
-        extraction_enabled: true,
-        ide_extraction_enabled: false,
-      }),
-      set: sinon.stub().resolves(),
-    } as unknown as RuntimeConfigStore,
-    errorLogger: {
-      log: sinon.stub().resolves(),
-    } as unknown as ErrorLogger,
-    workspaceState: wsCache,
-  };
-
-  const app = Fastify();
-  registerChatRoute(app, deps);
-  await app.ready();
-
-  await sessions.getOrCreate(SESSION_ID, USER_ID);
-  await sessions.update(SESSION_ID, USER_ID, {
-    providerId: PROVIDER_ID,
-    model: MODEL,
-  });
-
-  await post(
-    app,
-    { messages: [{ role: "user", content: "IDE no extract" }] },
-    { "x-tenure-ide": "1" },
-  );
-
-  await new Promise((r) => setTimeout(r, 150));
-
-  t.false(extractionWorker.processById.called);
-  const job = await db.collection("jobs").findOne({
-    "payload.user_message": "IDE no extract",
-  });
-  t.is(job, null);
-});
-
-test("IDE turn: streaming also sets extraction_mode ide on job", async (t) => {
-  const events = streamEvents(["Streamed IDE."]);
-  const wsCache = new WorkspaceStateCache(db);
-  await wsCache.set(USER_ID, {
-    workspace_root: "/dev/stream-test",
-    project_name: "stream-project",
-    git_remote: null,
-    active_file: null,
-    active_language: "typescript",
-    updated_at: new Date(),
-  });
-
-  const { app } = await buildAppWithWorkspaceState(
-    makeStreamAdapter(events),
-    wsCache,
-  );
-
-  await post(
-    app,
-    {
-      stream: true,
-      messages: [{ role: "user", content: "Stream IDE turn" }],
-    },
-    { "x-tenure-ide": "1" },
-  );
-
-  const job = await waitForDoc(db.collection("jobs"), {
-    "payload.user_message": "Stream IDE turn",
-  });
-  t.truthy(job);
-  t.is((job as any).payload.extraction_mode, "ide");
-  t.is(
-    (job as any).payload.workspace_context.project_scope,
-    "project:stream-project",
-  );
-});
+);
+
+test.serial(
+  "streaming: sidecar is stripped — only visible content reaches the wire",
+  async (t) => {
+    const { app, adapter } = await buildApp();
+
+    const visible = "Visible response text.";
+    const hidden = `${SIDECAR_BEGIN}{"orientation_tax":false}${SIDECAR_END}`;
+
+    adapter.callStream.callsFake(async function* () {
+      yield { type: "content_delta", delta: visible + hidden };
+      yield {
+        type: "stream_end",
+        model: MODEL,
+        finish_reason: "stop",
+        usage: { input_tokens: 3, output_tokens: 3 }
+      };
+    });
+
+    const res = await post(app, {
+      messages: [{ role: "user", content: "Hi" }],
+      stream: true
+    });
+
+    t.is(res.statusCode, 200);
+    const body = res.body as string;
+
+    t.true(body.includes(visible));
+    t.false(body.includes(SIDECAR_BEGIN));
+    t.false(body.includes("orientation_tax"));
+    t.true(body.includes("data: [DONE]"));
+
+    await app.close();
+  }
+);
+
+test.serial(
+  "streaming: provider error mid-stream emits error SSE and [DONE]",
+  async (t) => {
+    const { app, adapter } = await buildApp();
+
+    adapter.callStream.callsFake(async function* () {
+      yield {
+        type: "content_delta",
+        delta: "Partial response text that is longer than the holdback buffer"
+      };
+      throw new Error("connection reset");
+    });
+
+    const res = await post(app, {
+      messages: [{ role: "user", content: "Hi" }],
+      stream: true
+    });
+
+    t.is(res.statusCode, 200);
+    const body = res.body as string;
+
+    t.true(body.includes("Partial"));
+    t.true(body.includes('"error"'));
+    t.true(body.includes("connection reset"));
+    t.true(body.includes("data: [DONE]"));
+
+    await app.close();
+  }
+);

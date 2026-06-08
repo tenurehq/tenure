@@ -8,7 +8,7 @@ import type { ProviderRegistry } from "../providers/registry.js";
 import {
   buildImportExtractionPrompt,
   buildImportExtractionSystemPrompt,
-  buildOpenClawExtractionSystemPrompt,
+  buildOpenClawExtractionSystemPrompt
 } from "../extraction/importPrompt.js";
 import { extractJsonBlock } from "../extraction/extractJson.js";
 import type { BeliefWriter } from "../extraction/beliefWriter.js";
@@ -16,7 +16,6 @@ import type { InternalLLMCaller } from "../providers/types.js";
 
 export interface BeliefsDeps {
   beliefs: Collection<Belief>;
-  userId: string;
   jobs: ExtractionJobQueue;
   extractionWorker: ExtractionWorkerLike;
   runtimeStore: RuntimeConfigStore;
@@ -26,9 +25,9 @@ export interface BeliefsDeps {
 
 export function registerBeliefsRoutes(
   app: FastifyInstance,
-  deps: BeliefsDeps,
+  deps: BeliefsDeps
 ): void {
-  const { beliefs: col, userId } = deps;
+  const { beliefs: col } = deps;
 
   app.get<{
     Querystring: {
@@ -38,6 +37,7 @@ export function registerBeliefsRoutes(
       limit?: string;
     };
   }>("/v1/beliefs", async (req) => {
+    const userId = req.tenureUserId;
     const q = req.query;
     const filter: Record<string, unknown> = { user_id: userId };
 
@@ -58,6 +58,7 @@ export function registerBeliefsRoutes(
   });
 
   app.get<{ Params: { id: string } }>("/v1/beliefs/:id", async (req, reply) => {
+    const userId = req.tenureUserId;
     const doc = await col.findOne({ _id: req.params.id, user_id: userId });
     if (!doc) {
       return reply.code(404).send({ error: { message: "belief not found" } });
@@ -76,6 +77,7 @@ export function registerBeliefsRoutes(
       aliases?: string[];
     };
   }>("/v1/beliefs/:id", async (req, reply) => {
+    const userId = req.tenureUserId;
     const { id } = req.params;
     const patch = req.body ?? {};
 
@@ -100,7 +102,7 @@ export function registerBeliefsRoutes(
       "pinned",
       "canonical_name",
       "why_it_matters",
-      "aliases",
+      "aliases"
     ] as const;
 
     for (const field of mutable) {
@@ -118,7 +120,7 @@ export function registerBeliefsRoutes(
             ? { previous_epistemic_status: current.epistemic_status }
             : {}),
           changed_by_session: null,
-          changed_by_turn: null,
+          changed_by_turn: null
         });
       }
     }
@@ -131,9 +133,9 @@ export function registerBeliefsRoutes(
       { _id: id, user_id: userId },
       {
         $set,
-        $push: { change_log: { $each: logEntries } } as any,
+        $push: { change_log: { $each: logEntries } } as any
       },
-      { returnDocument: "after" },
+      { returnDocument: "after" }
     );
 
     return { belief: result ? redactForClient(result) : null };
@@ -142,6 +144,7 @@ export function registerBeliefsRoutes(
   app.delete<{ Params: { id: string } }>(
     "/v1/beliefs/:id",
     async (req, reply) => {
+      const userId = req.tenureUserId;
       const { id } = req.params;
       const current = await col.findOne({ _id: id, user_id: userId });
       if (!current) {
@@ -154,7 +157,7 @@ export function registerBeliefsRoutes(
           $set: {
             epistemic_status: "superseded",
             resolved_at: new Date(),
-            updated_at: new Date(),
+            updated_at: new Date()
           },
           $push: {
             change_log: {
@@ -162,14 +165,14 @@ export function registerBeliefsRoutes(
               trigger: "user_deletion",
               previous_epistemic_status: current.epistemic_status,
               changed_by_session: null,
-              changed_by_turn: null,
-            },
-          } as any,
-        },
+              changed_by_turn: null
+            }
+          } as any
+        }
       );
 
       return { ok: true };
-    },
+    }
   );
 
   app.post<{
@@ -184,21 +187,22 @@ export function registerBeliefsRoutes(
       aliases?: string[];
     };
   }>("/v1/beliefs", async (req, reply) => {
+    const userId = req.tenureUserId;
     const body = req.body ?? {};
 
     if (!body.type || !body.canonical_name?.trim() || !body.content?.trim()) {
       return reply.code(400).send({
-        error: { message: "type, canonical_name, and content are required" },
+        error: { message: "type, canonical_name, and content are required" }
       });
     }
     if (!body.why_it_matters?.trim()) {
       return reply.code(400).send({
-        error: { message: "why_it_matters is required" },
+        error: { message: "why_it_matters is required" }
       });
     }
     if (!Array.isArray(body.scope) || body.scope.length === 0) {
       return reply.code(400).send({
-        error: { message: "scope is required and must be a non-empty array" },
+        error: { message: "scope is required and must be a non-empty array" }
       });
     }
 
@@ -207,15 +211,15 @@ export function registerBeliefsRoutes(
       "decision",
       "entity",
       "relation",
-      "open_question",
+      "open_question"
     ]);
     if (!VALID_TYPES.has(body.type)) {
       return reply.code(400).send({
         error: {
           message: `invalid type: ${body.type}. Must be one of: ${[
-            ...VALID_TYPES,
-          ].join(", ")}`,
-        },
+            ...VALID_TYPES
+          ].join(", ")}`
+        }
       });
     }
 
@@ -225,8 +229,8 @@ export function registerBeliefsRoutes(
     if (!VALID_STATUSES.has(epistemicStatus)) {
       return reply.code(400).send({
         error: {
-          message: `invalid epistemic_status: ${epistemicStatus}`,
-        },
+          message: `invalid epistemic_status: ${epistemicStatus}`
+        }
       });
     }
 
@@ -244,7 +248,7 @@ export function registerBeliefsRoutes(
           session_id: "manual",
           turn_id: "manual",
           extracted_at: new Date(),
-          source_model: "user",
+          source_model: "user"
         },
         epistemic_status: epistemicStatus as any,
         confidence,
@@ -255,9 +259,9 @@ export function registerBeliefsRoutes(
             changed_at: new Date(),
             trigger: "manual_creation",
             changed_by_session: null,
-            changed_by_turn: null,
-          },
-        ],
+            changed_by_turn: null
+          }
+        ]
       });
 
       const created = await col.findOne({ _id: beliefId, user_id: userId });
@@ -269,8 +273,8 @@ export function registerBeliefsRoutes(
         return reply.code(409).send({
           error: {
             message: `A belief with canonical name "${body.canonical_name.trim()}" already exists`,
-            type: "conflict",
-          },
+            type: "conflict"
+          }
         });
       }
       throw e;
@@ -288,15 +292,15 @@ export function registerBeliefsRoutes(
       if (text.length > 50_000) {
         return reply.code(400).send({
           error: {
-            message: "text exceeds maximum length of 50,000 characters",
-          },
+            message: "text exceeds maximum length of 50,000 characters"
+          }
         });
       }
 
       const cfg = await deps.runtimeStore.load();
       if (!cfg.default_model) {
         return reply.code(400).send({
-          error: { message: "no default model configured" },
+          error: { message: "no default model configured" }
         });
       }
 
@@ -304,11 +308,11 @@ export function registerBeliefsRoutes(
       try {
         adapter = deps.providers.detectFromModel(
           cfg.default_model,
-          cfg.default_provider,
+          cfg.default_provider
         );
       } catch {
         return reply.code(502).send({
-          error: { message: "no provider configured for import extraction" },
+          error: { message: "no provider configured for import extraction" }
         });
       }
 
@@ -322,7 +326,7 @@ export function registerBeliefsRoutes(
         isOpenClaw && agentId
           ? buildOpenClawExtractionSystemPrompt(agentId)
           : buildImportExtractionSystemPrompt(
-              scope?.length ? { declaredScope: scope } : {},
+              scope?.length ? { declaredScope: scope } : {}
             );
 
       try {
@@ -334,17 +338,17 @@ export function registerBeliefsRoutes(
               role: "user",
               content: buildImportExtractionPrompt(
                 text.trim(),
-                source_label ?? "manual import",
-              ),
-            },
+                source_label ?? "manual import"
+              )
+            }
           ],
-          { temperature: 0.1, max_tokens: 8000 },
+          { temperature: 0.1, max_tokens: 8000 }
         );
         extractionRaw = resp.content;
       } catch (err) {
         req.log.error({ err }, "import extraction LLM call failed");
         return reply.code(502).send({
-          error: { message: "extraction LLM call failed" },
+          error: { message: "extraction LLM call failed" }
         });
       }
 
@@ -353,41 +357,42 @@ export function registerBeliefsRoutes(
         return reply.code(200).send({
           ok: true,
           belief_count: 0,
-          parse_failed: true,
+          parse_failed: true
         });
       }
 
       try {
         const jobId = await deps.jobs.enqueueImport({
-          userId: deps.userId,
+          userId: req.tenureUserId,
           sourceLabel: source_label ?? "manual import",
           sidecarJson,
           sourceModel: cfg.default_model,
-          ...(scope?.length ? { scope } : {}),
+          ...(scope?.length ? { scope } : {})
         });
 
         deps.extractionWorker
           .processById(jobId)
           .catch((err) =>
-            req.log.warn({ err, jobId }, "inline import extraction failed"),
+            req.log.warn({ err, jobId }, "inline import extraction failed")
           );
 
         return { ok: true, job_id: jobId };
       } catch (err) {
         req.log.error({ err }, "import enqueue failed");
         return reply.code(500).send({
-          error: { message: "failed to enqueue import" },
+          error: { message: "failed to enqueue import" }
         });
       }
-    },
+    }
   );
 
   app.get<{ Params: { id: string } }>(
     "/v1/beliefs/:id/history",
     async (req, reply) => {
+      const userId = req.tenureUserId;
       const doc = await col.findOne(
         { _id: req.params.id, user_id: userId },
-        { projection: { change_log: 1, created_at: 1, _id: 1 } },
+        { projection: { change_log: 1, created_at: 1, _id: 1 } }
       );
       if (!doc) {
         return reply.code(404).send({ error: { message: "belief not found" } });
@@ -395,9 +400,9 @@ export function registerBeliefsRoutes(
       return {
         belief_id: doc._id,
         created_at: doc.created_at,
-        change_log: doc.change_log ?? [],
+        change_log: doc.change_log ?? []
       };
-    },
+    }
   );
 }
 
@@ -412,6 +417,6 @@ function redactForClient(b: WithId<Belief>) {
     confidence: b.confidence,
     pinned: b.pinned,
     scope: b.scope,
-    aliases: b.aliases,
+    aliases: b.aliases
   };
 }

@@ -13,7 +13,7 @@ import {
   tryInterceptInjectCommand,
   tryInterceptSessionCommand,
   detectScopeFromMessage,
-  fetchExistingUserScopes,
+  fetchExistingUserScopes
 } from "../helpers/scopeDetector.js";
 import type { Session } from "../session/manager.js";
 import { EMPTY_CONTEXT } from "../context/contextBuilder.js";
@@ -21,7 +21,7 @@ import { buildSystemPrompt } from "../context/systemPromptBuilder.js";
 import {
   AnthropicAdapter,
   type AnthropicCallRequest,
-  type AnthropicCallResponse,
+  type AnthropicCallResponse
 } from "../providers/anthropic.js";
 import { runSideEffects } from "./shared/sideEffects.js";
 import { extractLatestUserText } from "../helpers/content.js";
@@ -71,7 +71,7 @@ interface AnthropicResponse {
 }
 
 function extractSystemText(
-  system: string | AnthropicSystemBlock[] | undefined,
+  system: string | AnthropicSystemBlock[] | undefined
 ): string | undefined {
   if (!system) return undefined;
   if (typeof system === "string") return system.trim() || undefined;
@@ -85,7 +85,7 @@ function extractSystemText(
 }
 
 function mapStopReasonToAnthropic(
-  finishReason: string,
+  finishReason: string
 ): "end_turn" | "max_tokens" | "stop_sequence" | "tool_use" {
   switch (finishReason) {
     case "stop":
@@ -105,7 +105,7 @@ function buildAnthropicResponse(
   visibleText: string,
   finishReason: string,
   usage: { input_tokens: number; output_tokens: number },
-  toolCalls?: unknown[],
+  toolCalls?: unknown[]
 ): AnthropicResponse {
   const content: AnthropicOutputBlock[] = [];
 
@@ -129,7 +129,7 @@ function buildAnthropicResponse(
         type: "tool_use",
         id: tc.id,
         name: tc.function.name,
-        input,
+        input
       });
     }
   }
@@ -142,21 +142,21 @@ function buildAnthropicResponse(
     model,
     stop_reason: mapStopReasonToAnthropic(finishReason),
     stop_sequence: null,
-    usage,
+    usage
   };
 }
 
 function writeAnthropicSSE(
   raw: import("node:http").ServerResponse,
   eventType: string,
-  data: unknown,
+  data: unknown
 ): void {
   raw.write(`event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
 export function registerMessagesRoute(
   app: FastifyInstance,
-  deps: ChatDeps,
+  deps: ChatDeps
 ): void {
   app.post<{ Body: AnthropicRequestBody }>(
     "/v1/messages",
@@ -168,8 +168,8 @@ export function registerMessagesRoute(
           type: "error",
           error: {
             type: "invalid_request_error",
-            message: "messages is required",
-          },
+            message: "messages is required"
+          }
         });
       }
 
@@ -179,8 +179,8 @@ export function registerMessagesRoute(
           type: "error",
           error: {
             type: "invalid_request_error",
-            message: "model is required",
-          },
+            message: "model is required"
+          }
         });
       }
 
@@ -191,8 +191,8 @@ export function registerMessagesRoute(
           error: {
             type: "invalid_request_error",
             message: tierResult.reason,
-            supported_families: listSupportedFamilies(),
-          },
+            supported_families: listSupportedFamilies()
+          }
         });
       }
 
@@ -204,7 +204,7 @@ export function registerMessagesRoute(
       try {
         adapter = deps.providers.detectFromModel(
           requestedModel,
-          "anthropic",
+          "anthropic"
         ) as unknown as AnthropicAdapter;
       } catch (e) {
         if (e instanceof ProviderNotConfiguredError) {
@@ -212,19 +212,19 @@ export function registerMessagesRoute(
             type: "error",
             error: {
               type: "authentication_error",
-              message: `No credentials for provider detected from model "${requestedModel}"`,
-            },
+              message: `No credentials for provider detected from model "${requestedModel}"`
+            }
           });
         }
         throw e;
       }
 
-      const { userId } = deps;
+      const userId = req.tenureUserId;
       const requestId = randomUUID();
 
       const systemText = extractSystemText(body.system);
       const latestUserMessage = extractLatestUserText(
-        body.messages as Message[],
+        body.messages as Message[]
       );
 
       let sessionId: string;
@@ -251,7 +251,7 @@ export function registerMessagesRoute(
         if (needsBind) {
           const updated = await deps.sessions.update(sessionId, userId, {
             providerId: adapter.id,
-            model: requestedModel,
+            model: requestedModel
           });
           if (updated?.providerId && updated?.model) {
             session = updated as Session & {
@@ -273,18 +273,18 @@ export function registerMessagesRoute(
         injection_enabled: true,
         managed_history_token_cap: 120000,
         compaction_mode: "aggressive" as const,
-        scope_auto_detect: true,
+        scope_auto_detect: true
       }));
 
       const client = parseClient(
-        req.headers["user-agent"] as string | undefined,
+        req.headers["user-agent"] as string | undefined
       );
 
       const sessionIntercepted = await tryInterceptSessionCommand(
         latestUserMessage,
         userId,
         deps,
-        req.log,
+        req.log
       );
       if (sessionIntercepted) {
         sessionId = sessionIntercepted.sessionId;
@@ -296,7 +296,7 @@ export function registerMessagesRoute(
         sessionId,
         userId,
         deps,
-        req.log,
+        req.log
       );
       if (intercepted) {
         return reply.send(
@@ -305,8 +305,8 @@ export function registerMessagesRoute(
             requestedModel,
             intercepted.message,
             "stop",
-            { input_tokens: 0, output_tokens: 0 },
-          ),
+            { input_tokens: 0, output_tokens: 0 }
+          )
         );
       }
 
@@ -315,7 +315,7 @@ export function registerMessagesRoute(
         sessionId,
         userId,
         { sessions: deps.sessions, runtimeStore: deps.runtimeStore },
-        req.log,
+        req.log
       );
       if (extractIntercepted) {
         return reply.send(
@@ -324,8 +324,8 @@ export function registerMessagesRoute(
             requestedModel,
             extractIntercepted.message,
             "stop",
-            { input_tokens: 0, output_tokens: 0 },
-          ),
+            { input_tokens: 0, output_tokens: 0 }
+          )
         );
       }
 
@@ -334,7 +334,7 @@ export function registerMessagesRoute(
         sessionId,
         userId,
         { sessions: deps.sessions, runtimeStore: deps.runtimeStore },
-        req.log,
+        req.log
       );
       if (injectIntercepted) {
         return reply.send(
@@ -343,8 +343,8 @@ export function registerMessagesRoute(
             requestedModel,
             injectIntercepted.message,
             "stop",
-            { input_tokens: 0, output_tokens: 0 },
-          ),
+            { input_tokens: 0, output_tokens: 0 }
+          )
         );
       }
 
@@ -354,7 +354,7 @@ export function registerMessagesRoute(
           await deps.sessions
             .update(sessionId, userId, { agentId: ocAgentId })
             .catch((err) =>
-              req.log.warn({ err, sessionId }, "agent id persist failed"),
+              req.log.warn({ err, sessionId }, "agent id persist failed")
             );
         }
       }
@@ -369,19 +369,19 @@ export function registerMessagesRoute(
           try {
             const existingScopes = await fetchExistingUserScopes(
               userId,
-              deps.scopeDetector.db,
+              deps.scopeDetector.db
             );
             const detected = await detectScopeFromMessage(
               latestUserMessage,
               existingScopes,
               deps.scopeDetector,
-              req.log,
+              req.log
             );
             if (detected.length > 0) {
               await deps.sessions
                 .update(sessionId, userId, { activeScope: detected })
                 .catch((err) =>
-                  req.log.warn({ err, sessionId }, "scope persist failed"),
+                  req.log.warn({ err, sessionId }, "scope persist failed")
                 );
               scope = detected;
             }
@@ -441,7 +441,7 @@ export function registerMessagesRoute(
             : null,
           languageScope: headerLanguage
             ? `domain:code/${headerLanguage.toLowerCase()}`
-            : null,
+            : null
         };
         if (!ideScope.projectScope && deps.workspaceState) {
           ideScope.projectScope =
@@ -462,12 +462,12 @@ export function registerMessagesRoute(
           activeScope: scope[0],
           scopeAutoDetect: cfg.scope_auto_detect !== false,
           extractionMode,
-          ideScope,
+          ideScope
         });
       } catch (err) {
         req.log.error(
           { err },
-          "system prompt build failed — falling back to raw",
+          "system prompt build failed — falling back to raw"
         );
         systemPrompt = systemText ?? "";
       }
@@ -483,10 +483,10 @@ export function registerMessagesRoute(
             scope,
             agentId,
             injected: injectionEnabled,
-            beliefCtx,
+            beliefCtx
           })
           .catch((err) =>
-            req.log.warn({ err, requestId }, "injection audit write failed"),
+            req.log.warn({ err, requestId }, "injection audit write failed")
           );
       }
 
@@ -507,8 +507,8 @@ export function registerMessagesRoute(
         ...(temperature !== undefined && { temperature }),
         ...(max_tokens !== undefined && { max_tokens }),
         ...(Object.keys(extraFields).length > 0 && {
-          passThrough: extraFields,
-        }),
+          passThrough: extraFields
+        })
       };
 
       const rawContent =
@@ -540,9 +540,8 @@ export function registerMessagesRoute(
             extractionMode,
             ideProjectScope: ideScope?.projectScope ?? null,
             ideLanguageScope: ideScope?.languageScope ?? null,
-            ideActiveFile:
-              deps.workspaceState?.get(userId)?.active_file ?? null,
-          },
+            ideActiveFile: deps.workspaceState?.get(userId)?.active_file ?? null
+          }
         );
       }
 
@@ -558,23 +557,24 @@ export function registerMessagesRoute(
             message: reason.slice(0, 500),
             error: e instanceof Error ? e : new Error(reason),
             user_id: userId,
+            actor_id: userId,
             session_id: sessionId,
             request_id: requestId,
             provider: adapter.id,
             model: requestedModel,
             user_impacted: true,
-            passthrough_succeeded: false,
+            passthrough_succeeded: false
           })
           .catch(() => {});
 
         return reply.code(502).send({
           type: "error",
-          error: { type: "api_error", message: reason },
+          error: { type: "api_error", message: reason }
         });
       }
 
       const { visible, sidecarRaw, parseStatus } = splitSidecar(
-        providerResp.content ?? "",
+        providerResp.content ?? ""
       );
 
       if (tierWarning) reply.header("x-tenure-warning", tierWarning);
@@ -587,10 +587,10 @@ export function registerMessagesRoute(
           providerResp.finish_reason,
           {
             input_tokens: providerResp.usage.input_tokens,
-            output_tokens: providerResp.usage.output_tokens,
+            output_tokens: providerResp.usage.output_tokens
           },
-          providerResp.toolCalls,
-        ),
+          providerResp.toolCalls
+        )
       );
 
       runSideEffects({
@@ -614,9 +614,9 @@ export function registerMessagesRoute(
         extractionMode,
         ideProjectScope: ideScope?.projectScope ?? null,
         ideLanguageScope: ideScope?.languageScope ?? null,
-        ideActiveFile: deps.workspaceState?.get(userId)?.active_file ?? null,
+        ideActiveFile: deps.workspaceState?.get(userId)?.active_file ?? null
       });
-    },
+    }
   );
 }
 
@@ -647,7 +647,7 @@ async function handleAnthropicStream(
   adapter: AnthropicAdapter,
   normalizedReq: Parameters<AnthropicAdapter["call"]>[0],
   systemPrompt: SystemPrompt,
-  ctx: StreamingCtx,
+  ctx: StreamingCtx
 ): Promise<void> {
   reply.hijack();
   const raw = reply.raw;
@@ -657,7 +657,7 @@ async function handleAnthropicStream(
     "cache-control": "no-cache",
     connection: "keep-alive",
     "transfer-encoding": "chunked",
-    ...(ctx.tierWarning ? { "x-tenure-warning": ctx.tierWarning } : {}),
+    ...(ctx.tierWarning ? { "x-tenure-warning": ctx.tierWarning } : {})
   });
 
   const messageId = `msg_${ctx.requestId}`;
@@ -673,8 +673,8 @@ async function handleAnthropicStream(
       model: ctx.requestedModel,
       stop_reason: null,
       stop_sequence: null,
-      usage: { input_tokens: 0, output_tokens: 0 },
-    },
+      usage: { input_tokens: 0, output_tokens: 0 }
+    }
   });
 
   writeAnthropicSSE(raw, "ping", { type: "ping" });
@@ -707,7 +707,7 @@ async function handleAnthropicStream(
   try {
     for await (const event of adapter.callStream(
       { ...normalizedReq, abortSignal: abortController.signal },
-      systemPrompt,
+      systemPrompt
     )) {
       if (abortController.signal.aborted) break;
 
@@ -723,7 +723,7 @@ async function handleAnthropicStream(
           writeAnthropicSSE(raw, "content_block_start", {
             type: "content_block_start",
             index: currentTextBlockIndex,
-            content_block: { type: "text", text: "" },
+            content_block: { type: "text", text: "" }
           });
         }
 
@@ -734,7 +734,7 @@ async function handleAnthropicStream(
             writeAnthropicSSE(raw, "content_block_delta", {
               type: "content_block_delta",
               index: currentTextBlockIndex,
-              delta: { type: "text_delta", text: remaining },
+              delta: { type: "text_delta", text: remaining }
             });
           }
           flushedIdx = markerIdx;
@@ -747,8 +747,8 @@ async function handleAnthropicStream(
               index: currentTextBlockIndex,
               delta: {
                 type: "text_delta",
-                text: fullContent.slice(flushedIdx, safeEnd),
-              },
+                text: fullContent.slice(flushedIdx, safeEnd)
+              }
             });
             flushedIdx = safeEnd;
           }
@@ -759,7 +759,7 @@ async function handleAnthropicStream(
         if (activeBlockIndex !== -1) {
           writeAnthropicSSE(raw, "content_block_stop", {
             type: "content_block_stop",
-            index: activeBlockIndex,
+            index: activeBlockIndex
           });
         }
         currentTextBlockIndex = nextBlockIndex;
@@ -768,7 +768,7 @@ async function handleAnthropicStream(
         writeAnthropicSSE(raw, "content_block_start", {
           type: "content_block_start",
           index: currentTextBlockIndex,
-          content_block: { type: "text", text: "" },
+          content_block: { type: "text", text: "" }
         });
       }
 
@@ -782,7 +782,7 @@ async function handleAnthropicStream(
           if (activeBlockIndex !== -1) {
             writeAnthropicSSE(raw, "content_block_stop", {
               type: "content_block_stop",
-              index: activeBlockIndex,
+              index: activeBlockIndex
             });
           }
 
@@ -797,8 +797,8 @@ async function handleAnthropicStream(
               type: "tool_use",
               id: event.toolCallId ?? `toolu_${randomUUID()}`,
               name: event.toolCallName ?? "",
-              input: {},
-            },
+              input: {}
+            }
           });
         }
 
@@ -812,8 +812,8 @@ async function handleAnthropicStream(
             index: currentToolBlockIndex,
             delta: {
               type: "input_json_delta",
-              partial_json: event.toolCallArguments,
-            },
+              partial_json: event.toolCallArguments
+            }
           });
         }
       }
@@ -837,18 +837,19 @@ async function handleAnthropicStream(
           message: (err as Error).message.slice(0, 500),
           error: err instanceof Error ? err : new Error((err as Error).message),
           user_id: ctx.userId,
+          actor_id: ctx.userId,
           session_id: ctx.sessionId,
           request_id: ctx.requestId,
           provider: ctx.adapter.id,
           model: ctx.requestedModel,
           user_impacted: true,
-          passthrough_succeeded: false,
+          passthrough_succeeded: false
         })
         .catch(() => {});
 
       writeAnthropicSSE(raw, "error", {
         type: "error",
-        error: { type: "api_error", message: (err as Error).message },
+        error: { type: "api_error", message: (err as Error).message }
       });
     }
 
@@ -869,22 +870,22 @@ async function handleAnthropicStream(
       index: currentTextBlockIndex,
       delta: {
         type: "text_delta",
-        text: fullContent.slice(flushedIdx),
-      },
+        text: fullContent.slice(flushedIdx)
+      }
     });
   }
 
   if (activeBlockIndex !== -1) {
     writeAnthropicSSE(raw, "content_block_stop", {
       type: "content_block_stop",
-      index: activeBlockIndex,
+      index: activeBlockIndex
     });
   }
 
   writeAnthropicSSE(raw, "message_delta", {
     type: "message_delta",
     delta: { stop_reason: finishReason, stop_sequence: null },
-    usage: { output_tokens: usage.output_tokens },
+    usage: { output_tokens: usage.output_tokens }
   });
 
   writeAnthropicSSE(raw, "message_stop", { type: "message_stop" });
@@ -914,6 +915,6 @@ async function handleAnthropicStream(
     extractionMode: ctx.extractionMode,
     ideProjectScope: ctx.ideProjectScope,
     ideLanguageScope: ctx.ideLanguageScope,
-    ideActiveFile: ctx.ideActiveFile,
+    ideActiveFile: ctx.ideActiveFile
   });
 }

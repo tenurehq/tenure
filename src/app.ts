@@ -1,4 +1,4 @@
-import { Db, MongoClient } from "mongodb";
+import { Db, MongoClient, type MongoClientOptions } from "mongodb";
 import { getCollections } from "./db/collections.js";
 import { ensureIndexes, ensureSearchIndexes } from "./db/indexes.js";
 import { SessionManager } from "./session/manager.js";
@@ -21,7 +21,7 @@ import { ExtractionWorker } from "./extraction/worker.js";
 import { PersonaSummaryService } from "./context/personaSummary.js";
 import {
   buildAutoEncryptionOptions,
-  loadOrCreateLocalMasterKey,
+  loadOrCreateLocalMasterKey
 } from "./config/beliefEncryption.js";
 import { getBeliefMasterKeyPath } from "./config/beliefEncryptionMasterKey.js";
 import { initBeliefEncryption } from "./config/beliefEncryption.js";
@@ -29,10 +29,16 @@ import { randomBytes } from "node:crypto";
 import { WorkspaceStateCache } from "./workspace/stateCache.js";
 import type { InternalLLMCaller } from "./providers/types.js";
 
+const mongoTlsOptions: MongoClientOptions = {};
+if (process.env.MONGODB_TLS_CA_FILE) {
+  mongoTlsOptions.tlsCAFile = process.env.MONGODB_TLS_CA_FILE;
+}
+
 async function verifyEncryptionActive(
   db: Db,
   mongoUri: string,
   mongoDbName: string,
+  tlsOptions: MongoClientOptions = {}
 ): Promise<void> {
   const testCol = db.collection("beliefs");
   const testId = randomBytes(8).toString("hex");
@@ -44,7 +50,7 @@ async function verifyEncryptionActive(
       content: testContent,
       user_id: "__encryption_verify__",
       canonical_name: `__verify__${testId}`,
-      created_at: new Date(),
+      created_at: new Date()
     });
 
     const decrypted = await testCol.findOne({ _id: testId as unknown as any });
@@ -52,7 +58,7 @@ async function verifyEncryptionActive(
       throw new Error("Encrypted read did not return expected plaintext");
     }
 
-    const rawClient = new MongoClient(mongoUri);
+    const rawClient = new MongoClient(mongoUri, tlsOptions);
     await rawClient.connect();
     try {
       const rawDoc = await rawClient
@@ -65,7 +71,7 @@ async function verifyEncryptionActive(
       }
       if (typeof rawDoc?.content === "string") {
         throw new Error(
-          "CSFLE MISCONFIGURED: content is a string, not Binary...",
+          "CSFLE MISCONFIGURED: content is a string, not Binary..."
         );
       }
     } finally {
@@ -87,7 +93,7 @@ export async function buildApp(config: BootstrapConfig) {
   const { dataKeyId } = await initBeliefEncryption({
     masterKey: beliefMasterKey,
     mongoClient: bootstrapClient,
-    db: bootstrapClient.db(config.mongodb_db),
+    db: bootstrapClient.db(config.mongodb_db)
   });
 
   await bootstrapClient.close();
@@ -97,19 +103,27 @@ export async function buildApp(config: BootstrapConfig) {
 
   const client = new MongoClient(config.mongodb_uri, {
     autoEncryption,
+    ...mongoTlsOptions
   });
   await client.connect();
   console.log("MongoDB connected (CSFLE enabled)");
 
-  const plainClient = new MongoClient(config.mongodb_uri);
+  const plainClient = new MongoClient(config.mongodb_uri, {
+    ...mongoTlsOptions
+  });
   await plainClient.connect();
 
   const db = client.db(config.mongodb_db);
   const plainDb = plainClient.db(config.mongodb_db);
 
   console.log("Verifying CSFLE is active...");
-  await verifyEncryptionActive(db, config.mongodb_uri, config.mongodb_db);
-  console.log("CSFLE verified — belief content is encrypted at rest");
+  await verifyEncryptionActive(
+    db,
+    config.mongodb_uri,
+    config.mongodb_db,
+    mongoTlsOptions
+  );
+  console.log("CSFLE verified - belief content is encrypted at rest");
 
   const cols = getCollections(db, plainDb);
   await ensureIndexes(cols);
@@ -117,8 +131,15 @@ export async function buildApp(config: BootstrapConfig) {
 
   console.log("Loading app config...");
   const appConfig = await loadAppConfig(db, {
-    onFirstRun: (token, path) =>
-      writeTokenAndPrintBanner(token, path, config.port),
+    onFirstRun: (token, path) => {
+      if (process.env.TENURE_MODE === "teams") {
+        console.log(
+          "Teams mode: TENURE_API_TOKEN loaded from secret; skipping local token file write"
+        );
+        return;
+      }
+      writeTokenAndPrintBanner(token, path, config.port);
+    }
   });
   console.log("App config loaded");
 
@@ -140,8 +161,8 @@ export async function buildApp(config: BootstrapConfig) {
       new OpenAIAdapter(
         runtimeConfig.openai_api_key,
         runtimeConfig.openai_base_url ?? undefined,
-        runtimeConfig.openai_endpoint_flavor,
-      ),
+        runtimeConfig.openai_endpoint_flavor
+      )
     );
   }
   if (runtimeConfig.anthropic_api_key) {
@@ -151,7 +172,7 @@ export async function buildApp(config: BootstrapConfig) {
   const resolveAdapter = (): InternalLLMCaller => {
     if (providers.listRegistered().includes("anthropic")) {
       const a = providers.resolve(
-        "anthropic",
+        "anthropic"
       ) as unknown as import("./providers/anthropic.js").AnthropicAdapter;
       return { call: a.callPositional.bind(a) };
     }
@@ -164,7 +185,7 @@ export async function buildApp(config: BootstrapConfig) {
     beliefs: cols.beliefs,
     cache: persona,
     adapter: resolveAdapter,
-    modelId: runtimeConfig.default_model ?? "",
+    modelId: runtimeConfig.default_model ?? ""
   });
 
   const compactionRunner = new BeliefCompactionRunner(
@@ -174,13 +195,13 @@ export async function buildApp(config: BootstrapConfig) {
     resolveAdapter,
     runtimeConfig.default_model,
     persona,
-    personaSummary,
+    personaSummary
   );
 
   const extractionWorker = new ExtractionWorker({
     db,
     beliefs: cols.beliefs,
-    personaSummary,
+    personaSummary
   });
 
   const server = await buildServer({
@@ -199,7 +220,7 @@ export async function buildApp(config: BootstrapConfig) {
     compactionRunner,
     extractionWorker,
     personaSummary,
-    workspaceState,
+    workspaceState
   });
 
   return {
@@ -208,6 +229,6 @@ export async function buildApp(config: BootstrapConfig) {
       await server.close();
       await client.close();
       await plainClient.close();
-    },
+    }
   };
 }

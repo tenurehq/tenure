@@ -14,7 +14,7 @@ import type { ErrorLogger } from "./errors/logger.js";
 import type { Collections } from "./db/collections.js";
 import {
   registerOnboardingRoutes,
-  type OnboardingDeps,
+  type OnboardingDeps
 } from "./routes/onboarding.js";
 import { registerBeliefsUiRoute } from "./routes/beliefs-ui.js";
 import { registerAdminUiRoute } from "./routes/admin-ui.js";
@@ -34,7 +34,7 @@ import { BeliefWriter } from "./extraction/beliefWriter.js";
 import type { WorkspaceStateCache } from "./workspace/stateCache.js";
 import {
   registerWorkspaceRoutes,
-  type WorkspaceDeps,
+  type WorkspaceDeps
 } from "./routes/workspace.js";
 import fastifyWebsocket from "@fastify/websocket";
 import { registerBeliefsWsRoute } from "./routes/beliefs-ws.js";
@@ -42,9 +42,31 @@ import { startBeliefChangeStream } from "./db/beliefChangeStream.js";
 import { InjectionAuditLogger } from "./audit/injectionAuditLogger.js";
 import { registerAuditRoutes, type AuditDeps } from "./routes/audit.js";
 import { registerAuditUiRoute } from "./routes/audit-ui.js";
+import { createHash, randomBytes } from "node:crypto";
+import { registerScimRoutes, type ScimDeps } from "./routes/scim.js";
+import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { registerAdminSetupRoute } from "./routes/admin-setup.js";
+import helmet from "@fastify/helmet";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+const jobsEnabled = process.env.TENURE_DISABLE_JOBS !== "true";
+const proxyAuthHeader = process.env.OIDC_PROXY_HEADER?.toLowerCase() || "";
+
+declare module "fastify" {
+  interface FastifyRequest {
+    tenureUserId: string;
+    tenureAuthMethod: "proxy" | "root" | "pat";
+  }
+}
+
+const patAllowedPaths = new Set([
+  "/v1/chat/completions",
+  "/v1/messages",
+  "/v1/models",
+  "/v1/ws/beliefs"
+]);
 
 const SAFE_ERROR_PATTERNS = [
   "authentication failed",
@@ -52,7 +74,7 @@ const SAFE_ERROR_PATTERNS = [
   "rate limit",
   "no model specified",
   "no provider configured",
-  "not configured",
+  "not configured"
 ];
 
 function isSafeToForward(message: string): boolean {
@@ -80,25 +102,132 @@ export interface ServerDeps {
 }
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
+  const tracer = trace.getTracer("tenure");
+
   const app = Fastify({ logger: { level: "info" } });
+
+  app.addHook("onRequest", async (_req, reply) => {
+    (reply.raw as any).cspNonce = randomBytes(16).toString("base64");
+  });
+
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: [
+          "'self'",
+          (_req, res) => `'nonce-${(res as any).cspNonce}'`
+        ],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        connectSrc: ["'self'", "wss:"],
+        imgSrc: ["'self'", "data:"],
+        frameAncestors: ["'none'"]
+      }
+    },
+    crossOriginEmbedderPolicy: false
+  });
+
   let liveToken = deps.apiToken;
 
   app.register(fastifyStatic, { root: path.join(__dirname, "static") });
 
   app.addHook("onRequest", async (req, reply) => {
-    const requiresAuth =
-      req.url.startsWith("/v1/") ||
-      (req.url.startsWith("/admin/") && req.url !== "/admin/");
+    const pathOnly = req.url.split("?")[0];
 
-    if (requiresAuth) {
-      const auth = req.headers.authorization;
-      if (auth !== `Bearer ${liveToken}`) {
-        return reply.code(401).send({ error: { message: "unauthorized" } });
+    if (proxyAuthHeader) {
+      const userId = req.headers[proxyAuthHeader] as string | undefined;
+      if (userId) {
+        req.tenureUserId = userId;
+        req.tenureAuthMethod = "proxy";
+
+        const span = trace.getActiveSpan();
+        if (span) span.setAttribute("user.id", userId);
+
+        return;
       }
     }
+
+    const requiresAuth =
+      pathOnly.startsWith("/v1/") ||
+      (pathOnly.startsWith("/admin/") && pathOnly !== "/admin/");
+
+    if (!requiresAuth) return;
+
+    if (req.tenureAuthMethod === "proxy") return;
+
+    const auth = req.headers.authorization ?? "";
+    const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+    if (!bearer) {
+      return reply.code(401).send({ error: { message: "unauthorized" } });
+    }
+
+    if (bearer === liveToken) {
+      if (process.env.TENURE_MODE === "teams") {
+        const isBootstrapPath =
+          pathOnly === "/admin/config" ||
+          pathOnly === "/admin/providers" ||
+          pathOnly === "/admin/setup" ||
+          pathOnly.startsWith("/admin/providers/") ||
+          pathOnly === "/v1/models" ||
+          pathOnly === "/v1/onboarding/questions" ||
+          pathOnly === "/v1/onboarding/skip" ||
+          pathOnly === "/v1/onboarding/validate-model" ||
+          pathOnly === "/v1/onboarding/complete" ||
+          pathOnly === "/v1/onboarding/commit" ||
+          pathOnly.startsWith("/v1/onboarding/probe-models/");
+
+        if (!isBootstrapPath) {
+          return reply.code(403).send({
+            error: {
+              message:
+                "Root token cannot access this endpoint in team mode. Use SSO."
+            }
+          });
+        }
+      }
+
+      req.tenureUserId = deps.userId;
+      req.tenureAuthMethod = "root";
+
+      const span = trace.getActiveSpan();
+      if (span) span.setAttribute("user.id", deps.userId);
+
+      return;
+    }
+
+    const hash = createHash("sha256").update(bearer).digest("hex");
+    const pat = await deps.cols.api_tokens.findOne({
+      token_hash: hash,
+      revoked_at: null
+    });
+
+    if (pat) {
+      if (!patAllowedPaths.has(pathOnly)) {
+        return reply.code(403).send({ error: { message: "forbidden" } });
+      }
+      req.tenureUserId = pat.user_id;
+      req.tenureAuthMethod = "pat";
+
+      const span = trace.getActiveSpan();
+      if (span) span.setAttribute("user.id", pat.user_id);
+
+      deps.cols.api_tokens
+        .updateOne({ _id: pat._id }, { $set: { last_used_at: new Date() } })
+        .catch(() => {});
+      return;
+    }
+
+    return reply.code(401).send({ error: { message: "unauthorized" } });
   });
 
   app.setErrorHandler((error, req, reply) => {
+    const span = trace.getActiveSpan();
+    if (span) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      span.recordException(err);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: err.message });
+    }
+
     req.log.error({ err: error, method: req.method, url: req.url });
 
     const fastifyError = error as { statusCode?: number; message: string };
@@ -118,7 +247,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
           : "provider_call",
         message: fastifyError.message,
         error: error instanceof Error ? error : new Error(fastifyError.message),
-        user_id: deps.userId,
+        user_id: req.tenureUserId ?? deps.userId,
+        actor_id: req.tenureUserId ?? deps.userId
       })
       .catch(() => {});
 
@@ -127,7 +257,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const statusCode = fastifyError.statusCode ?? 500;
     if (statusCode < 500) {
       return reply.status(statusCode).send({
-        error: { message: fastifyError.message, type: "client_error" },
+        error: { message: fastifyError.message, type: "client_error" }
       });
     }
 
@@ -136,7 +266,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       : "internal server error";
 
     return reply.status(500).send({
-      error: { message: clientMessage, type: "internal_error" },
+      error: { message: clientMessage, type: "internal_error" }
     });
   });
 
@@ -159,12 +289,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     context: deps.context,
     providers: deps.providers,
     jobs: deps.jobs,
-    userId: deps.userId,
     extractionWorker: deps.extractionWorker,
     runtimeStore: deps.runtimeStore,
     errorLogger: deps.errorLogger,
     workspaceState: deps.workspaceState,
-    injectionAudit: new InjectionAuditLogger(deps.cols.injection_audit),
+    injectionAudit: new InjectionAuditLogger(deps.cols.injection_audit)
   };
   registerChatRoute(app, chatDeps);
 
@@ -175,19 +304,17 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     updateToken: (t: string) => {
       liveToken = t;
     },
-    compactionRunner: deps.compactionRunner,
-    userId: deps.userId,
+    compactionRunner: deps.compactionRunner
   };
   registerAdminRoutes(app, adminDeps);
 
   const beliefsDeps: BeliefsDeps = {
     beliefs: deps.cols.beliefs,
-    userId: deps.userId,
     jobs: deps.jobs,
     extractionWorker: deps.extractionWorker,
     runtimeStore: deps.runtimeStore,
     providers: deps.providers,
-    beliefWriter: new BeliefWriter(deps.cols.beliefs),
+    beliefWriter: new BeliefWriter(deps.cols.beliefs)
   };
   registerBeliefsRoutes(app, beliefsDeps);
 
@@ -196,26 +323,24 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     jobs: deps.jobs,
     providers: deps.providers,
     extractionWorker: deps.extractionWorker,
-    userId: deps.userId,
-    personaSummary: deps.personaSummary,
+    personaSummary: deps.personaSummary
   };
   registerOnboardingRoutes(app, onboardingDeps, deps.cols);
 
   registerBeliefsUiRoute(app);
   registerAdminUiRoute(app);
+  registerAdminSetupRoute(app, { runtimeStore: deps.runtimeStore });
   registerAuditUiRoute(app);
 
   const backupDeps: BackupDeps = {
     db: deps.db,
-    runtimeStore: deps.runtimeStore,
-    userId: deps.userId,
+    runtimeStore: deps.runtimeStore
   };
   registerBackupRoutes(app, backupDeps);
 
   const personaDeps: PersonaDeps = {
-    userId: deps.userId,
     persona: deps.persona,
-    personaSummary: deps.personaSummary,
+    personaSummary: deps.personaSummary
   };
 
   registerPersonaRoutes(app, personaDeps);
@@ -223,103 +348,77 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   registerCommandsRoute(app);
 
   const workspaceDeps: WorkspaceDeps = {
-    userId: deps.userId,
-    workspaceState: deps.workspaceState,
+    workspaceState: deps.workspaceState
   };
   registerWorkspaceRoutes(app, workspaceDeps);
 
   const auditDeps: AuditDeps = {
-    injectionAudit: deps.cols.injection_audit,
-    userId: deps.userId,
+    injectionAudit: deps.cols.injection_audit
   };
   registerAuditRoutes(app, auditDeps);
+
+  const scimDeps: ScimDeps = { db: deps.db, cols: deps.cols };
+  registerScimRoutes(app, scimDeps);
 
   await app.register(fastifyWebsocket);
 
   registerBeliefsWsRoute(app, {
     beliefs: deps.cols.beliefs,
     fileMeta: deps.cols.file_meta,
-    userId: deps.userId,
     beliefWriter: new BeliefWriter(deps.cols.beliefs),
     workspaceState: deps.workspaceState,
-    runtimeStore: deps.runtimeStore,
+    runtimeStore: deps.runtimeStore
   });
 
   await app.register(fastifySchedule);
 
-  app.addHook("onReady", async () => {
-    const task = new AsyncTask(
-      "belief-compaction",
-      () => deps.compactionRunner.run(deps.userId),
-      (err: Error) => {
-        deps.errorLogger
-          .log({
-            severity: "warning",
-            stage: "belief_extraction",
-            message: err.message,
-            error: err,
-            user_id: deps.userId,
-          })
-          .catch(() => {});
-      },
-    );
-
-    app.scheduler.addSimpleIntervalJob(
-      new SimpleIntervalJob({ minutes: 30, runImmediately: false }, task, {
-        id: "belief-compaction",
-        preventOverrun: true,
-      }),
-    );
-  });
-
-  app.addHook("onReady", async () => {
-    let consecutiveEmpty = 0;
-    const BASE_INTERVAL_MS = 60_000;
-    const MAX_INTERVAL_MS = 5 * 60_000;
-    const BACKOFF_AFTER = 3;
-
-    let currentJob: SimpleIntervalJob | null = null;
-
-    const createSweepTask = () =>
-      new AsyncTask(
-        "extraction-sweep",
+  if (jobsEnabled) {
+    app.addHook("onReady", async () => {
+      const task = new AsyncTask(
+        "belief-compaction",
         async () => {
-          const processed = await deps.extractionWorker.sweep(20);
+          await tracer.startActiveSpan("belief-compaction", async (span) => {
+            try {
+              const activeUserIds = await deps.db
+                .collection<{ userId: string }>("sessions")
+                .distinct("userId", {
+                  updated_at: {
+                    $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+                  }
+                });
 
-          if (processed === 0) {
-            consecutiveEmpty++;
+              const targets = activeUserIds.length
+                ? activeUserIds
+                : [deps.userId];
 
-            if (consecutiveEmpty >= BACKOFF_AFTER) {
-              const newInterval = Math.min(
-                BASE_INTERVAL_MS *
-                  Math.pow(2, consecutiveEmpty - BACKOFF_AFTER),
-                MAX_INTERVAL_MS,
-              );
-
-              if (currentJob) {
-                app.scheduler.removeById("extraction-sweep");
+              for (const uid of targets) {
+                try {
+                  await deps.compactionRunner.run(uid);
+                } catch (err) {
+                  await deps.errorLogger
+                    .log({
+                      severity: "warning",
+                      stage: "belief_extraction",
+                      message: (err as Error).message,
+                      error: err as Error,
+                      user_id: uid,
+                      actor_id: deps.userId
+                    })
+                    .catch(() => {});
+                }
               }
-              currentJob = new SimpleIntervalJob(
-                { milliseconds: newInterval, runImmediately: false },
-                createSweepTask(),
-                { id: "extraction-sweep", preventOverrun: true },
-              );
-              app.scheduler.addSimpleIntervalJob(currentJob);
+            } catch (err) {
+              const e = err instanceof Error ? err : new Error(String(err));
+              span.recordException(e);
+              span.setStatus({
+                code: SpanStatusCode.ERROR,
+                message: e.message
+              });
+              throw e;
+            } finally {
+              span.end();
             }
-          } else {
-            if (consecutiveEmpty >= BACKOFF_AFTER) {
-              if (currentJob) {
-                app.scheduler.removeById("extraction-sweep");
-              }
-              currentJob = new SimpleIntervalJob(
-                { milliseconds: BASE_INTERVAL_MS, runImmediately: false },
-                createSweepTask(),
-                { id: "extraction-sweep", preventOverrun: true },
-              );
-              app.scheduler.addSimpleIntervalJob(currentJob);
-            }
-            consecutiveEmpty = 0;
-          }
+          });
         },
         (err: Error) => {
           deps.errorLogger
@@ -329,18 +428,103 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
               message: err.message,
               error: err,
               user_id: deps.userId,
+              actor_id: deps.userId
             })
             .catch(() => {});
-        },
+        }
       );
 
-    currentJob = new SimpleIntervalJob(
-      { milliseconds: BASE_INTERVAL_MS, runImmediately: true },
-      createSweepTask(),
-      { id: "extraction-sweep", preventOverrun: true },
-    );
-    app.scheduler.addSimpleIntervalJob(currentJob);
-  });
+      app.scheduler.addSimpleIntervalJob(
+        new SimpleIntervalJob({ minutes: 30, runImmediately: false }, task, {
+          id: "belief-compaction",
+          preventOverrun: true
+        })
+      );
+    });
+  }
+
+  if (jobsEnabled) {
+    app.addHook("onReady", async () => {
+      let consecutiveEmpty = 0;
+      const BASE_INTERVAL_MS = 60_000;
+      const MAX_INTERVAL_MS = 5 * 60_000;
+      const BACKOFF_AFTER = 3;
+
+      let currentJob: SimpleIntervalJob | null = null;
+
+      const createSweepTask = () =>
+        new AsyncTask(
+          "extraction-sweep",
+          async () => {
+            await tracer.startActiveSpan("extraction-sweep", async (span) => {
+              try {
+                const processed = await deps.extractionWorker.sweep(20);
+
+                if (processed === 0) {
+                  consecutiveEmpty++;
+                  if (consecutiveEmpty >= BACKOFF_AFTER) {
+                    const newInterval = Math.min(
+                      BASE_INTERVAL_MS *
+                        Math.pow(2, consecutiveEmpty - BACKOFF_AFTER),
+                      MAX_INTERVAL_MS
+                    );
+                    if (currentJob)
+                      app.scheduler.removeById("extraction-sweep");
+                    currentJob = new SimpleIntervalJob(
+                      { milliseconds: newInterval, runImmediately: false },
+                      createSweepTask(),
+                      { id: "extraction-sweep", preventOverrun: true }
+                    );
+                    app.scheduler.addSimpleIntervalJob(currentJob);
+                  }
+                } else {
+                  if (consecutiveEmpty >= BACKOFF_AFTER) {
+                    if (currentJob)
+                      app.scheduler.removeById("extraction-sweep");
+                    currentJob = new SimpleIntervalJob(
+                      { milliseconds: BASE_INTERVAL_MS, runImmediately: false },
+                      createSweepTask(),
+                      { id: "extraction-sweep", preventOverrun: true }
+                    );
+                    app.scheduler.addSimpleIntervalJob(currentJob);
+                  }
+                  consecutiveEmpty = 0;
+                }
+              } catch (err) {
+                const e = err instanceof Error ? err : new Error(String(err));
+                span.recordException(e);
+                span.setStatus({
+                  code: SpanStatusCode.ERROR,
+                  message: e.message
+                });
+                throw e;
+              } finally {
+                span.end();
+              }
+            });
+          },
+          (err: Error) => {
+            deps.errorLogger
+              .log({
+                severity: "warning",
+                stage: "belief_extraction",
+                message: err.message,
+                error: err,
+                user_id: deps.userId,
+                actor_id: deps.userId
+              })
+              .catch(() => {});
+          }
+        );
+
+      currentJob = new SimpleIntervalJob(
+        { milliseconds: BASE_INTERVAL_MS, runImmediately: true },
+        createSweepTask(),
+        { id: "extraction-sweep", preventOverrun: true }
+      );
+      app.scheduler.addSimpleIntervalJob(currentJob);
+    });
+  }
 
   app.get("/", async (_req, reply) => {
     const cfg = await deps.runtimeStore.load();
@@ -356,11 +540,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     .catch(() => false);
 
   const stopChangeStream = isReplicaSet
-    ? startBeliefChangeStream(
-        deps.cols.beliefs_plain,
-        deps.cols.beliefs,
-        deps.userId,
-      )
+    ? startBeliefChangeStream(deps.cols.beliefs_plain, deps.cols.beliefs)
     : null;
 
   app.addHook("onClose", (_instance, done) => {

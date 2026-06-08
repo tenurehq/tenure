@@ -8,6 +8,7 @@ import type { ExtractionWorkerLike } from "../extraction/worker.js";
 import { extractJsonBlock } from "../extraction/extractJson.js";
 import type { Collections, OnboardingDraftDoc } from "../db/collections.js";
 import type { Collection } from "mongodb";
+import { requireRootToken } from "./setup-guard.js";
 
 export interface OnboardingDeps {
   providers: ProviderRegistry;
@@ -16,10 +17,9 @@ export interface OnboardingDeps {
   extractionWorker: ExtractionWorkerLike;
   personaSummary: {
     ensureFresh(
-      userId: string,
+      userId: string
     ): Promise<"fresh" | "regenerated" | "stale-served">;
   };
-  userId: string;
 }
 
 export interface OnboardingQuestion {
@@ -33,65 +33,65 @@ const SCOPE_BY_CATEGORY: Record<string, string[]> = {
   working_style: ["user:universal"],
   output_preferences: ["user:universal"],
   expertise_calibration: ["user:universal"],
-  project_seed: ["user:universal"],
+  project_seed: ["user:universal"]
 };
 
 export const ONBOARDING_QUESTIONS: readonly OnboardingQuestion[] = [
   {
     id: "response_length",
     category: "communication_style",
-    text: "When you get a response that's longer than you expected, do you read it or skim it?",
+    text: "When you get a response that's longer than you expected, do you read it or skim it?"
   },
   {
     id: "ai_corrections",
     category: "communication_style",
-    text: "Is there anything an AI does by default that you find yourself correcting often?",
+    text: "Is there anything an AI does by default that you find yourself correcting often?"
   },
   {
     id: "expertise_deep",
     category: "expertise_calibration",
-    text: "What topics do you work with deeply enough that you don't need things explained from first principles?",
+    text: "What topics do you work with deeply enough that you don't need things explained from first principles?"
   },
   {
     id: "expertise_learning",
     category: "expertise_calibration",
-    text: "What are you actively learning where you'd benefit from more explanation?",
+    text: "What are you actively learning where you'd benefit from more explanation?"
   },
   {
     id: "stuck_style",
     category: "working_style",
-    text: "When you're stuck on something, do you want to think out loud with a thinking partner, or do you want someone to just tell you the answer?",
+    text: "When you're stuck on something, do you want to think out loud with a thinking partner, or do you want someone to just tell you the answer?"
   },
   {
     id: "challenge_mode",
     category: "working_style",
-    text: "When you tell the model what you want to do, should it just do it, or should it push back if it sees a problem with the plan?",
+    text: "When you tell the model what you want to do, should it just do it, or should it push back if it sees a problem with the plan?"
   },
   {
     id: "recommendation_style",
     category: "working_style",
-    text: "Do you prefer to see options and decide, or get a single strong recommendation?",
+    text: "Do you prefer to see options and decide, or get a single strong recommendation?"
   },
   {
     id: "ai_text_fixes",
     category: "output_preferences",
-    text: "Is there anything about how AI-written text tends to sound that you find yourself fixing?",
+    text: "Is there anything about how AI-written text tends to sound that you find yourself fixing?"
   },
   {
     id: "authorship_mode",
     category: "output_preferences",
-    text: "If you're writing something and the AI helps, who's the author — are you editing AI output, or is the AI editing your draft?",
+    text: "If you're writing something and the AI helps, who's the author — are you editing AI output, or is the AI editing your draft?"
   },
   {
     id: "current_project",
     category: "project_seed",
-    text: 'What\'s the name or short label for your current project? (e.g. "Nexus API", "my dissertation", "the billing rewrite")',
+    text: 'What\'s the name or short label for your current project? (e.g. "Nexus API", "my dissertation", "the billing rewrite")'
   },
   {
     id: "immediate_context",
     category: "project_seed",
-    text: "Is there anything about your current work someone would need to know to be useful to you immediately?",
-  },
+    text: "Is there anything about your current work someone would need to know to be useful to you immediately?"
+  }
 ] as const;
 
 const EXTRACTION_SYSTEM_PROMPT = `You extract structured beliefs from onboarding transcripts.
@@ -186,12 +186,12 @@ const STOPWORDS = new Set([
   "tool",
   "system",
   "some",
-  "just",
+  "just"
 ]);
 
 function deriveProjectScope(answers: OnboardingAnswer[]): string | null {
   const projectAnswer = answers.find(
-    (a) => a.question_id === "current_project" && a.answer.trim(),
+    (a) => a.question_id === "current_project" && a.answer.trim()
   );
   if (!projectAnswer) return null;
   const slug = slugifyProject(projectAnswer.answer);
@@ -200,10 +200,10 @@ function deriveProjectScope(answers: OnboardingAnswer[]): string | null {
 
 function buildExtractionPrompt(
   answers: OnboardingAnswer[],
-  projectScope: string | null,
+  projectScope: string | null
 ): string {
   const questionIdToCategory = new Map(
-    ONBOARDING_QUESTIONS.map((q) => [q.id, q.category]),
+    ONBOARDING_QUESTIONS.map((q) => [q.id, q.category])
   );
 
   const transcript = answers
@@ -280,26 +280,23 @@ function validateSidecarShape(parsed: unknown): parsed is ParsedSidecar {
 interface DraftStore {
   set(
     draftId: string,
-    data: { sidecarJson: string; modelId: string },
+    data: { sidecarJson: string; modelId: string }
   ): Promise<void>;
   peek(
-    draftId: string,
+    draftId: string
   ): Promise<{ sidecarJson: string; modelId: string } | null>;
   remove(draftId: string): Promise<void>;
 }
 
-function createDraftStore(
-  collection: Collection<OnboardingDraftDoc>,
-  userId: string,
-): DraftStore {
-  return {
+function createDraftStore(collection: Collection<OnboardingDraftDoc>) {
+  return (userId: string): DraftStore => ({
     async set(draftId, data) {
       await collection.insertOne({
         _id: draftId,
         user_id: userId,
         sidecarJson: data.sidecarJson,
         modelId: data.modelId,
-        created_at: new Date(),
+        created_at: new Date()
       });
     },
     async peek(draftId) {
@@ -309,34 +306,38 @@ function createDraftStore(
     },
     async remove(draftId) {
       await collection.deleteOne({ _id: draftId, user_id: userId });
-    },
-  };
+    }
+  });
 }
 
 export function registerOnboardingRoutes(
   app: FastifyInstance,
   deps: OnboardingDeps,
-  cols: Pick<Collections, "onboarding_drafts">,
+  cols: Pick<Collections, "onboarding_drafts">
 ): void {
-  const drafts = createDraftStore(cols.onboarding_drafts, deps.userId);
+  const draftStoreFactory = createDraftStore(cols.onboarding_drafts);
 
   app.get<{ Querystring: { token?: string } }>(
     "/onboarding",
     async (req, reply) => {
       reply.header("content-type", "text/html; charset=utf-8");
-      return reply.send(buildOnboardingHtml(req.query.token ?? ""));
-    },
+      const nonce = (reply.raw as any).cspNonce as string | undefined;
+      return reply.send(
+        buildOnboardingHtml(req.query.token ?? "", req.tenureUserId, nonce)
+      );
+    }
   );
 
   app.get("/v1/onboarding/questions", async () => ({
     questions: ONBOARDING_QUESTIONS,
-    total: ONBOARDING_QUESTIONS.length,
+    total: ONBOARDING_QUESTIONS.length
   }));
 
   app.post("/v1/onboarding/skip", async () => ({ ok: true, skipped: true }));
 
   app.get<{ Params: { id: string } }>(
     "/v1/onboarding/probe-models/:id",
+    { preHandler: requireRootToken },
     async (req, reply) => {
       const { id } = req.params;
       let adapter;
@@ -344,7 +345,7 @@ export function registerOnboardingRoutes(
         adapter = deps.providers.resolve(id);
       } catch {
         return reply.code(404).send({
-          error: { message: `provider "${id}" not configured` },
+          error: { message: `provider "${id}" not configured` }
         });
       }
 
@@ -362,7 +363,7 @@ export function registerOnboardingRoutes(
             supported: tier.supported,
             family: tier.family,
             tier: tier.tier,
-            reason: tier.supported ? null : tier.reason ?? "unknown family",
+            reason: tier.supported ? null : tier.reason ?? "unknown family"
           };
         });
         return { models: annotated, supports_listing: true };
@@ -370,20 +371,21 @@ export function registerOnboardingRoutes(
         req.log.warn({ err, provider: id }, "listModels probe failed");
         return reply.code(502).send({
           error: {
-            message: `failed to list models: ${(err as Error).message}`,
-          },
+            message: `failed to list models: ${(err as Error).message}`
+          }
         });
       }
-    },
+    }
   );
 
   app.post<{ Body: { provider_id: string; model_id: string } }>(
     "/v1/onboarding/validate-model",
+    { preHandler: requireRootToken },
     async (req, reply) => {
       const { provider_id, model_id } = req.body ?? {};
       if (!provider_id || !model_id) {
         return reply.code(400).send({
-          error: { message: "provider_id and model_id required" },
+          error: { message: "provider_id and model_id required" }
         });
       }
 
@@ -391,7 +393,7 @@ export function registerOnboardingRoutes(
       if (!tier.supported && tier.family !== null) {
         return reply.code(422).send({
           error: { message: tier.reason ?? "model below tier floor" },
-          tier_check: tier,
+          tier_check: tier
         });
       }
 
@@ -400,7 +402,7 @@ export function registerOnboardingRoutes(
         adapter = deps.providers.resolve(provider_id);
       } catch {
         return reply.code(404).send({
-          error: { message: `provider "${provider_id}" not configured` },
+          error: { message: `provider "${provider_id}" not configured` }
         });
       }
 
@@ -411,22 +413,25 @@ export function registerOnboardingRoutes(
           model_id,
           "",
           [{ role: "user", content: "ok" }],
-          { max_tokens: 1 },
+          { max_tokens: 1 }
         );
         await deps.runtimeStore.set("default_model", model_id);
         return { ok: true, tier_check: tier };
       } catch (err) {
         return reply.code(502).send({
           error: { message: `model ping failed: ${(err as Error).message}` },
-          tier_check: tier,
+          tier_check: tier
         });
       }
-    },
+    }
   );
 
   app.post<{ Body: { answers: OnboardingAnswer[] } }>(
     "/v1/onboarding/complete",
     async (req, reply) => {
+      const userId = req.tenureUserId;
+      const drafts = draftStoreFactory(userId);
+
       const { answers } = req.body ?? {};
       if (!Array.isArray(answers) || answers.length === 0) {
         return reply.code(400).send({ error: { message: "answers required" } });
@@ -444,8 +449,8 @@ export function registerOnboardingRoutes(
         return reply.code(400).send({
           error: {
             message:
-              "No default model configured. Complete provider setup first.",
-          },
+              "No default model configured. Complete provider setup first."
+          }
         });
       }
 
@@ -453,14 +458,14 @@ export function registerOnboardingRoutes(
       if (!tierResult.supported && tierResult.family !== null) {
         return reply.code(502).send({
           error: {
-            message: `Onboarding model "${modelId}" does not meet the minimum tier. ${tierResult.reason}`,
-          },
+            message: `Onboarding model "${modelId}" does not meet the minimum tier. ${tierResult.reason}`
+          }
         });
       }
       if (!tierResult.supported) {
         req.log.warn(
           { modelId },
-          "onboarding using unverified model family — sidecar quality not guaranteed",
+          "onboarding using unverified model family — sidecar quality not guaranteed"
         );
       }
 
@@ -470,8 +475,8 @@ export function registerOnboardingRoutes(
       } catch {
         return reply.code(502).send({
           error: {
-            message: "no provider configured for onboarding extraction",
-          },
+            message: "no provider configured for onboarding extraction"
+          }
         });
       }
 
@@ -487,10 +492,10 @@ export function registerOnboardingRoutes(
           [
             {
               role: "user",
-              content: buildExtractionPrompt(filled, projectScope),
-            },
+              content: buildExtractionPrompt(filled, projectScope)
+            }
           ],
-          { temperature: 0.1, max_tokens: 4000 },
+          { temperature: 0.1, max_tokens: 8000 }
         );
         extractionRaw = resp.content;
       } catch (err) {
@@ -504,14 +509,14 @@ export function registerOnboardingRoutes(
       if (!sidecarJson) {
         req.log.warn(
           { extractionRaw },
-          "onboarding extraction output unparseable",
+          "onboarding extraction output unparseable"
         );
         return {
           ok: true,
           belief_count: 0,
           beliefs: [],
           draft_id: null,
-          parse_failed: true,
+          parse_failed: true
         };
       }
 
@@ -523,7 +528,7 @@ export function registerOnboardingRoutes(
           belief_count: 0,
           beliefs: [],
           draft_id: null,
-          parse_failed: true,
+          parse_failed: true
         };
       }
 
@@ -535,14 +540,17 @@ export function registerOnboardingRoutes(
         belief_count: parsed.new_beliefs.length,
         beliefs: parsed.new_beliefs,
         draft_id: draftId,
-        project_scope: projectScope,
+        project_scope: projectScope
       };
-    },
+    }
   );
 
   app.post<{ Body: { draft_id: string; edited_beliefs?: ParsedBelief[] } }>(
     "/v1/onboarding/commit",
     async (req, reply) => {
+      const userId = req.tenureUserId;
+      const drafts = draftStoreFactory(userId);
+
       const { draft_id, edited_beliefs } = req.body ?? {};
       if (!draft_id) {
         return reply
@@ -553,7 +561,7 @@ export function registerOnboardingRoutes(
       const draft = await drafts.peek(draft_id);
       if (!draft) {
         return reply.code(404).send({
-          error: { message: "draft not found or expired — re-run onboarding" },
+          error: { message: "draft not found or expired, re-run onboarding" }
         });
       }
 
@@ -565,35 +573,50 @@ export function registerOnboardingRoutes(
           scope:
             Array.isArray(b.scope) && b.scope.length > 0
               ? b.scope
-              : ["user:universal"],
+              : ["user:universal"]
         }));
         finalSidecarJson = JSON.stringify(parsed);
       }
 
       const jobId = await deps.jobs.enqueueOnboarding({
-        userId: deps.userId,
+        userId: userId,
         sessionId: `onboarding:${randomUUID()}`,
         sidecarRaw: finalSidecarJson,
-        sourceModel: `onboarding:${draft.modelId}`,
+        sourceModel: `onboarding:${draft.modelId}`
       });
       await drafts.remove(draft_id);
 
       deps.extractionWorker
         .processById(jobId)
-        .then(() => deps.personaSummary.ensureFresh(deps.userId))
+        .then(() => deps.personaSummary.ensureFresh(userId))
         .catch((err) =>
           req.log.warn(
             { err, jobId },
-            "inline onboarding extraction failed — sweep will retry",
-          ),
+            "inline onboarding extraction failed — sweep will retry"
+          )
         );
 
       return { ok: true, job_id: jobId };
-    },
+    }
   );
 }
 
-function buildOnboardingHtml(embeddedToken: string): string {
+function buildOnboardingHtml(
+  embeddedToken: string,
+  ssoUserId?: string,
+  nonce?: string
+): string {
+  const tokenJS = embeddedToken
+    ? JSON.stringify(embeddedToken).replace(/</g, "\\u003c")
+    : `new URLSearchParams(location.search).get("token") || localStorage.getItem("mp_token") || ""`;
+
+  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+
+  const ssoConfig = ssoUserId
+    ? `<script${nonceAttr}>window.__TENURE_SSO_USER__ = ${JSON.stringify(
+        ssoUserId
+      )};</script>`
+    : "";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -645,21 +668,18 @@ function buildOnboardingHtml(embeddedToken: string): string {
   a:hover { text-decoration: underline; }
   .logo { display: block; margin: 0 auto 2rem; width: 120px; }
 </style>
+${ssoConfig}
 </head>
 <body>
 <div class="card" id="app"><div class="status"><p>Loading…</p></div></div>
-<script>
+<script${nonceAttr}>
 const STORAGE_KEY = "mp_token";
 const Q_URL = "/v1/onboarding/questions";
 const COMPLETE_URL = "/v1/onboarding/complete";
 const COMMIT_URL = "/v1/onboarding/commit";
 const SKIP_URL = "/v1/onboarding/skip";
 
-let token = ${
-    embeddedToken
-      ? JSON.stringify(embeddedToken)
-      : 'new URLSearchParams(location.search).get("token") || localStorage.getItem(STORAGE_KEY) || ""'
-  };
+let token = ${tokenJS};
 let questions = [];
 let answers = [];
 let idx = 0;
@@ -692,7 +712,7 @@ const FLAVORS = [
 ];
 
 function flavorById(id) {
-  return FLAVORS.find(f => f.id === id) ?? FLAVORS[0];
+  return FLAVORS.find(f => f.id === id) ?? FLAVORS;
 }
 
 function showTokenScreen(err) {
@@ -704,7 +724,7 @@ function showTokenScreen(err) {
       <input id="tok" type="password" placeholder="your-token-here" autocomplete="off" />
     </div>
     \${err ? \`<div class="error">\${err}</div>\` : ""}
-    <button class="btn btn-primary" style="width:100%" onclick="handleToken()">Continue</button>
+    <button class="btn btn-primary" style="width:100%" data-action="handle-token">Continue</button>
   \`);
   const inp = document.getElementById("tok");
   inp?.focus();
@@ -728,7 +748,7 @@ function showProviderSetup(err) {
     </div>
     <div class="field">
       <label for="prov-id">Provider</label>
-      <select id="prov-id" onchange="onProviderChange(this.value)">
+      <select id="prov-id" data-action="on-provider-change">
         <option value="openai">OpenAI (or compatible endpoint)</option>
         <option value="anthropic">Anthropic</option>
       </select>
@@ -740,20 +760,20 @@ function showProviderSetup(err) {
     <div id="openai-extra">
       <div class="field">
         <label for="endpoint-flavor">Endpoint type</label>
-        <select id="endpoint-flavor" onchange="onFlavorChange(this.value)">
+        <select id="endpoint-flavor" data-action="on-flavor-change">
           \${FLAVORS.map(f => \`<option value="\${f.id}">\${f.label}</option>\`).join("")}
         </select>
       </div>
       <div class="field">
         <label for="prov-url">Base URL <span style="opacity:0.5;font-size:0.8rem">(optional for generic OpenAI)</span></label>
-        <input id="prov-url" type="text" placeholder="\${FLAVORS[0].urlPlaceholder}" />
-        <div class="hint" id="flavor-hint">\${FLAVORS[0].hint}</div>
+        <input id="prov-url" type="text" placeholder="\${FLAVORS.urlPlaceholder}" />
+        <div class="hint" id="flavor-hint">\${FLAVORS.hint}</div>
       </div>
     </div>
     \${err ? \`<div class="error">\${err}</div>\` : ""}
     <div class="actions">
       <div class="spacer"></div>
-      <button class="btn btn-primary" id="save-provider" onclick="submitProvider()">Save and continue</button>
+      <button class="btn btn-primary" id="save-provider" data-action="submit-provider">Save and continue</button>
     </div>
   \`);
   document.getElementById("prov-key")?.focus();
@@ -789,7 +809,6 @@ async function submitProvider() {
   const btn     = document.getElementById("save-provider");
 
   if (!key) return showProviderSetup("API key is required.");
-
   if (id === "openai" && flavor !== "generic" && !url) {
     return showProviderSetup("A base URL is required for this endpoint type.");
   }
@@ -855,9 +874,9 @@ async function showModelPicker(providerId, err) {
       </div>
       \${err ? \`<div class="error">\${err}</div>\` : ""}
       <div class="actions">
-        <button class="btn btn-ghost" onclick="showProviderSetup()">Back</button>
+        <button class="btn btn-ghost" data-action="show-provider-setup">Back</button>
         <div class="spacer"></div>
-        <button class="btn btn-primary" id="validate-btn" onclick="validateModel('\${providerId}')">Test and continue</button>
+        <button class="btn btn-primary" id="validate-btn" data-action="validate-model" data-provider-id="\${providerId}">Test and continue</button>
       </div>
     \`);
   } catch (e) {
@@ -916,7 +935,7 @@ async function init() {
   } catch (e) {
     set(\`<div class="status">
       <p style="color:var(--danger);margin-bottom:1rem">\${e.message}</p>
-      <button class="btn btn-ghost" onclick="init()">Retry</button>
+      <button class="btn btn-ghost" data-action="retry">Retry</button>
     </div>\`);
   }
 }
@@ -940,11 +959,11 @@ function showQuestion() {
     <div class="question">\${q.text}</div>
     <textarea id="ans" placeholder="Type your answer…">\${answers[idx].answer}</textarea>
     <div class="actions">
-      <button class="btn btn-ghost" onclick="skipAll()">Skip setup</button>
-      \${idx > 0 ? \`<button class="btn btn-ghost" onclick="goBack()">← Back</button>\` : ""}
+      <button class="btn btn-ghost" data-action="skip-all">Skip setup</button>
+      \${idx > 0 ? \`<button class="btn btn-ghost" data-action="go-back">← Back</button>\` : ""}
       <div class="spacer"></div>
-      <button class="btn btn-ghost" onclick="advance(true)">Skip</button>
-      <button class="btn btn-primary" onclick="advance(false)">\${isLast ? "Review" : "Next"}</button>
+      <button class="btn btn-ghost" data-action="advance-skip">Skip</button>
+      <button class="btn btn-primary" data-action="advance-next">\${isLast ? "Review" : "Next"}</button>
     </div>
   \`);
   const ans = document.getElementById("ans");
@@ -1043,7 +1062,7 @@ async function submit() {
       <div class="status">
         <h2>Something went wrong</h2>
         <p>\${e.message}</p>
-        <button class="btn btn-ghost" style="margin-top:1rem" onclick="showQuestion()">Go back</button>
+        <button class="btn btn-ghost" style="margin-top:1rem" data-action="back-to-question">Go back</button>
       </div>
     \`);
   }
@@ -1053,7 +1072,7 @@ function showReview(projectScope) {
   const preview = draftBeliefs.map((b, i) => \`
     <div class="belief-preview">
       <label class="bname">
-        <input type="checkbox" data-idx="\${i}" \${beliefsKept[i] ? "checked" : ""} onchange="toggleBelief(\${i})">
+        <input type="checkbox" data-idx="\${i}" \${beliefsKept[i] ? "checked" : ""} data-action="toggle-belief">
         <span>\${esc(b.canonical_name)}</span>
         <span class="badge">\${esc(b.type)}</span>
         \${(b.scope ?? []).filter(s => s !== "user:universal").map(s => \`<span class="badge">\${esc(s)}</span>\`).join("")}
@@ -1072,16 +1091,11 @@ function showReview(projectScope) {
     </div>
     <div>\${preview}</div>
     <div class="actions">
-      <button class="btn btn-ghost" onclick="idx=questions.length-1;showQuestion()">← Back to questions</button>
+      <button class="btn btn-ghost" data-action="back-to-questions">← Back to questions</button>
       <div class="spacer"></div>
-      <button class="btn btn-primary" id="commit-btn" onclick="commitDraft()">Save to world model</button>
+      <button class="btn btn-primary" id="commit-btn" data-action="commit-draft">Save to world model</button>
     </div>
   \`);
-}
-
-function toggleBelief(i) {
-  const cb = document.querySelector(\`input[data-idx="\${i}"]\`);
-  beliefsKept[i] = cb?.checked ?? false;
 }
 
 async function commitDraft() {
@@ -1121,7 +1135,7 @@ async function commitDraft() {
       <div class="status">
         <h2>Couldn't save beliefs</h2>
         <p>\${e.message}</p>
-        <button class="btn btn-ghost" style="margin-top:1rem" onclick="showReview()">Try again</button>
+        <button class="btn btn-ghost" style="margin-top:1rem" data-action="show-review">Try again</button>
       </div>
     \`);
   }
@@ -1131,7 +1145,47 @@ function esc(s) {
   return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
-token ? init() : showTokenScreen();
+document.addEventListener("click", e => {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  const action = el.dataset.action;
+  switch (action) {
+    case "handle-token": handleToken(); break;
+    case "submit-provider": submitProvider(); break;
+    case "show-provider-setup": showProviderSetup(); break;
+    case "validate-model": validateModel(el.dataset.providerId); break;
+    case "retry": init(); break;
+    case "skip-all": skipAll(); break;
+    case "go-back": goBack(); break;
+    case "advance-skip": advance(true); break;
+    case "advance-next": advance(false); break;
+    case "back-to-question": showQuestion(); break;
+    case "back-to-questions": idx = questions.length - 1; showQuestion(); break;
+    case "commit-draft": commitDraft(); break;
+    case "show-review": showReview(); break;
+  }
+});
+
+document.addEventListener("change", e => {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  const action = el.dataset.action;
+  switch (action) {
+    case "on-provider-change": onProviderChange(el.value); break;
+    case "on-flavor-change": onFlavorChange(el.value); break;
+    case "toggle-belief": {
+      const i = parseInt(el.dataset.idx, 10);
+      if (!isNaN(i)) beliefsKept[i] = el.checked;
+      break;
+    }
+  }
+});
+
+if (window.__TENURE_SSO_USER__) {
+  init();
+} else {
+  token ? init() : showTokenScreen();
+}
 <\/script>
 </body>
 </html>`;

@@ -6,6 +6,22 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.21]
+
+### Added
+
+- **`tenure.configureDeployment` command** (`package.json`): New command lets users choose between a local Docker install or an enterprise server deployment.
+
+### Changed
+
+- **README restructured and expanded**: Added a dedicated "BYOK. Your models. Your memory." section explaining provider support (OpenAI, Anthropic, AWS Bedrock, local models, and OpenAI-compatible endpoints). Moved the client compatibility table earlier in the doc. Updated onboarding copy to be provider-agnostic.
+- **"Tenure: Run Setup" renamed to "Tenure: Configure Deployment"** (`package.json`): Command title updated to reflect broader deployment options.
+- **"Create .tenure File" added to commands table** (README): Previously undocumented command now appears in the reference table.
+- **Docs links updated to `tenureai.dev`** (README): Quickstart, beliefs, and retrieval links now point to the new docs site instead of GitHub.
+- **Trailing commas removed across TypeScript source files**: Minor style cleanup across `beliefsViewProvider.ts`, `extension.ts`, `installer.ts`, and related files.
+
+---
+
 ## [1.0.20]
 
 ### Added

@@ -2,7 +2,7 @@
   "name": "tenure-vscode",
   "displayName": "Tenure",
   "description": "Persistent AI memory that follows you across every tool, session, and interface. Fully local.",
-  "version": "1.0.20",
+  "version": "1.0.21",
   "publisher": "tenureai",
   "license": "MIT",
   "icon": "resources/tenure-logo-icon.png",
@@ -115,6 +115,10 @@
       {
         "command": "tenure.runOnboarding",
         "title": "Tenure: Run Setup"
+      },
+      {
+        "command": "tenure.configureDeployment",
+        "title": "Tenure: Configure Deployment"
       }
     ],
     "menus": {

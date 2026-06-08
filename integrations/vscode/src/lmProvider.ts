@@ -27,13 +27,13 @@ function makeModelInfo(modelId: string): vscode.LanguageModelChatInformation {
     maxInputTokens: 128_000,
     maxOutputTokens: 16_000,
     capabilities: {
-      toolCalling: true,
-    },
+      toolCalling: true
+    }
   };
 }
 
 async function* sseLines(
-  body: ReadableStream<Uint8Array>,
+  body: ReadableStream<Uint8Array>
 ): AsyncGenerator<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -66,12 +66,12 @@ export class TenureLmProvider
 
   constructor(
     private readonly tokenStore: TokenStore,
-    private readonly getBaseUrl: () => string,
+    private readonly getBaseUrl: () => string
   ) {}
 
   async provideLanguageModelChatInformation(
     _options: vscode.PrepareLanguageModelChatModelOptions,
-    _token: vscode.CancellationToken,
+    _token: vscode.CancellationToken
   ): Promise<vscode.LanguageModelChatInformation[]> {
     const apiToken = await this.tokenStore.get();
     if (!apiToken) return [];
@@ -81,7 +81,7 @@ export class TenureLmProvider
     try {
       const providersRes = await fetch(`${baseUrl}/admin/providers`, {
         headers: { Authorization: `Bearer ${apiToken}` },
-        signal: AbortSignal.timeout(5_000),
+        signal: AbortSignal.timeout(5_000)
       });
       if (!providersRes.ok) return [];
 
@@ -93,7 +93,7 @@ export class TenureLmProvider
 
       const cfgRes = await fetch(`${baseUrl}/admin/config`, {
         headers: { Authorization: `Bearer ${apiToken}` },
-        signal: AbortSignal.timeout(5_000),
+        signal: AbortSignal.timeout(5_000)
       });
       if (!cfgRes.ok) return [];
 
@@ -105,7 +105,7 @@ export class TenureLmProvider
 
       const models: vscode.LanguageModelChatInformation[] = [];
       const configuredProvider = providersData.providers.find(
-        (p) => p.configured,
+        (p) => p.configured
       );
 
       if (configuredProvider) {
@@ -114,8 +114,8 @@ export class TenureLmProvider
             `${baseUrl}/v1/onboarding/probe-models/${configuredProvider.id}`,
             {
               headers: { Authorization: `Bearer ${apiToken}` },
-              signal: AbortSignal.timeout(10_000),
-            },
+              signal: AbortSignal.timeout(10_000)
+            }
           );
           if (probeRes.ok) {
             const probeData = (await probeRes.json()) as {
@@ -145,12 +145,12 @@ export class TenureLmProvider
     messages: readonly vscode.LanguageModelChatRequestMessage[],
     options: vscode.ProvideLanguageModelChatResponseOptions,
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
-    token: vscode.CancellationToken,
+    token: vscode.CancellationToken
   ): Promise<void> {
     const apiToken = await this.tokenStore.get();
     if (!apiToken) {
       throw new Error(
-        "Tenure: no API token configured. Run 'Tenure: Set API Token'.",
+        "Tenure: no API token configured. Run 'Tenure: Set API Token'."
       );
     }
 
@@ -169,7 +169,7 @@ export class TenureLmProvider
         content = (m.content as vscode.LanguageModelInputPart[])
           .filter(
             (p): p is vscode.LanguageModelTextPart =>
-              p instanceof vscode.LanguageModelTextPart,
+              p instanceof vscode.LanguageModelTextPart
           )
           .map((p) => p.value)
           .join("");
@@ -185,14 +185,14 @@ export class TenureLmProvider
             function: {
               name: t.name,
               description: t.description,
-              parameters: t.inputSchema ?? { type: "object", properties: {} },
-            },
+              parameters: t.inputSchema ?? { type: "object", properties: {} }
+            }
           }))
         : undefined;
 
     const abortController = new AbortController();
     const cancelListener = token.onCancellationRequested(() =>
-      abortController.abort(),
+      abortController.abort()
     );
 
     try {
@@ -201,15 +201,18 @@ export class TenureLmProvider
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiToken}`,
+          "x-tenure-ide": "1",
+          "x-tenure-editor": vscode.env.appName,
+          "x-tenure-editor-version": vscode.version
         },
         body: JSON.stringify({
           model: model.id,
           messages: oaiMessages,
           stream: true,
           stream_options: { include_usage: true },
-          ...(tools ? { tools } : {}),
+          ...(tools ? { tools } : {})
         }),
-        signal: abortController.signal,
+        signal: abortController.signal
       });
 
       if (!res.ok) {
@@ -254,7 +257,7 @@ export class TenureLmProvider
 
         if (choice?.delta?.content) {
           progress.report(
-            new vscode.LanguageModelTextPart(choice.delta.content),
+            new vscode.LanguageModelTextPart(choice.delta.content)
           );
         }
 
@@ -264,7 +267,7 @@ export class TenureLmProvider
               toolCallAccumulator[tc.index] = {
                 id: "",
                 name: "",
-                arguments: "",
+                arguments: ""
               };
             }
             const acc = toolCallAccumulator[tc.index];
@@ -284,7 +287,7 @@ export class TenureLmProvider
           parsedInput = {};
         }
         progress.report(
-          new vscode.LanguageModelToolCallPart(tc.id, tc.name, parsedInput),
+          new vscode.LanguageModelToolCallPart(tc.id, tc.name, parsedInput)
         );
       }
     } finally {
@@ -295,7 +298,7 @@ export class TenureLmProvider
   async provideTokenCount(
     _model: vscode.LanguageModelChatInformation,
     text: string | vscode.LanguageModelChatRequestMessage,
-    _token: vscode.CancellationToken,
+    _token: vscode.CancellationToken
   ): Promise<number> {
     const str =
       typeof text === "string"
@@ -303,7 +306,7 @@ export class TenureLmProvider
         : (text.content as vscode.LanguageModelInputPart[])
             .filter(
               (p): p is vscode.LanguageModelTextPart =>
-                p instanceof vscode.LanguageModelTextPart,
+                p instanceof vscode.LanguageModelTextPart
             )
             .map((p) => p.value)
             .join("");

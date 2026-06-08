@@ -34,7 +34,7 @@ Once installed, Tenure works automatically. You don't need to do anything differ
 | `!inject off`        | Turn off memory context for this session      |
 | `!scope domain:code` | Set the scope for this session manually       |
 
-View and edit your memory at [http://localhost:5757/beliefs](http://localhost:5757/beliefs).
+View and edit your memory at your configured Tenure URL (defaults to `http://localhost:5757/beliefs`).
 
 ## Per-agent isolation
 

@@ -5,15 +5,30 @@ export function registerBeliefsUiRoute(app: FastifyInstance): void {
     "/beliefs",
     async (req, reply) => {
       reply.header("content-type", "text/html; charset=utf-8");
-      return reply.send(buildBeliefsHtml(req.query.token ?? ""));
-    },
+      const nonce = (reply.raw as any).cspNonce as string | undefined;
+      return reply.send(
+        buildBeliefsHtml(req.query.token ?? "", req.tenureUserId, nonce)
+      );
+    }
   );
 }
 
-function buildBeliefsHtml(embeddedToken: string): string {
+function buildBeliefsHtml(
+  embeddedToken: string,
+  ssoUserId?: string,
+  nonce?: string
+): string {
+  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+
   const tokenJS = embeddedToken
     ? JSON.stringify(embeddedToken).replace(/</g, "\\u003c")
     : `new URLSearchParams(location.search).get("token") || localStorage.getItem("mp_token") || ""`;
+
+  const ssoConfig = ssoUserId
+    ? `<script${nonceAttr}>window.__TENURE_SSO_USER__ = ${JSON.stringify(
+        ssoUserId
+      )};</script>`
+    : "";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -125,10 +140,11 @@ select.input-sm option { background: #1a1a1a; }
 @keyframes slideup { from { opacity: 0; transform: translateY(.4rem); } to { opacity: 1; transform: none; } }
 .logo { display: block; margin: 0 auto 2rem; width: 120px; }
 </style>
+${ssoConfig}
 </head>
 <body>
 <div id="app"><div class="loading">Loading…</div></div>
-<script>
+<script${nonceAttr}>
 const STORAGE_KEY = "mp_token";
 const TYPE_LABELS = { preference: "Preferences", entity: "Entities", decision: "Decisions", open_question: "Open Questions" };
 const TYPE_ORDER  = ["preference", "decision", "entity", "open_question"];
@@ -545,6 +561,7 @@ async function submitCreate() {
 async function saveEdit() {
   if (!editId) return;
   const id = editId;
+  const aliasesRaw = document.getElementById("m-aliases")?.value?.trim();
   const patch = {
     canonical_name:    document.getElementById("m-name")?.value?.trim(),
     content:           document.getElementById("m-content")?.value?.trim(),
@@ -861,7 +878,12 @@ function clearImport() {
   if (st) st.innerHTML = "";
 }
 
-token ? init() : showTokenScreen();
+
+if (window.__TENURE_SSO_USER__) {
+  init(); 
+} else {
+  token ? init() : showTokenScreen();
+}
 <\/script>
 </body>
 </html>`;
