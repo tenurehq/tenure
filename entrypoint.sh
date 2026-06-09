@@ -26,5 +26,7 @@ if [ "$1" = "init" ]; then
   exit 0
 fi
 
-chown -R tenure:tenure "$TENURE_HOME"
+if [ "${TENURE_MODE}" != "teams" ]; then
+  chown -R tenure:tenure "$TENURE_HOME"
+fi
 exec gosu tenure "$@"

@@ -259,8 +259,6 @@ function esc(s) {
 
 if (token) {
   showProviderSetup();
-} else if (token) {
-  showProviderSetup();
 } else {
   set(\`
     <img src="/assets/tenure-logo.png" alt="Tenure" class="logo">

@@ -9,6 +9,8 @@ export type BeliefSubtype = "expertise" | "style" | null;
 
 export type ExpertiseDepth = "learning" | "working" | "deep" | "expert";
 
+export type BeliefVisibility = "org" | "team" | "private";
+
 export type EpistemicStatus =
   | "active"
   | "exploratory"
@@ -62,6 +64,9 @@ export interface Belief {
   origin_context?: OriginContext | null;
   participants?: string[];
   relation_type?: string;
+  team_id?: string | null;
+  visibility?: BeliefVisibility;
+  org_id?: string | null;
 }
 
 export interface OriginContext {

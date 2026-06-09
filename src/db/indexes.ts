@@ -173,7 +173,7 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
 
   await cols.beliefs.createIndexes([
     {
-      key: { user_id: 1, canonical_name: 1 },
+      key: { user_id: 1, team_id: 1, org_id: 1, canonical_name: 1 },
       name: "user_canonical_unique_active",
       unique: true,
       partialFilterExpression: {
@@ -199,7 +199,10 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
         resolved_at: null,
         "origin_context.active_file": { $type: "string" }
       }
-    }
+    },
+    { key: { org_id: 1, visibility: 1, pinned: -1 } },
+    { key: { team_id: 1, visibility: 1, pinned: -1 } },
+    { key: { user_id: 1, team_id: 1, visibility: 1 } }
   ]);
 
   await cols.jobs.createIndexes([
@@ -269,7 +272,16 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
 
   await cols.scim_users.createIndexes([
     { key: { userName: 1 }, unique: true },
-    { key: { externalId: 1 } }
+    { key: { externalId: 1 }, sparse: true }
+  ]);
+
+  const scimGroupsCol = cols.db.collection("scim_groups");
+  await scimGroupsCol.createIndexes([
+    { key: { displayName: 1 }, unique: true },
+    { key: { externalId: 1 }, sparse: true },
+    // Powers getGroupsForUser — without this every group membership lookup
+    // is a full collection scan
+    { key: { "members.value": 1 }, name: "scim_groups_member_lookup" }
   ]);
 
   await cols.injection_audit.createIndexes([
@@ -301,6 +313,13 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
       name: "tax_events_ttl"
     }
   ]);
+
+  await cols.db
+    .collection("org_summary_cache")
+    .createIndexes([
+      { key: { generated_at: -1 } },
+      { key: { beliefs_hash: 1 } }
+    ]);
 }
 
 export async function ensureSearchIndexes(db: Db): Promise<void> {

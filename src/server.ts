@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import type { Db } from "mongodb";
 
 import { SessionManager } from "./session/manager.js";
@@ -43,10 +43,17 @@ import { InjectionAuditLogger } from "./audit/injectionAuditLogger.js";
 import { registerAuditRoutes, type AuditDeps } from "./routes/audit.js";
 import { registerAuditUiRoute } from "./routes/audit-ui.js";
 import { createHash, randomBytes } from "node:crypto";
-import { registerScimRoutes, type ScimDeps } from "./routes/scim.js";
+import {
+  getGroupsForUser,
+  getScimUserIdByUserName,
+  registerScimRoutes,
+  type ScimDeps
+} from "./routes/scim.js";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { registerAdminSetupRoute } from "./routes/admin-setup.js";
 import helmet from "@fastify/helmet";
+import type { TeamResolutionStrategy } from "./config/teamResolution.js";
+import type { OrgSummaryService } from "./context/orgSummary.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -54,10 +61,15 @@ const __dirname = dirname(__filename);
 const jobsEnabled = process.env.TENURE_DISABLE_JOBS !== "true";
 const proxyAuthHeader = process.env.OIDC_PROXY_HEADER?.toLowerCase() || "";
 
+const defaultTeamId = process.env.TENURE_DEFAULT_TEAM_ID;
+const defaultOrgId = process.env.TENURE_DEFAULT_ORG_ID;
+
 declare module "fastify" {
   interface FastifyRequest {
     tenureUserId: string;
     tenureAuthMethod: "proxy" | "root" | "pat";
+    tenureTeamId?: string;
+    tenureOrgId?: string;
   }
 }
 
@@ -98,6 +110,7 @@ export interface ServerDeps {
   compactionRunner: BeliefCompactionRunner;
   extractionWorker: ExtractionWorker;
   personaSummary: PersonaSummaryService;
+  orgSummaryService: OrgSummaryService;
   workspaceState: WorkspaceStateCache;
 }
 
@@ -131,6 +144,80 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   app.register(fastifyStatic, { root: path.join(__dirname, "static") });
 
+  async function resolveMembership(
+    req: FastifyRequest,
+    userId: string
+  ): Promise<{ teamId: string; orgId: string } | null> {
+    if (process.env.TENURE_MODE !== "teams") return null;
+
+    const cfg = (await deps.runtimeStore.load()) as any;
+
+    const strategy = (cfg.team_resolution_strategy ??
+      "static") as TeamResolutionStrategy;
+
+    switch (strategy) {
+      case "disabled":
+        return null;
+
+      case "static": {
+        if (!defaultTeamId || !defaultOrgId) return null;
+        return { teamId: defaultTeamId, orgId: defaultOrgId };
+      }
+
+      case "header": {
+        const teamHeader = (cfg.team_header_name ?? "x-team-id").toLowerCase();
+        const orgHeader = (cfg.org_header_name ?? "x-org-id").toLowerCase();
+        const teamId = req.headers[teamHeader] as string | undefined;
+        const orgId = req.headers[orgHeader] as string | undefined;
+        if (teamId && orgId) return { teamId, orgId };
+        // Graceful fallback to static if headers absent
+        if (defaultTeamId && defaultOrgId)
+          return { teamId: defaultTeamId, orgId: defaultOrgId };
+        return null;
+      }
+
+      case "manual":
+        // Future: look up user_id -> team_id in an admin-managed collection
+        return null;
+
+      case "scim_group": {
+        // cfg.scim_group_mappings is an array of
+        // { groupId: string; teamId: string; orgId: string }
+        // stored in runtime config or a collection
+        const mappings: Array<{
+          groupId: string;
+          teamId: string;
+          orgId: string;
+        }> = cfg.scim_group_mappings ?? [];
+        if (!mappings.length) {
+          // Fall through to static defaults
+          if (defaultTeamId && defaultOrgId)
+            return { teamId: defaultTeamId, orgId: defaultOrgId };
+          return null;
+        }
+
+        const scimUserId = await getScimUserIdByUserName(deps.db, userId);
+        if (!scimUserId) {
+          if (defaultTeamId && defaultOrgId)
+            return { teamId: defaultTeamId, orgId: defaultOrgId };
+          return null;
+        }
+
+        const groupIds = await getGroupsForUser(deps.db, scimUserId);
+        for (const mapping of mappings) {
+          if (groupIds.includes(mapping.groupId)) {
+            return { teamId: mapping.teamId, orgId: mapping.orgId };
+          }
+        }
+
+        // User is provisioned but not in any mapped group — fall back
+        if (defaultTeamId && defaultOrgId)
+          return { teamId: defaultTeamId, orgId: defaultOrgId };
+        return null;
+      }
+    }
+  }
+
   app.addHook("onRequest", async (req, reply) => {
     const pathOnly = req.url.split("?")[0];
 
@@ -142,6 +229,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
         const span = trace.getActiveSpan();
         if (span) span.setAttribute("user.id", userId);
+
+        const membership = await resolveMembership(req, userId);
+        if (membership) {
+          req.tenureTeamId = membership.teamId;
+          req.tenureOrgId = membership.orgId;
+        }
 
         return;
       }
@@ -210,6 +303,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
       const span = trace.getActiveSpan();
       if (span) span.setAttribute("user.id", pat.user_id);
+
+      const membership = await resolveMembership(req, pat.user_id);
+      if (membership) {
+        req.tenureTeamId = membership.teamId;
+        req.tenureOrgId = membership.orgId;
+      }
 
       deps.cols.api_tokens
         .updateOne({ _id: pat._id }, { $set: { last_used_at: new Date() } })
