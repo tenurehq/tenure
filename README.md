@@ -1,23 +1,42 @@
 # Tenure
 
-Open-source AI memory layer for engineering teams. Automatically inject
-knowledge, coding standards, and project context into every AI session across VS Code, Claude Code, Cursor, Cline, Continue, and other
-clients.
+### Stop AI memory drift with deterministic state.
+
+Persistent, governable, scoped state for AI systems.
 
 ![Build](https://github.com/tenurehq/tenure/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-ready-blue?logo=docker)
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/tenure)](https://artifacthub.io/packages/search?repo=tenure)
 ![arXiv](https://img.shields.io/badge/arXiv-2605.11325-b31b1b.svg)
 
----
+## Your memory system will drift in ways you cannot detect.
 
-You brainstorm architecture in a chat client. You open your IDE.
-It already knows what you decided. No re-explanation. You just build.
+Context bleeds across sessions. Projects contaminate each other. Old decisions keep resurfacing. The model still answers. Nobody knows why.
 
-Tenure is a local proxy that sits between your clients and your LLM
-provider. It learns from your conversations and injects relevant
-context on every request. One container, one port, every tool shares
-the same memory.
+Most AI memory systems rely on semantic similarity. Over time, irrelevant context accumulates and stale knowledge competes with the truth. The model compensates until it cannot.
+
+Tenure treats memory as state.
+
+## AI does not need more context. It needs state.
+
+Conversations become structured beliefs. Beliefs have provenance, versioning, hard scope boundaries, and supersession chains. The model receives a resolved belief, not raw material to re-derive.
+
+```
+Conversations
+      |
+Structured beliefs
+      |
+Versioning + Scope
+      |
+Retrieval
+      |
+Injected state
+      |
+AI response
+```
+
+Memory is the output. State is the system.
 
 ## 30-second install
 
@@ -33,45 +52,73 @@ curl -fsSL https://raw.githubusercontent.com/tenurehq/tenure/main/scripts/instal
 irm https://raw.githubusercontent.com/tenurehq/tenure/main/scripts/install.ps1 | iex
 ```
 
+**Helm (team deploy):**
+
+```bash
+helm repo add tenure https://charts.tenureai.dev
+helm repo update
+helm install tenure tenure/tenure \
+  --create-namespace \
+  --namespace tenure
+```
+
 Point your client at `http://localhost:5757/v1`. Done.
 Claude Code: point at `http://localhost:5757/anthropic`. Done.
 
-## What your IDE sees
+## Observe before you commit
 
-![Beliefs panel alongside code](assets/beliefs-panel.png)
+Run with extraction on and injection off. See exactly what Tenure learns before it changes a single response. No surprises. No behavior changes. No trust required.
 
-Tenure extracted these from past conversations. The model knows
-your scoring uses Hungarian algorithm via scipy, that skill scores
-default to 1.0 not 0.0, and that cosine similarity is rescaled to
-[0.5, 1.5]. When you ask it to refactor this function, it won't
-suggest breaking any of these decisions. No re-explanation required.
+```
+!inject off
+```
 
-## The problem
+Most users watch Tenure extract beliefs for a week or two before turning injection on. When you open the panel and read what it captured, you edit what you want and delete what you do not. You own the state before it ever reaches the model.
 
-Every AI session starts from zero. You re-explain your stack. You restate your voice. You re-establish decisions you made weeks ago. And when you don't re-explain, when you just ask the question, you get a confident, detailed answer that completely misses the point.
+## Govern what AI knows
+
+### Scope isolation
+
+Project A never bleeds into Project B. Scope is a hard filter, not a ranking signal. A session in `project:client-a` cannot surface beliefs from `project:client-b` regardless of how semantically close the content is. Out-of-scope beliefs are structurally absent from retrieval.
+
+### Provenance
+
+Every belief has an origin. Click any belief to see every session it was injected and the query that surfaced it each time. The record is complete and written as it happens, not reconstructed.
+
+### Injection logs
+
+See exactly which beliefs were in context for every turn. Not inferred. Per-turn injection log, written at the time it happened.
+
+### Supersession
+
+Old decisions retire instead of competing with the truth. Moved from Jest to Vitest? The old belief routes to the new one. The supersession chain records that the switch happened. The model does not reason over the conflict because the conflict was resolved when it occurred.
+
+## Why memory systems drift
+
+Most systems retrieve semantically similar context and hand the model a pile of candidates to reason over. Contradictions, alternatives, outdated context -- the model sorts it out. Until it cannot, or until you need to know why it said what it said.
+
+|                     | Traditional memory | Tenure               |
+| ------------------- | ------------------ | -------------------- |
+| Retrieval           | Similarity search  | Structured beliefs   |
+| Boundaries          | Probabilistic      | Hard scope isolation |
+| Contradictions      | Model resolves     | Supersession         |
+| Visibility          | Hidden             | Injection logs       |
+| Drift score         | 0.94               | 0.00                 |
+| Retrieval precision | 0.06               | 1.0                  |
+
+Retrieval precision is load-bearing, not one metric among many. There is nothing downstream to compensate for noise. The belief that goes in is the instruction that comes out.
+
+Benchmarks are reproducible. Dataset on HuggingFace. [Run it yourself](https://github.com/tenurehq/precisionMemBench).
+
+## The problem in practice
 
 A developer had already established: TypeScript, Fastify, MongoDB, raw driver, composition over inheritance. New session, they asked:
 
-> _How should I structure my repo?_
+> How should I structure my repo?
 
 200 lines of Python using SQLAlchemy. Wrong language. Wrong database. Wrong paradigm.
 
 The next prompt becomes a correction instead of progress.
-
-## What Tenure does
-
-You spend an hour in a chat interface thinking through an architecture
-problem. You explore options, rule some out, land on a direction. Then
-you open your IDE to start building.
-
-Tenure is already there. It knows what you decided, what you rejected,
-and why. You don't re-explain anything. You just build.
-
-It sits between your clients and your AI provider and quietly learns
-from your conversations. Every tool that routes through it shares the
-same belief store, so context you establish in one place is already
-present when you switch to another. After a month, most users have
-eliminated more than 80% of the correction turns they used to pay.
 
 Same question, cold start, new session, with Tenure running:
 
@@ -102,121 +149,46 @@ export function makeUserRepository(db: Db): UserRepository {
 
 TypeScript. MongoDB raw driver. Factory function. No re-explanation required.
 
-## Works where you already work
+## Works everywhere
+
+One state layer. Every client.
 
 - **IDE:** VS Code (native), Cursor, Windsurf, Continue, Cline
 - **Chat:** Open WebUI, LibreChat, any OpenAI-compatible client
-- **Mobile:** OpenClaw on WhatsApp/Telegram — aha moments on a walk
-  land in the same belief store your IDE reads from tomorrow
+- **Mobile:** OpenClaw on WhatsApp/Telegram -- aha moments on a walk land in the same belief store your IDE reads from tomorrow
 - **Claude Code:** full Anthropic wire format, works today
+- **Teams:** Helm chart, OIDC, SCIM, audit trails
 
-One port. Every client. Same memory.
+One port. Every client. Same state.
 
-## Works inside your editor
+## Architecture
 
-![VS Code model picker showing Tenure models](assets/vscode-models.png)
+Tenure is on the belief system side, not the retrieval system side.
 
-Tenure registers as a native LLM provider. Pick any model through
-your own API keys: Anthropic, OpenAI, Mistral, Qwen, Amazon Nova,
-whatever you have access to. Same Copilot UX. Memory included.
+Most memory systems store what you said and search it at inference time, handing the model a pile of candidates to reason over. Tenure does the work earlier. Every belief is extracted at write time, when the full reasoning chain is present: what was decided, what was rejected, and why.
 
-Already paying for an API key? You don't need a Copilot subscription.
-Tenure gives you native editor completions with the model you already
-have access to, plus memory that Copilot will never have.
-
-## Claude Code
-
-Tenure has native Anthropic SDK ingress and egress. Claude Code users
-point at the same localhost endpoint, no translation layer, no
-wrapper. Your agentic sessions accumulate beliefs the same way your
-editor sessions do.
-
-The model that spent three hours refactoring your auth service already
-knows what it decided by the next session.
-
-## Try it before you commit
-
-Run with extraction on, injection off. See what it learns before
-it ever changes a response. No risk, no behavior change.
-
-`!inject off` in any chat, or toggle in the VS Code sidebar.
-
-## How it works (30 seconds)
-
-- Sits between your client and your LLM provider
-- Extracts structured beliefs from conversations at write time
-- Injects only relevant, scoped beliefs on every request
-- Beliefs are scoped: project:my-app can't bleed into project:other
-- Supersession: moved from Jest to Vitest? The old belief routes
-  to the new one. No contradiction. No stale context.
-- 13ms retrieval. BM25 over a structured index. No embedding model.
-
-## Scope
-
-Beliefs are scoped to a context boundary. A belief about your TypeScript
-conventions only surfaces in code sessions. A belief about a character's
-voice only surfaces in writing sessions. A belief marked `user:universal`
-surfaces everywhere.
-
-Scope is a hard filter, not a ranking signal. A session in `project:client-a`
-cannot surface beliefs from `project:client-b` regardless of how semantically
-close the content is. There is no probabilistic suppression; out-of-scope
-beliefs are structurally absent from retrieval.
-
-This matters in practice. If you have a character named Redis in your novel
-and Redis the cache in your codebase, the right belief surfaces based on the
-active scope, not on which one scores higher in a similarity search.
+The `why_it_matters` field is not a note. It is a pre-computed instruction for how future responses should act on that fact.
 
 Scope is detected automatically from your first message or set explicitly:
 
-    !scope domain:code
-    !scope project:my-app
-    !scope domain:code/typescript
+```
+!scope domain:code
+!scope project:my-app
+!scope domain:code/typescript
+```
 
-Sub-domain scopes expand automatically — setting `domain:code/typescript`
-includes `domain:code` without listing it separately.
+Sub-domain scopes expand automatically. Setting `domain:code/typescript` includes `domain:code` without listing it separately.
 
-Details: [docs/beliefs.md](docs/beliefs.md)
+If you have a character named Redis in your novel and Redis the cache in your codebase, the right belief surfaces based on the active scope, not on which one scores higher in a similarity search.
 
-## Private by design
+## Fully local
 
-Everything on localhost. Encrypted at rest. Nothing hidden.
-Export your entire memory as an encrypted archive anytime.
-
-## Orientation tax dashboard
-
-Tenure tracks re-explanations prevented vs. total required.
-Most users hit 80%+ coverage within a month.
-
-## Architecture: beliefs vs. retrieval systems
-
-Vector search, top-k, reranking — that's the retrieval system side.
-Tenure is on the belief system side.
-
-Most memory systems store what you said and search it at inference time,
-handing the model a pile of candidates to reason over. Contradictions,
-alternatives, outdated context — the model sorts it out. When retrieval
-is noisy, the model compensates. Until it can't, or until you're not
-using a frontier model that can.
-
-Tenure does the work earlier. Every belief is extracted at write time,
-when the full reasoning chain is present: what was decided, what was
-rejected, and why. The `why_it_matters` field isn't a note, it's a
-pre-computed instruction for how future responses should act on that
-fact. The model receives a resolved belief, not raw material to
-re-derive.
-
-This is why retrieval precision is load-bearing rather than one metric
-among many. There's nothing downstream to compensate for noise. The
-belief that goes in is the instruction that comes out.
-
-It also changes what "handling contradictions" means. A belief store
-that has already resolved a decision doesn't need to surface
-alternatives at inference time. When you moved from Jest to Vitest,
-the old term became a retrieval surface for the new belief. The
-supersession chain records that the switch happened. The model doesn't
-reason over the conflict because the conflict was resolved when it
-occurred, not deferred to the next session.
+- No cloud
+- No accounts
+- No telemetry
+- Encrypted at rest
+- Export your entire state as an encrypted archive anytime
+- MIT licensed
 
 ## Further reading
 
@@ -226,7 +198,5 @@ occurred, not deferred to the next session.
 - [Retrieval details](docs/retrieval.md)
 - [Roadmap](docs/roadmap.md)
 - [Contributing](docs/contributing.md)
-
-## License
 
 MIT
