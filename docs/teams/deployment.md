@@ -7,7 +7,7 @@ The Tenure Helm chart deploys the application in one of two top-level modes:
 - **Bundled**: A self-contained MongoDB instance runs as a StatefulSet alongside Tenure. This is ideal for development, proofs of concept, or small teams that want to evaluate the platform quickly.
 - **External**: Tenure connects to an existing MongoDB (such as MongoDB Atlas, Amazon DocumentDB, or a self-managed replica set). This is recommended for production or any shared instance where durability, backups, and scaling are managed independently.
 
-Everything else, secrets, observability, ingress, and identity, is configured as a flat capability, not as a tier.
+Everything else — secrets, observability, ingress, and identity — is configured as a flat capability, not as a tier.
 
 ## Prerequisites
 
@@ -17,15 +17,17 @@ Everything else, secrets, observability, ingress, and identity, is configured as
 
 ## Quick Start (Bundled Mode)
 
-Install the chart with defaults:
+Add the Tenure chart repository and install with defaults:
 
 ```bash
-helm upgrade --install tenure ./chart \
+helm repo add tenure https://charts.tenureai.dev
+helm repo update
+helm install tenure tenure/tenure \
   --create-namespace \
   --namespace tenure
 ```
 
-This deploys Tenure with a bundled MongoDB, auto-generated secrets, and `userId` defaulted to `local`.
+This deploys Tenure with a bundled MongoDB, auto-generated secrets, and `userId` defaulted to `team`.
 
 ## Key Configuration
 
@@ -62,7 +64,7 @@ database:
 Secret behavior depends on mode:
 
 - **Bundled mode**: Helm generates a random Secret unless you provide `secrets.existingSecret` or explicitly set `secrets.apiToken`, `secrets.masterKey`, and `secrets.beliefKey`.
-- **External mode**: You must provide `secrets.existingSecret`, and the referenced Secret must contain keys `api-token`, `master.key`, and `belief.key`.
+- **External mode**: You must provide `secrets.existingSecret`. The referenced Secret must contain exactly these keys: `api-token`, `master.key`, and `belief.key`.
 
 ```yaml
 secrets:
@@ -74,11 +76,11 @@ secrets:
 
 ### Identity
 
-`identity.userId` controls how the instance presents itself. It defaults to `local` in bundled mode and `team` in external mode. Team mode enables the dashboard and access-token features described in the Authentication Guide [1].
+`identity.userId` controls how the instance presents itself. It defaults to `team` for all Helm-based installations.
 
 ```yaml
 identity:
-  userId: "" # Defaults to local (bundled) or team (external)
+  userId: ""
 ```
 
 ### Observability
@@ -129,10 +131,10 @@ resources:
 
 **Replica count**: `replicaCount` is currently limited to `1`. Tenure requires distributed job locking, a shared WebSocket bus, and search-index initialization hooks before it can safely run multiple API replicas.
 
-**Secret lifecycle**: In bundled mode, auto-generated secrets are regenerated on every `helm template` render if not explicitly provided. For any installation you intend to keep, capture the generated Secret after the first install and pin the values on subsequent upgrades, or switch to `secrets.existingSecret`.
+**Secret lifecycle**: In bundled mode, auto-generated secrets are regenerated on every `helm template` render if values are left empty and no `existingSecret` is provided. For any installation you intend to keep, capture the generated Secret after the first install and pin the values on subsequent upgrades, or switch to `secrets.existingSecret`.
 
 **TLS for external MongoDB**: If `database.external.tls.enabled` is true, `database.external.tls.caCertSecret` must reference a Secret in the same namespace containing the CA certificate.
 
 ## Full Reference
 
-For a complete list of values, defaults, and type information, see `values.yaml` inside the chart and the inline comments in each template. For authentication, SSO proxy setup, and Personal Access Tokens, see the Authentication Guide [1].
+For a complete list of values, defaults, and type information, see `values.yaml` inside the chart and the inline comments in each template. For authentication, SSO proxy setup, and Personal Access Tokens, see the [Authentication Guide](./auth-guide.md).
