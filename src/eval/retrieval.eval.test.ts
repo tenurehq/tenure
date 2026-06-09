@@ -7,12 +7,12 @@ import { BeliefsReader } from "../context/beliefsReader.js";
 import {
   ContextBuilder,
   type ContextBudget,
-  type PersonaLookup,
+  type PersonaLookup
 } from "../context/contextBuilder.js";
 import type { Belief } from "../types/belief.js";
 import {
   buildReportPayload,
-  type ReportSummaryOptions,
+  type ReportSummaryOptions
 } from "./buildRetrievalReport.js";
 
 interface PinnedFactsExpect {
@@ -101,7 +101,7 @@ function extractClauses(node: ScoreNode): ScoreClause[] {
   const m = BM25_MATCH.exec(node.description);
   if (m) {
     return [
-      { path: m[1], term: m[2], score: Math.round(node.value * 100) / 100 },
+      { path: m[1], term: m[2], score: Math.round(node.value * 100) / 100 }
     ];
   }
 
@@ -132,7 +132,7 @@ const DATE_FIELDS = [
   "created_at",
   "updated_at",
   "last_reinforced_at",
-  "resolved_at",
+  "resolved_at"
 ] as const;
 
 const EVAL_PERSONA: PersonaLookup = {
@@ -145,11 +145,13 @@ const EVAL_PERSONA: PersonaLookup = {
             "domain:code":
               "You work in TypeScript with strict mode, Fastify for HTTP, and MongoDB with the raw driver — never an ORM. You prefer composition over inheritance and Go-style explicit error returns.",
             "domain:writing":
-              "You write close third-person, present tense, set in 1970s Lisbon. No omniscient asides, no reconciliation arcs.",
-          },
+              "You write close third-person, present tense, set in 1970s Lisbon. No omniscient asides, no reconciliation arcs."
+          }
         }
-      : null,
+      : null
 };
+
+const NULL_ORG_SUMMARY = { get: async (_orgId: string) => null };
 
 function containerExists(): boolean {
   const result = spawnSync("docker", [
@@ -158,7 +160,7 @@ function containerExists(): boolean {
     "--filter",
     `name=^${CONTAINER_NAME}$`,
     "--format",
-    "{{.Names}}",
+    "{{.Names}}"
   ]);
   return result.stdout.toString().trim() === CONTAINER_NAME;
 }
@@ -169,7 +171,7 @@ function containerRunning(): boolean {
     "--filter",
     `name=^${CONTAINER_NAME}$`,
     "--format",
-    "{{.Names}}",
+    "{{.Names}}"
   ]);
   return result.stdout.toString().trim() === CONTAINER_NAME;
 }
@@ -187,9 +189,9 @@ function startContainer(): void {
       "docker run -d",
       `--name ${CONTAINER_NAME}`,
       `-p ${HOST_PORT}:27017`,
-      ATLAS_IMAGE,
+      ATLAS_IMAGE
     ].join(" "),
-    { stdio: "pipe" },
+    { stdio: "pipe" }
   );
 }
 
@@ -207,7 +209,7 @@ async function waitForMongo(): Promise<void> {
   while (Date.now() < deadline) {
     try {
       const c = new MongoClient(MONGO_URI, {
-        serverSelectionTimeoutMS: READY_POLL_MS,
+        serverSelectionTimeoutMS: READY_POLL_MS
       });
       await c.connect();
       await c.db("admin").command({ ping: 1 });
@@ -218,7 +220,7 @@ async function waitForMongo(): Promise<void> {
     }
   }
   throw new Error(
-    `Atlas Local container did not become ready within ${READY_TIMEOUT_MS}ms`,
+    `Atlas Local container did not become ready within ${READY_TIMEOUT_MS}ms`
   );
 }
 
@@ -238,7 +240,7 @@ function coerceBelief(raw: Record<string, unknown>): Belief {
 async function retryUntilReady<T>(
   fn: () => Promise<T>,
   label: string,
-  timeoutMs = READY_TIMEOUT_MS,
+  timeoutMs = READY_TIMEOUT_MS
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   let lastErr: unknown;
@@ -253,7 +255,7 @@ async function retryUntilReady<T>(
   throw new Error(
     `${label} did not succeed within ${timeoutMs}ms — last error: ${
       lastErr instanceof Error ? lastErr.message : String(lastErr)
-    }`,
+    }`
   );
 }
 
@@ -296,8 +298,8 @@ test.before(async () => {
               tokenizer: { type: "whitespace" },
               tokenFilters: [
                 { type: "lowercase" },
-                { type: "englishPossessive" },
-              ],
+                { type: "englishPossessive" }
+              ]
             },
             {
               name: "whole_name_analyzer",
@@ -305,12 +307,12 @@ test.before(async () => {
               tokenizer: {
                 type: "regexCaptureGroup",
                 pattern: "[^,;|]+",
-                group: 0,
+                group: 0
               },
               tokenFilters: [
                 { type: "lowercase" },
-                { type: "englishPossessive" },
-              ],
+                { type: "englishPossessive" }
+              ]
             },
             {
               name: "canonical_query_search_analyzer",
@@ -349,15 +351,15 @@ test.before(async () => {
                     "this",
                     "how",
                     "what",
-                    "does",
-                  ],
+                    "does"
+                  ]
                 },
                 {
                   type: "shingle",
                   minShingleSize: 2,
-                  maxShingleSize: 2,
-                },
-              ],
+                  maxShingleSize: 2
+                }
+              ]
             },
             {
               name: "alias_search_analyzer",
@@ -368,16 +370,17 @@ test.before(async () => {
                 {
                   type: "shingle",
                   minShingleSize: 2,
-                  maxShingleSize: 2,
-                },
-              ],
-            },
+                  maxShingleSize: 2
+                }
+              ]
+            }
           ],
           mappings: {
             dynamic: false,
             fields: {
               _id: { type: "token" },
               user_id: { type: "token" },
+              agent_id: { type: "token" },
               canonical_name: {
                 type: "string",
                 analyzer: "whole_name_analyzer",
@@ -386,9 +389,9 @@ test.before(async () => {
                   phrase: {
                     type: "string",
                     analyzer: "whole_name_analyzer",
-                    searchAnalyzer: "canonical_query_search_analyzer",
-                  },
-                },
+                    searchAnalyzer: "canonical_query_search_analyzer"
+                  }
+                }
               },
               aliases: {
                 type: "string",
@@ -398,9 +401,9 @@ test.before(async () => {
                   shingle: {
                     type: "string",
                     analyzer: "whole_name_analyzer",
-                    searchAnalyzer: "alias_search_analyzer",
-                  },
-                },
+                    searchAnalyzer: "alias_search_analyzer"
+                  }
+                }
               },
               participants: { type: "token" },
               relation_type: { type: "token" },
@@ -410,13 +413,13 @@ test.before(async () => {
               scope: { type: "token" },
               reinforcement_count: { type: "number" },
               confidence: { type: "number" },
-              subtype: { type: "token" },
-            },
-          },
-        },
+              subtype: { type: "token" }
+            }
+          }
+        }
       }),
     "createBeliefsSearchIndex",
-    60_000,
+    60_000
   );
 
   await retryUntilReady(
@@ -428,7 +431,7 @@ test.before(async () => {
       if (idx?.status !== "READY") throw new Error(`status: ${idx?.status}`);
     },
     "waitForSearchIndex",
-    60_000,
+    60_000
   );
 
   const raw = JSON.parse(readFileSync(FIXTURE_BELIEFS, "utf8")) as Record<
@@ -448,17 +451,17 @@ test.before(async () => {
           {
             $search: {
               index: "beliefs_search",
-              text: { query: "TypeScript", path: "aliases" },
-            },
+              text: { query: "TypeScript", path: "aliases" }
+            }
           },
-          { $limit: 1 },
+          { $limit: 1 }
         ])
         .toArray();
       if (results.length === 0)
         throw new Error("Atlas Search index not synced");
     },
     "waitForSearchSync",
-    READY_TIMEOUT_MS,
+    READY_TIMEOUT_MS
   );
   const syncEnd = performance.now();
   const syncMs = Math.round((syncEnd - syncStart) * 100) / 100;
@@ -467,7 +470,7 @@ test.before(async () => {
     insertMs: ingestionMs,
     searchSyncMs: syncMs,
     totalReadyMs: Math.round((syncEnd - ingestionStart) * 100) / 100,
-    beliefCount: raw.length,
+    beliefCount: raw.length
   };
 
   const pinnedDocs = await col
@@ -488,32 +491,32 @@ test.after.always(async () => {
         ingestionTimings.beliefCount > 0
           ? Math.round(
               (ingestionTimings.totalReadyMs / ingestionTimings.beliefCount) *
-                100,
+                100
             ) / 100
           : 0,
-      perBelief: [],
-    },
+      perBelief: []
+    }
   };
 
   mkdirSync(REPORT_DIR, { recursive: true });
   writeFileSync(
     REPORT_PATH,
-    JSON.stringify(buildReportPayload(opts, report), null, 2),
+    JSON.stringify(buildReportPayload(opts, report), null, 2)
   );
   await client?.close();
   stopContainer();
 });
 
 const cases = JSON.parse(
-  readFileSync(FIXTURE_CASES, "utf8"),
+  readFileSync(FIXTURE_CASES, "utf8")
 ) as RetrievalCase[];
 
 for (const tc of cases) {
   test.serial(`${tc.caseId}: ${tc.description}`, async (t) => {
     const reader = new BeliefsReader(col);
-    const builder = new ContextBuilder(reader, EVAL_PERSONA, {
+    const builder = new ContextBuilder(reader, EVAL_PERSONA, NULL_ORG_SUMMARY, {
       ...tc.budget,
-      scoreDetails: true,
+      scoreDetails: true
     });
     const buildStart = performance.now();
     const ctx = await builder.build(tc.userId ?? USER_ID, tc.scope, tc.query);
@@ -549,13 +552,13 @@ for (const tc of cases) {
     if (rb.maxCount != null) {
       check(
         relevantIds.size <= rb.maxCount,
-        `relevantBeliefs count ${relevantIds.size} > maxCount ${rb.maxCount}`,
+        `relevantBeliefs count ${relevantIds.size} > maxCount ${rb.maxCount}`
       );
     }
     if (rb.minCount != null) {
       check(
         relevantIds.size >= rb.minCount,
-        `relevantBeliefs count ${relevantIds.size} < minCount ${rb.minCount}`,
+        `relevantBeliefs count ${relevantIds.size} < minCount ${rb.minCount}`
       );
     }
 
@@ -565,7 +568,7 @@ for (const tc of cases) {
       for (const id of relevantIds) {
         check(
           expectedSet.has(id),
-          `unexpected belief in relevantBeliefs: ${id}`,
+          `unexpected belief in relevantBeliefs: ${id}`
         );
       }
       for (const id of expectedSet) {
@@ -594,7 +597,7 @@ for (const tc of cases) {
       if (idxA !== -1 && idxB !== -1) {
         check(
           idxA < idxB,
-          `ranking: ${a} (idx ${idxA}) should precede ${b} (idx ${idxB})`,
+          `ranking: ${a} (idx ${idxA}) should precede ${b} (idx ${idxB})`
         );
       }
     }
@@ -624,11 +627,11 @@ for (const tc of cases) {
     const expectedRelevant = rb.shouldOnlyInclude
       ? new Set(rb.shouldOnlyInclude)
       : new Set(
-          [...(rb.mustInclude ?? [])].filter((id) => !pinnedInSeed.has(id)),
+          [...(rb.mustInclude ?? [])].filter((id) => !pinnedInSeed.has(id))
         );
 
     const retrievalHits = [...expectedRelevant].filter((id) =>
-      relevantIds.has(id),
+      relevantIds.has(id)
     ).length;
 
     const retrievalPrecision =
@@ -645,7 +648,7 @@ for (const tc of cases) {
 
     const expectedPinnedFromFacts = new Set(pf.mustInclude ?? []);
     const pinnedHits = [...expectedPinnedFromFacts].filter((id) =>
-      pinnedIds.has(id),
+      pinnedIds.has(id)
     ).length;
     const pinnedCoverage =
       expectedPinnedFromFacts.size === 0
@@ -653,7 +656,7 @@ for (const tc of cases) {
         : pinnedHits / expectedPinnedFromFacts.size;
 
     const questionHits = [...mustIncludeQuestions].filter((id) =>
-      questionIds.has(id),
+      questionIds.has(id)
     ).length;
     const questionPrecision =
       questionIds.size === 0 || mustIncludeQuestions.size === 0
@@ -677,7 +680,7 @@ for (const tc of cases) {
         score: Math.round(s.score * 100) / 100,
         clauses: s.scoreDetails
           ? extractClauses(s.scoreDetails as ScoreNode, s.id)
-          : [],
+          : []
       })),
       retrievalPrecision,
       retrievalRecall,
@@ -686,7 +689,7 @@ for (const tc of cases) {
       questionRecall,
       passed: failures.length === 0,
       failures,
-      retrievalLatencyMs: Math.round((buildEnd - buildStart) * 100) / 100,
+      retrievalLatencyMs: Math.round((buildEnd - buildStart) * 100) / 100
     });
 
     if (failures.length > 0) t.fail(failures.join("\n"));
