@@ -26,7 +26,7 @@ export class BeliefsReader {
    */
   private mergeFilter(
     base: Record<string, unknown>,
-    agentId: string | null | undefined,
+    agentId: string | null | undefined
   ): Record<string, unknown> {
     if (!agentId) return base;
 
@@ -37,7 +37,7 @@ export class BeliefsReader {
       const { $or: _, ...rest } = base;
       return {
         ...rest,
-        $and: [{ $or: existingOr }, { $or: agentOr }],
+        $and: [{ $or: existingOr }, { $or: agentOr }]
       };
     }
 
@@ -49,12 +49,12 @@ export class BeliefsReader {
   private buildBaseFilters(
     userId: string,
     scope?: string[],
-    agentId?: string | null,
+    agentId?: string | null
   ): Record<string, unknown>[] {
     const clauses: Record<string, unknown>[] = [
       { equals: { path: "user_id", value: userId } },
       { equals: { path: "resolved_at", value: null } },
-      { equals: { path: "superseded_by", value: null } },
+      { equals: { path: "superseded_by", value: null } }
     ];
     if (scope?.length) {
       clauses.push({ in: { path: "scope", value: scope } });
@@ -64,10 +64,10 @@ export class BeliefsReader {
         compound: {
           should: [
             { equals: { path: "agent_id", value: agentId } },
-            { equals: { path: "agent_id", value: null } },
+            { equals: { path: "agent_id", value: null } }
           ],
-          minimumShouldMatch: 1,
-        },
+          minimumShouldMatch: 1
+        }
       });
     }
     return clauses;
@@ -77,7 +77,7 @@ export class BeliefsReader {
     query: string,
     filterClauses: Record<string, unknown>[],
     mustNotClauses?: Record<string, unknown>[],
-    scoreDetails = false,
+    scoreDetails = false
   ): Record<string, unknown> {
     const stage: Record<string, unknown> = {
       index: "beliefs_search",
@@ -91,38 +91,38 @@ export class BeliefsReader {
                     query,
                     path: "canonical_name",
                     fuzzy: this.FUZZY_OPTS,
-                    score: { boost: { value: 14 } },
-                  },
+                    score: { boost: { value: 14 } }
+                  }
                 },
                 {
                   text: {
                     query,
                     path: { value: "canonical_name", multi: "phrase" },
-                    score: { boost: { value: 14 } },
-                  },
+                    score: { boost: { value: 14 } }
+                  }
                 },
                 {
                   text: {
                     query,
                     path: "aliases",
                     fuzzy: this.FUZZY_OPTS,
-                    score: { boost: { value: 5 } },
-                  },
+                    score: { boost: { value: 5 } }
+                  }
                 },
                 {
                   text: {
                     query,
                     path: { value: "aliases", multi: "shingle" },
-                    score: { boost: { value: 14 } },
-                  },
-                },
+                    score: { boost: { value: 14 } }
+                  }
+                }
               ],
-              minimumShouldMatch: 1,
-            },
-          },
+              minimumShouldMatch: 1
+            }
+          }
         ],
-        filter: filterClauses,
-      },
+        filter: filterClauses
+      }
     };
     if (mustNotClauses?.length) {
       const compound = stage.compound as Record<string, unknown>;
@@ -138,12 +138,12 @@ export class BeliefsReader {
     searchStage: Record<string, unknown>,
     minScore: number,
     limit: number,
-    scoreDetails = false,
+    scoreDetails = false
   ): Promise<ScoredBelief[]> {
     if (limit <= 0) return Promise.resolve([]);
 
     const addFields: Record<string, unknown> = {
-      _searchScore: { $meta: "searchScore" },
+      _searchScore: { $meta: "searchScore" }
     };
     if (scoreDetails) {
       addFields._scoreDetails = { $meta: "searchScoreDetails" };
@@ -153,7 +153,7 @@ export class BeliefsReader {
       { $search: searchStage },
       { $addFields: addFields },
       { $match: { _searchScore: { $gte: minScore } } },
-      { $limit: limit },
+      { $limit: limit }
     ];
 
     return this.col.aggregate<ScoredBelief>(pipeline).toArray();
@@ -163,12 +163,12 @@ export class BeliefsReader {
     userId: string,
     scope?: string[],
     limit = 40,
-    agentId?: string | null,
+    agentId?: string | null
   ): Promise<Belief[]> {
     const base: Record<string, unknown> = {
       user_id: userId,
       ...ACTIVE_FILTER,
-      $or: [{ pinned: true }, { type: "preference" }],
+      $or: [{ pinned: true }, { type: "preference" }]
     };
     if (scope?.length) base.scope = { $in: scope };
 
@@ -186,14 +186,14 @@ export class BeliefsReader {
     scope?: string[],
     limit = 40,
     excludeIds: Set<string> = new Set(),
-    agentId?: string | null,
+    agentId?: string | null
   ): Promise<Belief[]> {
     const base: Record<string, unknown> = {
       user_id: userId,
       ...ACTIVE_FILTER,
       pinned: true,
       type: { $ne: "open_question" as const },
-      scope: { $nin: ["universal", "user:universal"] },
+      scope: { $nin: ["universal", "user:universal"] }
     };
 
     if (excludeIds.size > 0) {
@@ -218,12 +218,12 @@ export class BeliefsReader {
     scope: string[],
     types?: BeliefType[],
     limit = 40,
-    agentId?: string | null,
+    agentId?: string | null
   ): Promise<Belief[]> {
     const base: Record<string, unknown> = {
       user_id: userId,
       ...ACTIVE_FILTER,
-      scope: { $in: scope },
+      scope: { $in: scope }
     };
     if (types?.length) base.type = { $in: types };
 
@@ -236,14 +236,14 @@ export class BeliefsReader {
     userId: string,
     query: string,
     scope?: string[],
-    opts: SearchTextOptions = {},
+    opts: SearchTextOptions = {}
   ): Promise<ScoredBelief[]> {
     const {
       limit = 20,
       minScore = 1.0,
       scoreDetails = false,
       excludeIds,
-      agentId,
+      agentId
     } = opts;
 
     if (!query.trim()) return [];
@@ -252,7 +252,7 @@ export class BeliefsReader {
 
     const mustNotClauses: Record<string, unknown>[] = [
       { equals: { path: "type", value: "open_question" } },
-      { equals: { path: "subtype", value: "expertise" } },
+      { equals: { path: "subtype", value: "expertise" } }
     ];
     if (excludeIds?.size) {
       for (const id of excludeIds) {
@@ -264,7 +264,7 @@ export class BeliefsReader {
       query,
       filterClauses,
       mustNotClauses,
-      scoreDetails,
+      scoreDetails
     );
 
     return this.runSearchPipeline(searchStage, minScore, limit, scoreDetails);
@@ -285,7 +285,7 @@ export class BeliefsReader {
       agentId?: string | null;
       limit?: number;
       minScore?: number;
-    } = {},
+    } = {}
   ): Promise<ScoredBelief[]> {
     const { limit = 5, minScore = 1.0, agentId } = opts;
     if (!query.trim()) return [];
@@ -305,7 +305,7 @@ export class BeliefsReader {
     userId: string,
     relationBeliefs: ScoredBelief[],
     scope?: string[],
-    opts: { excludeIds?: Set<string>; agentId?: string | null } = {},
+    opts: { excludeIds?: Set<string>; agentId?: string | null } = {}
   ): Promise<Belief[]> {
     const relations = relationBeliefs.filter((b) => b.type === "relation");
     if (relations.length === 0) return [];
@@ -328,7 +328,7 @@ export class BeliefsReader {
       _id: { $in: [...participantIds] },
       resolved_at: null,
       superseded_by: null,
-      type: { $ne: "open_question" },
+      type: { $ne: "open_question" }
     };
 
     if (scope?.length) base.scope = { $in: scope };
@@ -342,13 +342,13 @@ export class BeliefsReader {
     userId: string,
     scope?: string[],
     limit = 15,
-    agentId?: string | null,
+    agentId?: string | null
   ): Promise<Belief[]> {
     const base: Record<string, unknown> = {
       user_id: userId,
       ...ACTIVE_FILTER,
       type: "open_question",
-      pinned: true,
+      pinned: true
     };
     if (scope?.length) base.scope = { $in: scope };
 
@@ -361,14 +361,14 @@ export class BeliefsReader {
     userId: string,
     names: string[],
     scope?: string[],
-    opts: { agentId?: string | null; excludeIds?: Set<string> } = {},
+    opts: { agentId?: string | null; excludeIds?: Set<string> } = {}
   ): Promise<Belief[]> {
     if (names.length === 0) return [];
 
     const base: Record<string, unknown> = {
       user_id: userId,
       canonical_name: { $in: names.map((n) => n.trim().toLowerCase()) },
-      ...ACTIVE_FILTER,
+      ...ACTIVE_FILTER
     };
 
     if (scope?.length) base.scope = { $in: scope };
@@ -387,11 +387,45 @@ export class BeliefsReader {
   async countActive(userId: string, agentId?: string | null): Promise<number> {
     const base: Record<string, unknown> = {
       user_id: userId,
-      ...ACTIVE_FILTER,
+      ...ACTIVE_FILTER
     };
 
     const filter = this.mergeFilter(base, agentId);
 
     return this.col.countDocuments(filter);
+  }
+
+  async listTeamBeliefs(
+    teamId: string,
+    scope?: string[],
+    limit = 5,
+    agentId?: string | null
+  ): Promise<Belief[]> {
+    const base: Record<string, unknown> = {
+      team_id: teamId,
+      visibility: "team",
+      ...ACTIVE_FILTER
+    };
+    if (scope?.length) base.scope = { $in: scope };
+
+    const filter = this.mergeFilter(base, agentId);
+
+    return this.col
+      .find(filter)
+      .sort({ pinned: -1, last_reinforced_at: -1 })
+      .limit(limit)
+      .toArray();
+  }
+
+  async listOrgBeliefs(orgId: string, limit = 10): Promise<Belief[]> {
+    return this.col
+      .find({
+        org_id: orgId,
+        visibility: "org",
+        ...ACTIVE_FILTER
+      })
+      .sort({ pinned: -1, created_at: -1 })
+      .limit(limit)
+      .toArray();
   }
 }

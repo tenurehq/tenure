@@ -6,6 +6,30 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.24] - 2026-06-09
+
+### Added
+
+- **Team and organization belief visibility** (`src/types/belief.ts`, `src/context/beliefsReader.ts`, `src/db/indexes.ts`): Introduced `visibility` (`org`, `team`, `private`), `team_id`, and `org_id` fields to beliefs. Added `listTeamBeliefs` and `listOrgBeliefs` methods on `BeliefsReader` to query shared team and organization beliefs with appropriate sorting.
+- **Organization summary cache and service** (`src/app.ts`, `src/context/contextBuilder.ts`, `src/db/indexes.ts`): Added `OrgSummaryMongoCache` backed by a new `org_summary_cache` collection and `OrgSummaryService`, both wired into the application bootstrap. Includes indexes on `generated_at` and `beliefs_hash`.
+- **Team-mode context injection** (`src/context/contextBuilder.ts`, `src/context/systemPromptBuilder.ts`, `src/server.ts`): When request membership resolves to a team and org (`teamMode`), `ContextBuilder` fetches team beliefs and an organization summary. `buildSystemPrompt` injects `<org_summary>` and `<team_beliefs>` blocks into the system prompt, treated as durable and active constraints respectively.
+- **Per-request team resolution** (`src/server.ts`): Added `resolveMembership` with strategies `static`, `header`, `scim_group`, `manual`, and `disabled`. Reads `TENURE_DEFAULT_TEAM_ID`/`TENURE_DEFAULT_ORG_ID` or request headers (`x-team-id`/`x-org-id`) and sets `req.tenureTeamId`/`req.tenureOrgId` for proxy-authenticated and PAT-authenticated requests.
+- **IDE-mode user belief cap** (`src/context/contextBuilder.ts`): When `teamMode` and `ideMode` are both active, user-specific beliefs are capped separately via `maxUserBeliefs` rather than consuming the full `maxBeliefs` budget.
+- **SCIM Group provisioning** (`src/routes/scim.ts`, `src/db/indexes.ts`): Implemented full SCIM v2 Group endpoints: list (with `displayName`/`externalId` filtering), get by ID, create, replace (PUT), patch members (add, remove, replace), and delete. Added `scim_groups` collection with unique `displayName`, sparse `externalId`, and `members.value` indexes.
+- **SCIM user idempotency and filtering** (`src/routes/scim.ts`): POST `/scim/v2/Users` now returns the existing record with `200` when matched by `userName` or `externalId`, instead of `409`. GET `/scim/v2/Users` now supports filtering by `externalId`.
+- **SCIM membership cleanup** (`src/routes/scim.ts`): Deleting a SCIM user now automatically removes the user from all `scim_groups` member arrays.
+
+### Changed
+
+- **Context budget defaults** (`src/context/contextBuilder.ts`): `ContextBudget` and `DEFAULT_BUDGET` expanded with `maxTeamBeliefs` (5), `maxUserBeliefs` (3), and `maxOrgSummaryChars` (600).
+- **Context builder dependencies** (`src/context/contextBuilder.ts`, `src/context/beliefsAndContext.test.ts`, `src/app.ts`): `ContextBuilder` now requires an `OrgSummaryLookup` as a constructor argument. Updated all route registrations and test stubs (`NULL_ORG_SUMMARY`) accordingly.
+- **Belief unique index** (`src/db/indexes.ts`): The `user_canonical_unique_active` partial unique index now includes `team_id` and `org_id` in the key to support multi-tenant uniqueness.
+- **SCIM user revocation query** (`src/routes/scim.ts`): Token revocation during SCIM user deactivation now queries for `revoked_at: null` instead of using `$exists: false`.
+- **Admin token schema** (`src/routes/admin.ts`): New API tokens explicitly set `revoked_at: null` on creation.
+- **Admin setup cleanup** (`src/routes/admin-setup.ts`): Removed an unreachable duplicate `else if (token)` branch.
+
+---
+
 ## [1.0.23] - 2026-06-07
 
 ### Added

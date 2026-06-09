@@ -1,6 +1,6 @@
-import { buildSidecarInstructions } from "../sidecar/prompt.js";
-import { buildIdeSidecarInstructions } from "../sidecar/idePrompt.js";
 import type { SystemPrompt } from "../providers/types.js";
+import { buildIdeSidecarInstructions } from "../sidecar/idePrompt.js";
+import { buildSidecarInstructions } from "../sidecar/prompt.js";
 import type { BuiltContext } from "./contextBuilder.js";
 
 export interface BuildSystemPromptArgs {
@@ -15,6 +15,7 @@ export interface BuildSystemPromptArgs {
     projectScope: string | null;
     languageScope: string | null;
   } | null;
+  teamMode?: boolean;
 }
 
 export function buildSystemPrompt(args: BuildSystemPromptArgs): SystemPrompt {
@@ -27,7 +28,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): SystemPrompt {
         "note facts the user would be frustrated to re-establish next session: " +
         "their preferences, decisions, project commitments, working principles, " +
         "and how they think and engage. " +
-        "Respond fully first; the extraction format follows.",
+        "Respond fully first; the extraction format follows."
     );
 
     if (args.extractionMode === "ide" && args.ideScope) {
@@ -36,25 +37,47 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): SystemPrompt {
           activeScope: args.activeScope,
           scopeAutoDetect: args.scopeAutoDetect,
           projectScope: args.ideScope.projectScope,
-          languageScope: args.ideScope.languageScope,
-        }),
+          languageScope: args.ideScope.languageScope
+        })
       );
     } else {
       staticParts.push(
         buildSidecarInstructions({
           activeScope: args.activeScope,
-          scopeAutoDetect: args.scopeAutoDetect,
-        }),
+          scopeAutoDetect: args.scopeAutoDetect
+        })
       );
     }
   }
 
   if (args.injectionEnabled) {
+    if (args.teamMode && args.beliefCtx.orgSummaryPrelude) {
+      staticParts.push(
+        "<org_summary>",
+        args.beliefCtx.orgSummaryPrelude,
+        "</org_summary>",
+        "The <org_summary> block above describes organization standards and governance. Treat these as durable constraints."
+      );
+    }
+
     if (args.beliefCtx.personaPrelude) {
       staticParts.push(
         "<persona>",
         args.beliefCtx.personaPrelude,
-        "</persona>",
+        "</persona>"
+      );
+    }
+
+    if (
+      args.teamMode &&
+      args.beliefCtx.teamBeliefsJson &&
+      args.beliefCtx.teamBeliefsJson !== "[]"
+    ) {
+      staticParts.push(
+        "<team_beliefs>",
+        args.beliefCtx.teamBeliefsJson,
+        "</team_beliefs>",
+        "The <team_beliefs> block above describes working agreements for your team. Treat these as active constraints that shape implementation choices."
       );
     }
 
@@ -70,8 +93,8 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): SystemPrompt {
         "Beliefs with epistemic_status 'inferred' are system hypotheses — hold them loosely.",
         "Beliefs with epistemic_status 'exploratory' are unresolved — do not treat them as settled.",
         "Beliefs with confidence below 0.65 are low-certainty — weight them accordingly.",
-        "Treat open questions as unresolved; do not invent closure.",
-      ].join("\n"),
+        "Treat open questions as unresolved; do not invent closure."
+      ].join("\n")
     );
   }
 
@@ -81,7 +104,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): SystemPrompt {
     ? [
         "<pinned_facts>",
         args.beliefCtx.pinnedFactsJson,
-        "</pinned_facts>",
+        "</pinned_facts>"
       ].join("\n")
     : "";
 
@@ -95,8 +118,8 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): SystemPrompt {
         "</relevant_beliefs>",
         "",
         "### Open Questions",
-        args.beliefCtx.openQuestionsJson,
-      ].join("\n"),
+        args.beliefCtx.openQuestionsJson
+      ].join("\n")
     );
   }
 
@@ -107,12 +130,12 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): SystemPrompt {
   dynamicParts.push(
     args.extractionEnabled
       ? "--- Respond to the user's message. After your complete, visible response, append the sidecar block. ---"
-      : "--- Respond to the user's message. ---",
+      : "--- Respond to the user's message. ---"
   );
 
   return {
     static: staticSection,
     beliefs: beliefsSection,
-    dynamic: dynamicParts.join("\n\n"),
+    dynamic: dynamicParts.join("\n\n")
   };
 }

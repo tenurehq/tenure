@@ -30,8 +30,10 @@ test.beforeEach(async () => {
 });
 
 const NULL_PERSONA: PersonaLookup = {
-  get: async () => null,
+  get: async () => null
 };
+
+const NULL_ORG_SUMMARY = { get: async (_orgId: string) => null }; // <--- ADD
 
 let idSeq = 0;
 function makeBelief(overrides: Partial<Belief> = {}): Belief {
@@ -50,7 +52,7 @@ function makeBelief(overrides: Partial<Belief> = {}): Belief {
       session_id: "seed",
       turn_id: "seed-turn",
       extracted_at: now,
-      source_model: "test",
+      source_model: "test"
     },
     epistemic_status: "active",
     confidence: 0.8,
@@ -63,7 +65,7 @@ function makeBelief(overrides: Partial<Belief> = {}): Belief {
     created_at: now,
     updated_at: now,
     change_log: [],
-    ...overrides,
+    ...overrides
   } as Belief;
 }
 
@@ -71,7 +73,7 @@ test.serial("listAlwaysOn returns pinned beliefs", async (t) => {
   const reader = new BeliefsReader(col);
   await col.insertMany([
     makeBelief({ pinned: true, type: "entity" }),
-    makeBelief({ pinned: false, type: "entity" }),
+    makeBelief({ pinned: false, type: "entity" })
   ]);
   const results = await reader.listAlwaysOn("user-1");
   t.is(results.filter((b) => b.pinned).length, 1);
@@ -81,7 +83,7 @@ test.serial("listAlwaysOn excludes resolved beliefs", async (t) => {
   const reader = new BeliefsReader(col);
   await col.insertMany([
     makeBelief({ pinned: true, resolved_at: new Date() }),
-    makeBelief({ pinned: true }),
+    makeBelief({ pinned: true })
   ]);
   const results = await reader.listAlwaysOn("user-1");
   t.is(results.length, 1);
@@ -92,7 +94,7 @@ test.serial("listAlwaysOn excludes superseded beliefs", async (t) => {
   const reader = new BeliefsReader(col);
   await col.insertMany([
     makeBelief({ pinned: true, superseded_by: "other-belief-id" }),
-    makeBelief({ pinned: true }),
+    makeBelief({ pinned: true })
   ]);
   const results = await reader.listAlwaysOn("user-1");
   t.is(results.length, 1);
@@ -102,7 +104,7 @@ test.serial("listAlwaysOn is scoped to userId", async (t) => {
   const reader = new BeliefsReader(col);
   await col.insertMany([
     makeBelief({ user_id: "user-1", pinned: true }),
-    makeBelief({ user_id: "user-2", pinned: true }),
+    makeBelief({ user_id: "user-2", pinned: true })
   ]);
   const results = await reader.listAlwaysOn("user-1");
   t.true(results.every((b) => b.user_id === "user-1"));
@@ -115,18 +117,18 @@ test.serial(
     await col.insertMany([
       makeBelief({ scope: ["work"] }),
       makeBelief({ scope: ["personal"] }),
-      makeBelief({ scope: ["other"] }),
+      makeBelief({ scope: ["other"] })
     ]);
     const results = await reader.listByScope("user-1", ["work", "personal"]);
     t.is(results.length, 2);
-  },
+  }
 );
 
 test.serial("listByScope respects type filter", async (t) => {
   const reader = new BeliefsReader(col);
   await col.insertMany([
     makeBelief({ scope: ["work"], type: "entity" }),
-    makeBelief({ scope: ["work"], type: "preference" }),
+    makeBelief({ scope: ["work"], type: "preference" })
   ]);
   const results = await reader.listByScope("user-1", ["work"], ["entity"]);
   t.true(results.every((b) => b.type === "entity"));
@@ -135,7 +137,7 @@ test.serial("listByScope respects type filter", async (t) => {
 test.serial("listByScope respects limit", async (t) => {
   const reader = new BeliefsReader(col);
   const beliefs = Array.from({ length: 10 }, () =>
-    makeBelief({ scope: ["work"] }),
+    makeBelief({ scope: ["work"] })
   );
   await col.insertMany(beliefs);
   const results = await reader.listByScope("user-1", ["work"], undefined, 3);
@@ -146,7 +148,7 @@ test.serial("listByScope excludes inactive beliefs", async (t) => {
   const reader = new BeliefsReader(col);
   await col.insertMany([
     makeBelief({ scope: ["work"], resolved_at: new Date() }),
-    makeBelief({ scope: ["work"] }),
+    makeBelief({ scope: ["work"] })
   ]);
   const results = await reader.listByScope("user-1", ["work"]);
   t.is(results.length, 1);
@@ -159,19 +161,19 @@ test.serial(
     await col.insertMany([
       makeBelief({ type: "open_question", pinned: true }),
       makeBelief({ type: "open_question", pinned: false }),
-      makeBelief({ type: "entity", pinned: true }),
+      makeBelief({ type: "entity", pinned: true })
     ]);
     const results = await reader.listPinnedOpenQuestions("user-1");
     t.is(results.length, 1);
     t.is(results[0].type, "open_question");
     t.true(results[0].pinned);
-  },
+  }
 );
 
 test.serial("listPinnedOpenQuestions respects limit", async (t) => {
   const reader = new BeliefsReader(col);
   const beliefs = Array.from({ length: 20 }, () =>
-    makeBelief({ type: "open_question", pinned: true }),
+    makeBelief({ type: "open_question", pinned: true })
   );
   await col.insertMany(beliefs);
   const results = await reader.listPinnedOpenQuestions("user-1", undefined, 5);
@@ -181,7 +183,7 @@ test.serial("listPinnedOpenQuestions respects limit", async (t) => {
 function makeReader(
   pinnedFacts: Belief[],
   relevant: Belief[],
-  questions: Belief[],
+  questions: Belief[]
 ): BeliefsReader {
   const stub = {
     listPinnedFacts: sinon.stub().resolves(pinnedFacts),
@@ -192,27 +194,27 @@ function makeReader(
           _userId: string,
           _query: string,
           _scope: string[] | undefined,
-          opts?: { excludeIds?: Set<string> },
+          opts?: { excludeIds?: Set<string> }
         ) => {
           const excludeIds = opts?.excludeIds;
           if (excludeIds?.size) {
             return Promise.resolve(
-              relevant.filter((b) => !excludeIds.has(b._id)),
+              relevant.filter((b) => !excludeIds.has(b._id))
             );
           }
           return Promise.resolve(relevant);
-        },
+        }
       ),
     listPinnedOpenQuestions: sinon.stub().resolves(questions),
     listAlwaysOn: sinon.stub().resolves([]),
     listByScope: sinon.stub().resolves([]),
-    expandRelationParticipants: sinon.stub().resolves([]),
+    expandRelationParticipants: sinon.stub().resolves([])
   };
   return stub as unknown as BeliefsReader;
 }
 
 function makePersonaStub(
-  universal = "You prefer direct answers.",
+  universal = "You prefer direct answers."
 ): PersonaCache {
   const doc: PersonaDoc = {
     _id: "user-1",
@@ -220,7 +222,7 @@ function makePersonaStub(
     contributing_belief_ids: [],
     beliefs_hash: "x",
     generated_at: new Date(),
-    model: "test",
+    model: "test"
   };
   return { get: sinon.stub().resolves(doc) } as unknown as PersonaCache;
 }
@@ -228,7 +230,11 @@ function makePersonaStub(
 test.serial("ContextBuilder.build returns valid JSON strings", async (t) => {
   const belief = makeBelief();
   const reader = makeReader([belief], [], []);
-  const builder = new ContextBuilder(reader, makePersonaStub());
+  const builder = new ContextBuilder(
+    reader,
+    makePersonaStub(),
+    NULL_ORG_SUMMARY
+  );
   const ctx = await builder.build("user-1", ["global"], "");
   t.notThrows(() => JSON.parse(ctx.relevantBeliefsJson));
   t.notThrows(() => JSON.parse(ctx.pinnedFactsJson));
@@ -240,19 +246,27 @@ test.serial(
   async (t) => {
     const shared = makeBelief({ pinned: true, type: "decision" });
     const reader = makeReader([shared], [shared], []);
-    const builder = new ContextBuilder(reader, makePersonaStub());
+    const builder = new ContextBuilder(
+      reader,
+      makePersonaStub(),
+      NULL_ORG_SUMMARY
+    );
     const ctx = await builder.build("user-1", ["global"], "test");
     const pinned = JSON.parse(ctx.pinnedFactsJson);
     const relevant = JSON.parse(ctx.relevantBeliefsJson);
     t.is(pinned.length, 1);
     t.is(relevant.length, 0);
-  },
+  }
 );
 
 test.serial("ContextBuilder.build reports correct beliefCount", async (t) => {
   const beliefs = [makeBelief(), makeBelief()];
   const reader = makeReader(beliefs, [], []);
-  const builder = new ContextBuilder(reader, makePersonaStub());
+  const builder = new ContextBuilder(
+    reader,
+    makePersonaStub(),
+    NULL_ORG_SUMMARY
+  );
   const ctx = await builder.build("user-1", [], "");
   t.is(ctx.beliefCount, 2);
 });
@@ -260,10 +274,14 @@ test.serial("ContextBuilder.build reports correct beliefCount", async (t) => {
 test.serial("ContextBuilder.build reports correct questionCount", async (t) => {
   const questions = [
     makeBelief({ type: "open_question", pinned: true }),
-    makeBelief({ type: "open_question", pinned: true }),
+    makeBelief({ type: "open_question", pinned: true })
   ];
   const reader = makeReader([], [], questions);
-  const builder = new ContextBuilder(reader, makePersonaStub());
+  const builder = new ContextBuilder(
+    reader,
+    makePersonaStub(),
+    NULL_ORG_SUMMARY
+  );
   const ctx = await builder.build("user-1", [], "");
   t.is(ctx.questionCount, 2);
 });
@@ -274,13 +292,18 @@ test.serial(
     const longContent = "x".repeat(500);
     const belief = makeBelief({ content: longContent });
     const reader = makeReader([], [belief], []);
-    const builder = new ContextBuilder(reader, makePersonaStub(), {
-      maxCharsPerBelief: 400,
-    });
+    const builder = new ContextBuilder(
+      reader,
+      makePersonaStub(),
+      NULL_ORG_SUMMARY,
+      {
+        maxCharsPerBelief: 400
+      }
+    );
     const ctx = await builder.build("user-1", [], "anything matches");
     const beliefs = JSON.parse(ctx.relevantBeliefsJson);
     t.true(beliefs[0].content.length <= 400);
-  },
+  }
 );
 
 test.serial(
@@ -288,21 +311,27 @@ test.serial(
   async (t) => {
     const many = Array.from({ length: 5 }, () => makeBelief());
     const reader = makeReader(many, [], []);
-    const builder = new ContextBuilder(reader, NULL_PERSONA, { maxBeliefs: 3 });
+    const builder = new ContextBuilder(reader, NULL_PERSONA, NULL_ORG_SUMMARY, {
+      maxBeliefs: 3
+    });
     const ctx = await builder.build("user-1", [], "");
     t.true(ctx.truncated);
     t.is(ctx.beliefCount, 3);
-  },
+  }
 );
 
 test.serial(
   "ContextBuilder.build sets truncated=false when under budget",
   async (t) => {
     const reader = makeReader([makeBelief()], [], []);
-    const builder = new ContextBuilder(reader, makePersonaStub());
+    const builder = new ContextBuilder(
+      reader,
+      makePersonaStub(),
+      NULL_ORG_SUMMARY
+    );
     const ctx = await builder.build("user-1", [], "");
     t.false(ctx.truncated);
-  },
+  }
 );
 
 test.serial(
@@ -316,10 +345,14 @@ test.serial(
       epistemic_status: "active",
       confidence: 0.64,
       pinned: true,
-      type: "decision",
+      type: "decision"
     });
     const reader = makeReader([belief], [], []);
-    const builder = new ContextBuilder(reader, makePersonaStub());
+    const builder = new ContextBuilder(
+      reader,
+      makePersonaStub(),
+      NULL_ORG_SUMMARY
+    );
     const ctx = await builder.build("user-1", [], "");
     const pinned = JSON.parse(ctx.pinnedFactsJson);
     const projected = pinned[0];
@@ -327,5 +360,5 @@ test.serial(
     t.is(projected.canonical_name, "my-fact");
     t.is(projected.why_it_matters, "matters a lot");
     t.is(projected.confidence, 0.64);
-  },
+  }
 );

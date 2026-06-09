@@ -152,7 +152,8 @@ export function registerAdminRoutes(
       token_hash: hash,
       name,
       user_id: userId,
-      created_at: new Date()
+      created_at: new Date(),
+      revoked_at: null
     });
 
     return { ok: true, token, name, user_id: userId };
