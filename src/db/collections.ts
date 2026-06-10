@@ -1,5 +1,5 @@
 import type { Collection, Db } from "mongodb";
-import type { Belief } from "../types/belief.js";
+import type { Belief, BeliefSuggestion } from "../types/belief.js";
 import type { Turn } from "../history/manager.js";
 import type { Session } from "../types/session.js";
 import type { ExtractionJob } from "../types/job.js";
@@ -87,6 +87,7 @@ export interface Collections {
   injection_audit: Collection<InjectionAuditRecord>;
   api_tokens: Collection<ApiTokenDoc>;
   scim_users: Collection<ScimUserDoc>;
+  belief_suggestions: Collection<BeliefSuggestion>;
 }
 
 export function getCollections(db: Db, plainDb?: Db): Collections {
@@ -108,6 +109,7 @@ export function getCollections(db: Db, plainDb?: Db): Collections {
     file_meta: db.collection<FileMetaDoc>("file_meta"),
     injection_audit: db.collection<InjectionAuditRecord>("injection_audit"),
     api_tokens: db.collection<ApiTokenDoc>("api_tokens"),
-    scim_users: db.collection<ScimUserDoc>("scim_users")
+    scim_users: db.collection<ScimUserDoc>("scim_users"),
+    belief_suggestions: db.collection<BeliefSuggestion>("belief_suggestions")
   };
 }

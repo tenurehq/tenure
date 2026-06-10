@@ -298,6 +298,31 @@ function render() {
         </div>
         </div>
 
+              ${
+                !isTeams
+                  ? `
+      <div class="section">
+        <div class="section-title">Memory mode</div>
+        <div class="card">
+          <div class="field">
+            <label>Memory mode</label>
+            <select id="memory-mode" class="model-select" style="width:100%">
+              <option value="autonomous"\${(cfg.memory_mode ?? "autonomous") === "autonomous" ? " selected" : ""}>Autonomous - extract and merge automatically</option>
+              <option value="inject_only"\${cfg.memory_mode === "inject_only" ? " selected" : ""}>Document-driven - only import/onboarding</option>
+              <option value="curated"\${cfg.memory_mode === "curated" ? " selected" : ""}>Curated - queue for admin approval</option>
+              <option value="reflective"\${cfg.memory_mode === "reflective" ? " selected" : ""}>Reflective - extract, do not inject</option>
+            </select>
+            <div class="hint">Autonomous runs extraction and compaction automatically. Document-driven only adds beliefs from imports or onboarding. Curated queues new beliefs for your approval. Reflective extracts beliefs but never injects them into sessions.</div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;margin-top:.75rem">
+            <button class="btn btn-primary" data-action="save-memory-mode">Save</button>
+          </div>
+        </div>
+      </div>
+      `
+                  : ""
+              }
+
         <div class="section">
           <div class="section-title">Scope</div>
           <div class="card">
@@ -358,12 +383,6 @@ function render() {
               <div class="hint">How many tokens to reserve for injected beliefs per request. Lower values mean less context but faster responses. Default: 400.</div>
             </div>
             <div class="field">
-              <label>Session history limit (tokens)</label>
-              <input id="cfg-history-cap" type="number" min="10000" max="500000" step="10000"
-                value="\${cfg.managed_history_token_cap ?? 120000}">
-              <div class="hint">Maximum tokens of compacted session history to retain. Default: 120,000.</div>
-            </div>
-            <div class="field">
               <label>Verified models only</label>
               <div class="hint">When off, unverified model families are allowed. Disable if running a self-hosted model.</div>
               <div style="display:flex;align-items:center;gap:.75rem;margin-top:.5rem">
@@ -386,15 +405,6 @@ function render() {
                   \${cfg.strict_model_tiers !== false ? "Enforced" : "Off"}
                 </span>
               </div>
-            </div>
-            <div class="field" style="margin-top:1rem">
-              <label>History compaction mode</label>
-              <select id="cfg-compaction-mode" class="input-sm" style="width:100%">
-                <option value="aggressive"\${(cfg.compaction_mode ?? "aggressive") === "aggressive" ? " selected" : ""}>Aggressive — collapse acknowledgments, deduped turns, and completed topics</option>
-                <option value="conservative"\${cfg.compaction_mode === "conservative" ? " selected" : ""}>Conservative — only collapse pure acknowledgments</option>
-                <option value="off"\${cfg.compaction_mode === "off" ? " selected" : ""}>Off — keep all history (uses more tokens)</option>
-              </select>
-              <div class="hint">Controls how aggressively past turns are collapsed from session history. Aggressive is recommended for most users.</div>
             </div>
             <div style="display:flex;justify-content:flex-end;margin-top:1rem">
               <button class="btn btn-primary" data-action="save-advanced">Save</button>
@@ -704,21 +714,29 @@ function toggleAdvanced() {
 
 async function saveAdvanced() {
   const target = parseInt(document.getElementById("cfg-token-target")?.value ?? "", 10);
-  const cap = parseInt(document.getElementById("cfg-history-cap")?.value ?? "", 10);
-  const compactionMode = document.getElementById("cfg-compaction-mode")?.value ?? "aggressive";
 
-  if (isNaN(target) || isNaN(cap)) { toast("Invalid values", "error"); return; }
+  if (isNaN(target)) { toast("Invalid values", "error"); return; }
 
   try {
     await Promise.all([
       apiFetch("PUT", "/admin/config/always_on_token_target", { value: target }),
-      apiFetch("PUT", "/admin/config/managed_history_token_cap", { value: cap }),
-      apiFetch("PUT", "/admin/config/compaction_mode", { value: compactionMode }),
     ]);
     cfg.always_on_token_target = target;
-    cfg.managed_history_token_cap = cap;
-    cfg.compaction_mode = compactionMode;
     toast("Advanced settings saved", "ok");
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+
+async function saveMemoryMode() {
+  const mode = document.getElementById("memory-mode")?.value;
+  if (!mode) return;
+  try {
+    const res = await apiFetch("PUT", "/admin/config/memory_mode", { value: mode });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message ?? \`HTTP \${res.status}\`);
+    cfg.memory_mode = mode;
+    toast("Memory mode saved", "ok");
   } catch (e) {
     toast(e.message, "error");
   }
@@ -1177,6 +1195,9 @@ document.addEventListener("click", e => {
     case "save-provider": saveProvider(el.dataset.providerId); break;
     case "remove-provider": removeProvider(el.dataset.providerId); break;
     case "regenerate-persona": regeneratePersona(); break;
+    case "save-advanced": saveAdvanced(); break;
+    case "save-memory-mode": saveMemoryMode(); break;
+    case "rotate-token": rotateToken(); break;
   }
 });
 

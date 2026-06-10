@@ -428,4 +428,37 @@ export class BeliefsReader {
       .limit(limit)
       .toArray();
   }
+
+  async findTeamOrgByCanonical(
+    teamId: string | undefined,
+    orgId: string | undefined,
+    canonicalName: string,
+    scope?: string[]
+  ): Promise<Belief | null> {
+    const normalized = canonicalName.trim().toLowerCase();
+    const scopes: Record<string, unknown>[] = [];
+
+    if (teamId) {
+      const q: Record<string, unknown> = {
+        team_id: teamId,
+        visibility: "team",
+        $or: [{ canonical_name: normalized }, { aliases: normalized }],
+        ...ACTIVE_FILTER
+      };
+      if (scope?.length) q.scope = { $in: scope };
+      scopes.push(q);
+    }
+    if (orgId) {
+      const q: Record<string, unknown> = {
+        org_id: orgId,
+        visibility: "org",
+        $or: [{ canonical_name: normalized }, { aliases: normalized }],
+        ...ACTIVE_FILTER
+      };
+      if (scope?.length) q.scope = { $in: scope };
+      scopes.push(q);
+    }
+    if (scopes.length === 0) return null;
+    return this.col.findOne({ $or: scopes });
+  }
 }

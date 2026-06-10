@@ -41,6 +41,7 @@ export interface RuntimeConfig {
   compaction_mode: "aggressive" | "conservative" | "off";
   scope_auto_detect: boolean;
   ide_extraction_enabled: boolean;
+  memory_mode: "inject_only" | "curated" | "autonomous" | "reflective";
 }
 
 export const DEFAULTS: RuntimeConfig = {
@@ -62,17 +63,18 @@ export const DEFAULTS: RuntimeConfig = {
   compaction_mode: "aggressive",
   scope_auto_detect: true,
   ide_extraction_enabled: true,
+  memory_mode: "autonomous" as const
 };
 
 const ENCRYPTED_KEYS = new Set<keyof RuntimeConfig>([
   "openai_api_key",
-  "anthropic_api_key",
+  "anthropic_api_key"
 ]);
 
 export class RuntimeConfigStore {
   constructor(
     private readonly cols: Collections,
-    private readonly vault: CredentialVault,
+    private readonly vault: CredentialVault
   ) {}
 
   async load(): Promise<RuntimeConfig> {
@@ -92,14 +94,14 @@ export class RuntimeConfigStore {
 
   async set<K extends keyof RuntimeConfig>(
     key: K,
-    value: RuntimeConfig[K],
+    value: RuntimeConfig[K]
   ): Promise<void> {
     const encrypted = ENCRYPTED_KEYS.has(key) && typeof value === "string";
     const stored = encrypted ? this.vault.encrypt(value as string) : value;
     await this.cols.config.updateOne(
       { key },
       { $set: { key, value: stored, encrypted, updatedAt: new Date() } },
-      { upsert: true },
+      { upsert: true }
     );
   }
 }

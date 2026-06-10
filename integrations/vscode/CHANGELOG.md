@@ -6,6 +6,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+### Changed
+
+- **README restructured**: Restructured to align with the website and Github.
+
+---
+
 ## [1.0.21]
 
 ### Added

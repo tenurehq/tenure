@@ -396,8 +396,10 @@ export function registerMessagesRoute(
       const isIdeTurn = req.headers["x-tenure-ide"] === "1";
       const ideExtractionEnabled =
         (cfg as any).ide_extraction_enabled !== false;
+      const memoryMode = (cfg as any).memory_mode ?? "autonomous";
 
       const extractionEnabled =
+        memoryMode !== "inject_only" &&
         cfg.extraction_enabled !== false &&
         session?.extractionPaused !== true &&
         !noExtractHeader &&
@@ -405,6 +407,7 @@ export function registerMessagesRoute(
         (isIdeTurn ? ideExtractionEnabled : true);
 
       const injectionEnabled =
+        memoryMode !== "reflective" &&
         cfg.injection_enabled !== false &&
         session?.injectionPaused !== true &&
         !bootstrapInProgress;

@@ -8,15 +8,16 @@ import type {
   EpistemicStatus,
   ExpertiseDepth,
   OriginContext,
+  BeliefVisibility
 } from "../types/belief.js";
 
 export class CanonicalNameConflictError extends Error {
   constructor(
     public readonly userId: string,
-    public readonly canonicalName: string,
+    public readonly canonicalName: string
   ) {
     super(
-      `active belief already exists for user=${userId} canonical_name="${canonicalName}"`,
+      `active belief already exists for user=${userId} canonical_name="${canonicalName}"`
     );
   }
 }
@@ -46,6 +47,9 @@ export interface CreateBeliefInput {
   expertise_depth?: ExpertiseDepth;
   expertise_evidence_count?: number;
   origin_context?: OriginContext | null;
+  visibility?: BeliefVisibility;
+  team_id?: string | null;
+  org_id?: string | null;
 }
 
 export class BeliefWriter {
@@ -59,6 +63,9 @@ export class BeliefWriter {
       _id: id,
       user_id: input.user_id,
       agent_id: input.agent_id ?? null,
+      visibility: input.visibility ?? "private",
+      team_id: input.team_id ?? null,
+      org_id: input.org_id ?? null,
       type: input.type,
       subtype: input.subtype,
       canonical_name: input.canonical_name.trim().toLowerCase(),
@@ -79,15 +86,15 @@ export class BeliefWriter {
       created_at: now,
       updated_at: now,
       ...(input.expertise_domain !== undefined && {
-        expertise_domain: input.expertise_domain,
+        expertise_domain: input.expertise_domain
       }),
       ...(input.expertise_depth !== undefined && {
-        expertise_depth: input.expertise_depth,
+        expertise_depth: input.expertise_depth
       }),
       ...(input.expertise_evidence_count !== undefined && {
-        expertise_evidence_count: input.expertise_evidence_count,
+        expertise_evidence_count: input.expertise_evidence_count
       }),
-      ...(input.origin_context && { origin_context: input.origin_context }),
+      ...(input.origin_context && { origin_context: input.origin_context })
     };
 
     try {
@@ -97,7 +104,7 @@ export class BeliefWriter {
       if (e.code === 11000) {
         throw new CanonicalNameConflictError(
           input.user_id,
-          input.canonical_name,
+          input.canonical_name
         );
       }
       throw e;
@@ -113,7 +120,7 @@ export class BeliefWriter {
     beliefId: string,
     appendedContent: string,
     sessionId: string,
-    turnId: string,
+    turnId: string
   ): Promise<boolean> {
     const now = new Date();
     const belief = await this.col.findOne({ _id: beliefId, user_id: userId });
@@ -126,7 +133,7 @@ export class BeliefWriter {
       {
         $set: {
           content: newContent,
-          updated_at: now,
+          updated_at: now
         },
         $push: {
           change_log: {
@@ -134,10 +141,10 @@ export class BeliefWriter {
             trigger: `enriched: "${appendedContent}"`,
             previous_content: belief.content,
             changed_by_session: sessionId,
-            changed_by_turn: turnId,
-          },
-        },
-      },
+            changed_by_turn: turnId
+          }
+        }
+      }
     );
     return res.modifiedCount === 1;
   }
@@ -146,7 +153,7 @@ export class BeliefWriter {
     userId: string,
     beliefId: string,
     sessionId: string,
-    turnId: string,
+    turnId: string
   ): Promise<void> {
     const now = new Date();
     await this.col.updateOne(
@@ -159,17 +166,17 @@ export class BeliefWriter {
             changed_at: now,
             trigger: "reinforcement signal",
             changed_by_session: sessionId,
-            changed_by_turn: turnId,
-          },
-        },
-      },
+            changed_by_turn: turnId
+          }
+        }
+      }
     );
   }
 
   async addAliases(
     userId: string,
     beliefId: string,
-    newAliases: string[],
+    newAliases: string[]
   ): Promise<void> {
     const cleaned = newAliases
       .map((a) => a.trim().toLowerCase())
@@ -180,8 +187,8 @@ export class BeliefWriter {
       { _id: beliefId, user_id: userId },
       {
         $addToSet: { aliases: { $each: cleaned } },
-        $set: { updated_at: new Date() },
-      },
+        $set: { updated_at: new Date() }
+      }
     );
   }
 
@@ -190,7 +197,7 @@ export class BeliefWriter {
     oldId: string,
     newId: string,
     sessionId: string,
-    turnId: string,
+    turnId: string
   ): Promise<void> {
     const now = new Date();
     await this.col.updateOne(
@@ -199,17 +206,17 @@ export class BeliefWriter {
         $set: {
           superseded_by: newId,
           epistemic_status: "superseded" as EpistemicStatus,
-          updated_at: now,
+          updated_at: now
         },
         $push: {
           change_log: {
             changed_at: now,
             trigger: `superseded by belief ${newId}`,
             changed_by_session: sessionId,
-            changed_by_turn: turnId,
-          },
-        },
-      },
+            changed_by_turn: turnId
+          }
+        }
+      }
     );
   }
 
@@ -217,11 +224,11 @@ export class BeliefWriter {
     userId: string,
     canonicalName: string,
     activeOnly = true,
-    scope?: string[],
+    scope?: string[]
   ): Promise<Belief | null> {
     const query: Record<string, unknown> = {
       user_id: userId,
-      canonical_name: canonicalName.trim().toLowerCase(),
+      canonical_name: canonicalName.trim().toLowerCase()
     };
     if (activeOnly) query.superseded_by = null;
     if (scope?.length) query.scope = { $in: scope };
@@ -232,12 +239,12 @@ export class BeliefWriter {
     userId: string,
     surface: string,
     activeOnly = true,
-    scope?: string[],
+    scope?: string[]
   ): Promise<Belief[]> {
     const normalized = surface.trim().toLowerCase();
     const query: Record<string, unknown> = {
       user_id: userId,
-      $or: [{ canonical_name: normalized }, { aliases: normalized }],
+      $or: [{ canonical_name: normalized }, { aliases: normalized }]
     };
     if (activeOnly) query.superseded_by = null;
     if (scope?.length) query.scope = { $in: scope };
@@ -246,7 +253,7 @@ export class BeliefWriter {
 
   async closeOpenQuestion(
     userId: string,
-    questionId: string,
+    questionId: string
   ): Promise<boolean> {
     const now = new Date();
     const res = await this.col.updateOne(
@@ -254,14 +261,14 @@ export class BeliefWriter {
         _id: questionId,
         user_id: userId,
         type: "open_question",
-        resolved_at: null,
+        resolved_at: null
       },
       {
         $set: { resolved_at: now, updated_at: now },
         $push: {
-          change_log: { changed_at: now, trigger: "question resolved" },
-        },
-      },
+          change_log: { changed_at: now, trigger: "question resolved" }
+        }
+      }
     );
     return res.modifiedCount === 1;
   }
@@ -275,7 +282,7 @@ export class BeliefWriter {
     userId: string,
     beliefId: string,
     sessionId: string,
-    turnId: string,
+    turnId: string
   ): Promise<boolean> {
     const now = new Date();
     const res = await this.col.updateOne(
@@ -283,7 +290,7 @@ export class BeliefWriter {
       {
         $set: {
           epistemic_status: "active" as EpistemicStatus,
-          updated_at: now,
+          updated_at: now
         },
         $push: {
           change_log: {
@@ -291,10 +298,10 @@ export class BeliefWriter {
             trigger:
               "promoted from inferred to active via reinforcement threshold",
             changed_by_session: sessionId,
-            changed_by_turn: turnId,
-          },
-        },
-      },
+            changed_by_turn: turnId
+          }
+        }
+      }
     );
     return res.modifiedCount === 1;
   }
@@ -302,11 +309,11 @@ export class BeliefWriter {
   async setSupersededBy(
     userId: string,
     oldId: string,
-    newId: string,
+    newId: string
   ): Promise<void> {
     await this.col.updateOne(
       { _id: oldId, user_id: userId },
-      { $set: { superseded_by: newId } },
+      { $set: { superseded_by: newId } }
     );
   }
 }
