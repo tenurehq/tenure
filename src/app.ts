@@ -28,10 +28,7 @@ import { initBeliefEncryption } from "./config/beliefEncryption.js";
 import { randomBytes } from "node:crypto";
 import { WorkspaceStateCache } from "./workspace/stateCache.js";
 import type { InternalLLMCaller } from "./providers/types.js";
-import {
-  OrgSummaryMongoCache,
-  OrgSummaryService
-} from "./context/orgSummary.js";
+import { OrgSummaryDirect } from "./context/orgSummary.js";
 
 const mongoTlsOptions: MongoClientOptions = {};
 if (process.env.MONGODB_TLS_CA_FILE) {
@@ -151,10 +148,10 @@ export async function buildApp(config: BootstrapConfig) {
   const history = new HistoryManager(db);
   const beliefs = new BeliefsReader(cols.beliefs);
   const persona = new PersonaCache(cols.persona_cache);
-  const orgSummaryCache = new OrgSummaryMongoCache(
-    cols.db.collection("org_summary_cache")
+  const orgSummaryService = new OrgSummaryDirect(
+    cols.db.collection("org_summaries")
   );
-  const context = new ContextBuilder(beliefs, persona, orgSummaryCache);
+  const context = new ContextBuilder(beliefs, persona, orgSummaryService);
   const jobs = new ExtractionJobQueue(db);
   const vault = new CredentialVault(config.master_key_path);
   const runtimeStore = new RuntimeConfigStore(cols, vault);
@@ -191,13 +188,6 @@ export async function buildApp(config: BootstrapConfig) {
   const personaSummary = new PersonaSummaryService({
     beliefs: cols.beliefs,
     cache: persona,
-    adapter: resolveAdapter,
-    modelId: runtimeConfig.default_model ?? ""
-  });
-
-  const orgSummaryService = new OrgSummaryService({
-    beliefs: cols.beliefs,
-    cache: orgSummaryCache,
     adapter: resolveAdapter,
     modelId: runtimeConfig.default_model ?? ""
   });

@@ -365,8 +365,10 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       req.headers["x-tenure-ide"] === "true";
 
     const ideExtractionEnabled = (cfg as any).ide_extraction_enabled !== false;
+    const memoryMode = (cfg as any).memory_mode ?? "autonomous";
 
     const extractionEnabled =
+      memoryMode !== "inject_only" &&
       cfg.extraction_enabled !== false &&
       session?.extractionPaused !== true &&
       !noExtractHeader &&
@@ -374,6 +376,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       (isIdeTurn ? ideExtractionEnabled : true);
 
     const injectionEnabled =
+      memoryMode !== "reflective" &&
       cfg.injection_enabled !== false &&
       session?.injectionPaused !== true &&
       !bootstrapInProgress;

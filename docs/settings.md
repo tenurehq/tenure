@@ -64,6 +64,25 @@ knows your context, it just stops recording new things you say.
 If your client reuses session IDs across conversations, the pause will carry
 over. Send `!extract on` to re-enable when you're ready.
 
+### Extraction mode
+
+The extraction mode controls how beliefs from chat are handled before they reach your world model. Set it from the **Extraction** section in Settings.
+
+| Mode        | Behavior                                                                                                               |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------- |
+| autonomous  | Extracted beliefs are merged directly into your world model. This is the default.                                      |
+| curated     | Extracted beliefs land in a suggestions queue with `status: pending` and require admin approval before they are added. |
+| inject_only | Extraction is disabled. Beliefs enter your world model only via onboarding or import.                                  |
+| reflective  | Beliefs are still extracted and used for weekly summarization, but injection into chat is disabled.                    |
+
+**autonomous** is the right choice for most users. Tenure builds your world model continuously without intervention.
+
+**curated** is useful when multiple people share a Tenure instance, or when you want to review what the model is learning before it influences responses. Pending beliefs are visible in the dashboard under the Suggestions filter.
+
+**inject_only** is a fully document-driven setup. Nothing Tenure observes in chat changes your world model. Use this when your beliefs are managed entirely through import or manual authoring and you want that boundary enforced rather than just toggled.
+
+**reflective** keeps extraction running for the weekly summary digest but removes it from the response loop. Use this when you want periodic insight into patterns across your sessions without live belief injection.
+
 ### What "paused" means in practice
 
 Pausing extraction does not make Tenure forget anything. It does not clear

@@ -2,7 +2,7 @@ import type { BeliefsReader } from "../context/beliefsReader.js";
 import type {
   BeliefType,
   EpistemicStatus,
-  OriginContext,
+  OriginContext
 } from "../types/belief.js";
 import { BeliefWriter, CanonicalNameConflictError } from "./beliefWriter.js";
 import type {
@@ -11,7 +11,7 @@ import type {
   BeliefUpdateSignal,
   EntityUpdate,
   StyleSignal,
-  AliasCandidate,
+  AliasCandidate
 } from "./types.js";
 
 export enum MergeAction {
@@ -22,7 +22,7 @@ export enum MergeAction {
   FLAGGED_CONFLICT = "flagged_conflict",
   ALIAS_ADDED = "alias_added",
   CONTENT_EDITED = "content_edited",
-  NOOP = "noop",
+  NOOP = "noop"
 }
 
 export interface MergePolicy {
@@ -47,7 +47,7 @@ const DEFAULT_POLICY: MergePolicy = {
   inferredPromotionCount: 5,
   inferredPromotionAgeMs: 48 * 60 * 60 * 1000,
   demonstratedPromotionCount: 3,
-  demonstratedPromotionAgeMs: 24 * 60 * 60 * 1000,
+  demonstratedPromotionAgeMs: 24 * 60 * 60 * 1000
 };
 
 export interface MergeDecision {
@@ -73,6 +73,8 @@ export interface MergeInput {
   agentId: string | null;
   result: ExtractionResult;
   originContext?: OriginContext | null;
+  teamId?: string;
+  orgId?: string;
 }
 
 export class BeliefMerger {
@@ -81,7 +83,7 @@ export class BeliefMerger {
   constructor(
     private readonly writer: BeliefWriter,
     private readonly reader: BeliefsReader | undefined,
-    policy: Partial<MergePolicy> = {},
+    policy: Partial<MergePolicy> = {}
   ) {
     this.policy = { ...DEFAULT_POLICY, ...policy };
   }
@@ -94,7 +96,7 @@ export class BeliefMerger {
       sourceModel,
       agentId,
       result,
-      originContext,
+      originContext
     } = input;
 
     const report: MergeReport = {
@@ -103,7 +105,7 @@ export class BeliefMerger {
       styleSignalsDeferred: [],
       openQuestionsClosed: [],
       newOpenQuestionIds: [],
-      errors: [],
+      errors: []
     };
 
     for (const signal of result.belief_updates) {
@@ -114,12 +116,12 @@ export class BeliefMerger {
           turnId,
           sourceModel,
           signal,
-          agentId,
+          agentId
         );
         report.decisions.push(decision);
       } catch (e) {
         report.errors.push(
-          `belief_update[${signal.belief_id}]: ${(e as Error).message}`,
+          `belief_update[${signal.belief_id}]: ${(e as Error).message}`
         );
       }
     }
@@ -129,7 +131,7 @@ export class BeliefMerger {
         await this.applyEntityUpdate(userId, update, report);
       } catch (e) {
         report.errors.push(
-          `entity_update[${update.canonical_name}]: ${(e as Error).message}`,
+          `entity_update[${update.canonical_name}]: ${(e as Error).message}`
         );
       }
     }
@@ -143,7 +145,7 @@ export class BeliefMerger {
           sourceModel,
           nb,
           agentId,
-          originContext,
+          originContext
         );
         report.decisions.push(decision);
 
@@ -155,7 +157,7 @@ export class BeliefMerger {
           try {
             const closed = await this.writer.closeOpenQuestion(
               userId,
-              nb.resolves_open_question,
+              nb.resolves_open_question
             );
             if (closed)
               report.openQuestionsClosed.push(nb.resolves_open_question);
@@ -163,13 +165,13 @@ export class BeliefMerger {
             report.errors.push(
               `auto_resolve[${nb.resolves_open_question}]: ${
                 (e as Error).message
-              }`,
+              }`
             );
           }
         }
       } catch (e) {
         report.errors.push(
-          `new_belief[${nb.canonical_name}]: ${(e as Error).message}`,
+          `new_belief[${nb.canonical_name}]: ${(e as Error).message}`
         );
       }
     }
@@ -185,12 +187,12 @@ export class BeliefMerger {
           q.content,
           q.scope,
           agentId,
-          originContext,
+          originContext
         );
         report.newOpenQuestionIds.push(qid);
       } catch (e) {
         report.errors.push(
-          `new_open_question[${q.canonical_name}]: ${(e as Error).message}`,
+          `new_open_question[${q.canonical_name}]: ${(e as Error).message}`
         );
       }
     }
@@ -222,17 +224,17 @@ export class BeliefMerger {
     sourceModel: string,
     nb: NewBelief,
     agentId: string | null,
-    originContext?: OriginContext | null,
+    originContext?: OriginContext | null
   ): Promise<MergeDecision> {
     const matches = await this.writer.findByAliasOrCanonical(
       userId,
       nb.canonical_name,
       true,
-      nb.scope,
+      nb.scope
     );
     let existing =
       matches.find(
-        (m) => m.canonical_name === nb.canonical_name.trim().toLowerCase(),
+        (m) => m.canonical_name === nb.canonical_name.trim().toLowerCase()
       ) ??
       matches[0] ??
       null;
@@ -245,7 +247,7 @@ export class BeliefMerger {
           nb.scope,
           nb.type,
           nb.subtype ?? null,
-          { agentId, limit: 5, minScore: 1.0 },
+          { agentId, limit: 5, minScore: 1.0 }
         );
 
         const fuzzy = candidates.find((c) => {
@@ -274,7 +276,7 @@ export class BeliefMerger {
           beliefId: null,
           reason: `confidence ${nb.confidence.toFixed(2)} < ${
             this.policy.minInsertConfidence
-          }`,
+          }`
         };
       }
 
@@ -286,12 +288,12 @@ export class BeliefMerger {
           sourceModel,
           nb,
           agentId,
-          originContext,
+          originContext
         );
         return {
           action: MergeAction.INSERTED,
           beliefId,
-          reason: "no matching belief found",
+          reason: "no matching belief found"
         };
       } catch (e) {
         if (e instanceof CanonicalNameConflictError) {
@@ -299,32 +301,32 @@ export class BeliefMerger {
             userId,
             nb.canonical_name,
             true,
-            nb.scope,
+            nb.scope
           );
           if (!conflictMatch) {
             return {
               action: MergeAction.NOOP,
               beliefId: null,
               reason:
-                "canonical name conflict but no active belief found on re-read",
+                "canonical name conflict but no active belief found on re-read"
             };
           }
           await this.writer.reinforce(
             userId,
             conflictMatch._id,
             sessionId,
-            turnId,
+            turnId
           );
           await this.maybePromoteInferred(
             userId,
             conflictMatch._id,
             sessionId,
-            turnId,
+            turnId
           );
           return {
             action: MergeAction.REINFORCED,
             beliefId: conflictMatch._id,
-            reason: "canonical name conflict resolved as reinforcement",
+            reason: "canonical name conflict resolved as reinforcement"
           };
         }
         throw e;
@@ -343,13 +345,13 @@ export class BeliefMerger {
         sourceModel,
         nb,
         agentId,
-        originContext,
+        originContext
       );
       return {
         action: MergeAction.INSERTED,
         beliefId,
         reason:
-          "same canonical name but distinct file context — inserted as separate belief",
+          "same canonical name but distinct file context — inserted as separate belief"
       };
     }
 
@@ -360,7 +362,7 @@ export class BeliefMerger {
           action: MergeAction.FLAGGED_CONFLICT,
           beliefId: existing._id,
           reason:
-            "content differs within confidence margin; queued for user review",
+            "content differs within confidence margin; queued for user review"
         };
       }
       return {
@@ -368,7 +370,7 @@ export class BeliefMerger {
         beliefId: existing._id,
         reason: `content differs; incoming margin ${
           margin >= 0 ? "+" : ""
-        }${margin.toFixed(2)} insufficient without explicit supersede signal`,
+        }${margin.toFixed(2)} insufficient without explicit supersede signal`
       };
     }
 
@@ -376,13 +378,13 @@ export class BeliefMerger {
       ...(existing.canonical_name !== nb.canonical_name.trim().toLowerCase()
         ? [nb.canonical_name]
         : []),
-      ...nb.aliases,
+      ...nb.aliases
     ];
 
     const newAliases = candidateAliases.filter(
       (a) =>
         !existing.aliases.includes(a.trim().toLowerCase()) &&
-        a.trim().toLowerCase() !== existing.canonical_name,
+        a.trim().toLowerCase() !== existing.canonical_name
     );
 
     if (
@@ -398,7 +400,7 @@ export class BeliefMerger {
     return {
       action: MergeAction.REINFORCED,
       beliefId: existing._id,
-      reason: `matched existing; ${newAliases.length} alias(es) added`,
+      reason: `matched existing; ${newAliases.length} alias(es) added`
     };
   }
 
@@ -413,7 +415,7 @@ export class BeliefMerger {
     userId: string,
     beliefId: string,
     sessionId: string,
-    turnId: string,
+    turnId: string
   ): Promise<void> {
     const belief = await this.writer.get(userId, beliefId);
     if (!belief || belief.epistemic_status !== "inferred") return;
@@ -422,7 +424,7 @@ export class BeliefMerger {
     const isDemonstrated = belief.change_log.some(
       (cl) =>
         cl.trigger.includes("demonstrated") ||
-        cl.trigger.includes("config_artifact"),
+        cl.trigger.includes("config_artifact")
     );
 
     const requiredCount = isDemonstrated
@@ -444,14 +446,14 @@ export class BeliefMerger {
     turnId: string,
     sourceModel: string,
     signal: BeliefUpdateSignal,
-    agentId: string | null,
+    agentId: string | null
   ): Promise<MergeDecision> {
     const target = await this.writer.get(userId, signal.belief_id);
     if (!target) {
       return {
         action: MergeAction.NOOP,
         beliefId: signal.belief_id,
-        reason: "target belief not found",
+        reason: "target belief not found"
       };
     }
 
@@ -461,14 +463,14 @@ export class BeliefMerger {
         return {
           action: MergeAction.REINFORCED,
           beliefId: target._id,
-          reason: "explicit reinforcement signal",
+          reason: "explicit reinforcement signal"
         };
 
       case "contradicted":
         return {
           action: MergeAction.FLAGGED_CONFLICT,
           beliefId: target._id,
-          reason: "explicit contradiction signal",
+          reason: "explicit contradiction signal"
         };
 
       case "superseded": {
@@ -478,7 +480,7 @@ export class BeliefMerger {
         const newCanonical = signal.new_canonical_name ?? target.canonical_name;
 
         const inheritedAliases = [
-          ...new Set([...target.aliases, target.canonical_name]),
+          ...new Set([...target.aliases, target.canonical_name])
         ].filter((a) => a !== newCanonical);
 
         let replacementId: string;
@@ -497,23 +499,23 @@ export class BeliefMerger {
               session_id: sessionId,
               turn_id: turnId,
               extracted_at: new Date(),
-              source_model: sourceModel,
+              source_model: sourceModel
             },
             epistemic_status: "active",
             confidence: target.confidence,
             pinned: target.pinned,
             user_edited: false,
             ...(target.expertise_domain !== undefined && {
-              expertise_domain: target.expertise_domain,
+              expertise_domain: target.expertise_domain
             }),
             ...(target.expertise_depth !== undefined && {
-              expertise_depth: target.expertise_depth,
+              expertise_depth: target.expertise_depth
             }),
             ...(target.expertise_evidence_count !== undefined && {
-              expertise_evidence_count: target.expertise_evidence_count,
+              expertise_evidence_count: target.expertise_evidence_count
             }),
             ...(target.origin_context && {
-              origin_context: target.origin_context,
+              origin_context: target.origin_context
             }),
             change_log: [
               {
@@ -523,9 +525,9 @@ export class BeliefMerger {
                 previous_epistemic_status: target.epistemic_status,
                 previous_confidence: target.confidence,
                 changed_by_session: sessionId,
-                changed_by_turn: turnId,
-              },
-            ],
+                changed_by_turn: turnId
+              }
+            ]
           });
         } catch (e) {
           if (e instanceof CanonicalNameConflictError) {
@@ -533,7 +535,7 @@ export class BeliefMerger {
               action: MergeAction.FLAGGED_CONFLICT,
               beliefId: target._id,
               reason:
-                "supersede target canonical_name already active on another belief",
+                "supersede target canonical_name already active on another belief"
             };
           }
           throw e;
@@ -543,7 +545,7 @@ export class BeliefMerger {
         return {
           action: MergeAction.SUPERSEDED,
           beliefId: replacementId,
-          reason: `superseded ${target._id}`,
+          reason: `superseded ${target._id}`
         };
       }
 
@@ -552,7 +554,7 @@ export class BeliefMerger {
           return {
             action: MergeAction.NOOP,
             beliefId: target._id,
-            reason: "enriched signal without new_content",
+            reason: "enriched signal without new_content"
           };
         }
         const success = await this.writer.enrichContent(
@@ -560,14 +562,14 @@ export class BeliefMerger {
           target._id,
           signal.new_content,
           sessionId,
-          turnId,
+          turnId
         );
         return {
           action: success ? MergeAction.CONTENT_EDITED : MergeAction.NOOP,
           beliefId: target._id,
           reason: success
             ? `appended attribute: "${signal.new_content}"`
-            : "enrich failed — belief not found",
+            : "enrich failed — belief not found"
         };
       }
 
@@ -575,7 +577,7 @@ export class BeliefMerger {
         return {
           action: MergeAction.NOOP,
           beliefId: target._id,
-          reason: `unknown change kind: ${signal.change}`,
+          reason: `unknown change kind: ${signal.change}`
         };
     }
   }
@@ -583,18 +585,18 @@ export class BeliefMerger {
   private async applyEntityUpdate(
     userId: string,
     update: EntityUpdate,
-    report: MergeReport,
+    report: MergeReport
   ): Promise<void> {
     const target = await this.writer.findByCanonical(
       userId,
-      update.canonical_name,
+      update.canonical_name
     );
     if (!target) return;
 
     const newAliases = update.new_aliases.filter(
       (a) =>
         !target.aliases.includes(a.trim().toLowerCase()) &&
-        a.trim().toLowerCase() !== target.canonical_name,
+        a.trim().toLowerCase() !== target.canonical_name
     );
 
     if (newAliases.length === 0) return;
@@ -611,7 +613,7 @@ export class BeliefMerger {
     report.decisions.push({
       action: MergeAction.ALIAS_ADDED,
       beliefId: target._id,
-      reason: `added ${newAliases.length} alias(es) to ${target.canonical_name}`,
+      reason: `added ${newAliases.length} alias(es) to ${target.canonical_name}`
     });
   }
 
@@ -622,7 +624,7 @@ export class BeliefMerger {
     sourceModel: string,
     nb: NewBelief,
     agentId: string | null,
-    originContext?: OriginContext | null,
+    originContext?: OriginContext | null
   ): Promise<string> {
     const trigger = nb.provenance_hint
       ? `initial extraction (${nb.provenance_hint})`
@@ -642,17 +644,17 @@ export class BeliefMerger {
         session_id: sessionId,
         turn_id: turnId,
         extracted_at: new Date(),
-        source_model: sourceModel,
+        source_model: sourceModel
       },
       epistemic_status: nb.epistemic_status as EpistemicStatus,
       confidence: nb.confidence,
       pinned: false,
       user_edited: nb.user_edited,
       ...(nb.expertise_domain !== undefined && {
-        expertise_domain: nb.expertise_domain,
+        expertise_domain: nb.expertise_domain
       }),
       ...(nb.expertise_depth !== undefined && {
-        expertise_depth: nb.expertise_depth,
+        expertise_depth: nb.expertise_depth
       }),
       ...(originContext && { origin_context: originContext }),
       change_log: [
@@ -660,9 +662,9 @@ export class BeliefMerger {
           changed_at: new Date(),
           trigger,
           changed_by_session: sessionId,
-          changed_by_turn: turnId,
-        },
-      ],
+          changed_by_turn: turnId
+        }
+      ]
     });
   }
 
@@ -675,7 +677,7 @@ export class BeliefMerger {
     content: string,
     scope: string[],
     agentId: string | null,
-    originContext?: OriginContext | null,
+    originContext?: OriginContext | null
   ): Promise<string> {
     return this.writer.create({
       user_id: userId,
@@ -691,7 +693,7 @@ export class BeliefMerger {
         session_id: sessionId,
         turn_id: turnId,
         extracted_at: new Date(),
-        source_model: sourceModel,
+        source_model: sourceModel
       },
       epistemic_status: "active",
       confidence: 0.7,
@@ -703,9 +705,9 @@ export class BeliefMerger {
           changed_at: new Date(),
           trigger: "open question extracted",
           changed_by_session: sessionId,
-          changed_by_turn: turnId,
-        },
-      ],
+          changed_by_turn: turnId
+        }
+      ]
     });
   }
 }

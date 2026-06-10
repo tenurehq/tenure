@@ -766,8 +766,8 @@ function showProviderSetup(err) {
       </div>
       <div class="field">
         <label for="prov-url">Base URL <span style="opacity:0.5;font-size:0.8rem">(optional for generic OpenAI)</span></label>
-        <input id="prov-url" type="text" placeholder="\${FLAVORS.urlPlaceholder}" />
-        <div class="hint" id="flavor-hint">\${FLAVORS.hint}</div>
+        <input id="prov-url" type="text" placeholder="\${FLAVORS[0].urlPlaceholder}" />
+        <div class="hint" id="flavor-hint">\${FLAVORS[0].hint}</div>
       </div>
     </div>
     \${err ? \`<div class="error">\${err}</div>\` : ""}

@@ -12,13 +12,13 @@ services:
       retries: 5
     volumes:
       - mongo_data:/data/db
+      - mongo_configdb:/data/configdb
     networks:
       - internal
 
   tenure:
-    image: tenureai/tenure:latest
+    image: tenure:local
     restart: unless-stopped
-    user: "${UID:-1000}:${GID:-1000}"
     ports:
       - "${TENURE_PORT:-5757}:5757"
     volumes:
@@ -43,3 +43,4 @@ networks:
 
 volumes:
   mongo_data:
+  mongo_configdb:

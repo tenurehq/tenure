@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto';
-import type { Collection, Filter } from 'mongodb';
-import type { Belief, ExpertiseDepth, OriginContext } from '../types/belief.js';
-import type { InternalLLMCaller } from '../providers/types.js';
-import type { PersonaCache } from '../context/personaCache.js';
+import { randomUUID } from "node:crypto";
+import type { Collection, Filter } from "mongodb";
+import type { Belief, ExpertiseDepth, OriginContext } from "../types/belief.js";
+import type { InternalLLMCaller } from "../providers/types.js";
+import type { PersonaCache } from "../context/personaCache.js";
 
 const ACTIVE_FILTER = { resolved_at: null, superseded_by: null };
 
@@ -111,6 +111,61 @@ Subdomain handling:
 retire_ids: list every source belief id that is superseded by an assessment.
 Return valid JSON only. No prose outside the JSON object.`.trim();
 
+function buildDedupPrompt(includeOrg: boolean): string {
+  const parts: string[] = [];
+
+  parts.push(
+    `You identify semantically duplicate beliefs and flag contradictions within a scope.`,
+    ``
+  );
+
+  if (includeOrg) {
+    parts.push(
+      `You will receive:`,
+      `1. A JSON array of belief objects.`,
+      `2. (Conditionally) An "org_standards" block — organizational policies that are absolute constraints.`,
+      `   Any belief whose content contradicts org standards must be treated as a contradiction,`,
+      `   regardless of whether it conflicts with another belief.`
+    );
+  } else {
+    parts.push(`You will receive a JSON array of belief objects.`);
+  }
+
+  parts.push(
+    ``,
+    `Return only a JSON object in this exact shape:`,
+    `{ "merges": [...], "contradictions": [...], "no_action_ids": [...] }`,
+    ``,
+    // ... merge template identical in both modes ...
+    ``,
+    `Each contradiction object:`,
+    `{`,
+    includeOrg
+      ? `  "belief_ids": ["<id_a>", "<id_b_or_'org'>"],`
+      : `  "belief_ids": ["<id_a>", "<id_b>"],`,
+    `  "reason": "<one sentence: why these beliefs conflict>"`,
+    `}`,
+    ``,
+    `Rules:`,
+    `- Only merge when you are highly confident two beliefs express the same fact or preference.`,
+    `- Flag a contradiction when two beliefs assert incompatible things about the same subject.`,
+    `- When uncertain about merge, leave beliefs separate. Conservative is always correct here.`,
+    `- When uncertain about contradiction, do not flag. Only flag clear incompatibilities.`,
+    `- merged_aliases must include the canonical names of all retired beliefs for search continuity.`,
+    `- List every unmerged AND non-contradicted belief id in no_action_ids.`,
+    `- Return valid JSON only. No prose outside the JSON object.`
+  );
+
+  if (includeOrg) {
+    parts.push(
+      `- If a belief contradicts org_standards, flag it as a contradiction with belief_ids: ["<id>", "org"].`,
+      `- merged_content must never contradict org_standards.`
+    );
+  }
+
+  return parts.join("\n");
+}
+
 interface CompactionTypeConfig {
   threshold: number;
   cooldownMs: number;
@@ -190,7 +245,7 @@ export interface BeliefContradiction {
   scope: string;
   belief_ids: [string, string];
   reason: string;
-  status: 'pending' | 'resolved';
+  status: "pending" | "resolved";
   detected_at: Date;
   resolved_at: Date | null;
   belief_origins?: [OriginContext | null, OriginContext | null];
@@ -203,7 +258,7 @@ export interface CompactionLogEntry {
   belief_type: string;
   ran_at: Date;
   merged_count: number;
-  scan_depth?: 'shallow' | 'deep';
+  scan_depth?: "shallow" | "deep";
 }
 
 export interface CompactionRunnerOptions {
@@ -216,7 +271,7 @@ export interface CompactionRunnerOptions {
 interface QualifyingPartition {
   scope: string;
   agentId: string | null;
-  depth: 'shallow' | 'deep';
+  depth: "shallow" | "deep";
   threshold: number;
 }
 
@@ -234,7 +289,9 @@ export class BeliefCompactionRunner {
     private readonly options: CompactionRunnerOptions = {}
   ) {}
 
-  async run(userId: string): Promise<void> {
+  async run(userId: string, opts?: { orgSummary?: string }): Promise<void> {
+    const orgSummary = opts?.orgSummary;
+
     for (const [beliefType, config] of Object.entries(TYPE_CONFIGS)) {
       const qualifyingPartitions = await this.findQualifyingPartitions(
         userId,
@@ -249,7 +306,8 @@ export class BeliefCompactionRunner {
           beliefType,
           config,
           partition.depth,
-          partition.threshold
+          partition.threshold,
+          orgSummary
         ).catch((err: unknown) => {
           console.error(
             `[compaction] failed user=${userId} scope=${partition.scope} agent=${partition.agentId} type=${beliefType}:`,
@@ -270,8 +328,8 @@ export class BeliefCompactionRunner {
     config: CompactionTypeConfig
   ): Promise<QualifyingPartition[]> {
     const typeFilter =
-      beliefType === 'expertise'
-        ? { type: 'preference', subtype: 'expertise' }
+      beliefType === "expertise"
+        ? { type: "preference", subtype: "expertise" }
         : {
             type: beliefType,
             $or: [{ subtype: null }, { subtype: { $exists: false } }]
@@ -281,8 +339,8 @@ export class BeliefCompactionRunner {
 
     const taxWindow = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const taxHotScopes = await this.beliefs.db
-      .collection('orientation_tax_events')
-      .distinct('scopes', {
+      .collection("orientation_tax_events")
+      .distinct("scopes", {
         user_id: userId,
         created_at: { $gte: taxWindow }
       })
@@ -302,10 +360,10 @@ export class BeliefCompactionRunner {
           count: number;
         }>([
           { $match: { user_id: userId, ...ACTIVE_FILTER, ...typeFilter } },
-          { $unwind: '$scope' },
+          { $unwind: "$scope" },
           {
             $group: {
-              _id: { scope: '$scope', agent_id: '$agent_id' },
+              _id: { scope: "$scope", agent_id: "$agent_id" },
               count: { $sum: 1 }
             }
           },
@@ -329,7 +387,7 @@ export class BeliefCompactionRunner {
       if (!latestByScope.has(log.scope)) {
         latestByScope.set(log.scope, log);
       }
-      if (log.scan_depth === 'deep' && !latestDeepByScope.has(log.scope)) {
+      if (log.scan_depth === "deep" && !latestDeepByScope.has(log.scope)) {
         latestDeepByScope.set(log.scope, log);
       }
     }
@@ -360,7 +418,7 @@ export class BeliefCompactionRunner {
         partitions.push({
           scope,
           agentId: p._id.agent_id ?? null,
-          depth: 'deep',
+          depth: "deep",
           threshold: effectiveThreshold
         });
         continue;
@@ -370,7 +428,7 @@ export class BeliefCompactionRunner {
         partitions.push({
           scope,
           agentId: p._id.agent_id ?? null,
-          depth: 'shallow',
+          depth: "shallow",
           threshold: effectiveThreshold
         });
       }
@@ -385,12 +443,13 @@ export class BeliefCompactionRunner {
     agentId: string | null,
     beliefType: string,
     config: CompactionTypeConfig,
-    depth: 'shallow' | 'deep',
-    threshold: number
+    depth: "shallow" | "deep",
+    threshold: number,
+    orgSummary?: string
   ): Promise<void> {
     const typeFilter =
-      beliefType === 'expertise'
-        ? { type: 'preference', subtype: 'expertise' }
+      beliefType === "expertise"
+        ? { type: "preference", subtype: "expertise" }
         : {
             type: beliefType,
             $or: [{ subtype: null }, { subtype: { $exists: false } }]
@@ -440,7 +499,8 @@ export class BeliefCompactionRunner {
         scopeBeliefs,
         config,
         beliefType,
-        depth
+        depth,
+        orgSummary
       );
     }
   }
@@ -532,11 +592,12 @@ export class BeliefCompactionRunner {
     beliefs: Belief[],
     config: CompactionTypeConfig,
     beliefType: string,
-    depth: 'shallow' | 'deep'
+    depth: "shallow" | "deep",
+    orgSummary?: string
   ): Promise<void> {
     let candidates = beliefs.filter((b) => !b.origin_context?.active_file);
 
-    if (depth === 'shallow') {
+    if (depth === "shallow") {
       candidates = this.clusterByTermOverlap(candidates);
       if (candidates.length < 2) {
         await this.logRun(userId, scope, beliefType, 0, depth);
@@ -544,9 +605,13 @@ export class BeliefCompactionRunner {
       }
     }
 
+    const useOrg = !!orgSummary;
+    const prompt = buildDedupPrompt(useOrg);
+
     const { merges, contradictions } = await this.callDedupLLM(
       candidates,
-      config.prompt
+      prompt,
+      orgSummary
     );
 
     await this.logRun(userId, scope, beliefType, merges.length, depth);
@@ -555,35 +620,65 @@ export class BeliefCompactionRunner {
       await this.applyDedupMerges(userId, merges);
     }
 
-    if (contradictions.length > 0) {
-      await this.persistContradictions(userId, scope, agentId, contradictions);
+    const orgViolations = contradictions.filter((c) =>
+      c.belief_ids.includes("org")
+    );
+    const regularContradictions = contradictions.filter(
+      (c) => !c.belief_ids.includes("org")
+    );
+
+    if (regularContradictions.length > 0) {
+      await this.persistContradictions(
+        userId,
+        scope,
+        agentId,
+        regularContradictions
+      );
     }
 
-    if (config.invalidatesPersona && scope === 'user:universal') {
+    if (orgViolations.length > 0) {
+      await this.handleOrgViolations(userId, scope, agentId, orgViolations);
+    }
+
+    if (config.invalidatesPersona && scope === "user:universal") {
       await this.personaCache.invalidate(userId);
     }
   }
 
   private async callDedupLLM(
     beliefs: Belief[],
-    prompt: string
+    prompt: string,
+    orgSummary?: string
   ): Promise<{
     merges: CompactionMerge[];
     contradictions: DetectedContradiction[];
   }> {
-    const payload = beliefs.map((b) => ({
-      id: b._id,
-      type: b.type,
-      canonical_name: b.canonical_name,
-      content: b.content,
-      aliases: b.aliases,
-      scope: b.scope
-    }));
+    const payload = orgSummary
+      ? {
+          beliefs: beliefs.map((b) => ({
+            id: b._id,
+            type: b.type,
+            canonical_name: b.canonical_name,
+            content: b.content,
+            aliases: b.aliases,
+            scope: b.scope,
+            visibility: b.visibility ?? null
+          })),
+          org_standards: orgSummary
+        }
+      : beliefs.map((b) => ({
+          id: b._id,
+          type: b.type,
+          canonical_name: b.canonical_name,
+          content: b.content,
+          aliases: b.aliases,
+          scope: b.scope
+        }));
 
     const resp = await this.resolveAdapter().call(
-      this.modelId ?? '',
+      this.modelId ?? "",
       prompt,
-      [{ role: 'user', content: JSON.stringify(payload) }],
+      [{ role: "user", content: JSON.stringify(payload) }],
       { temperature: 0.1, max_tokens: 20000 }
     );
 
@@ -613,19 +708,19 @@ export class BeliefCompactionRunner {
         user_id: userId,
         scope,
         agent_id: agentId,
-        status: 'pending'
+        status: "pending"
       })
       .toArray();
 
     const existingPairs = new Set(
-      existingPending.map((c) => [...c.belief_ids].sort().join('|'))
+      existingPending.map((c) => [...c.belief_ids].sort().join("|"))
     );
 
     const novel = contradictions.filter((c) => {
       if (!Array.isArray(c.belief_ids) || c.belief_ids.length !== 2) {
         return false;
       }
-      const key = [...c.belief_ids].sort().join('|');
+      const key = [...c.belief_ids].sort().join("|");
       return !existingPairs.has(key);
     });
 
@@ -638,12 +733,102 @@ export class BeliefCompactionRunner {
       scope,
       belief_ids: c.belief_ids,
       reason: c.reason,
-      status: 'pending',
+      status: "pending",
       detected_at: now,
       resolved_at: null
     }));
 
     await this.contradictions.insertMany(docs);
+  }
+
+  private async handleOrgViolations(
+    userId: string,
+    scope: string,
+    agentId: string | null,
+    violations: DetectedContradiction[]
+  ): Promise<void> {
+    const now = new Date();
+
+    const existingPending = await this.contradictions
+      .find({
+        user_id: userId,
+        scope,
+        agent_id: agentId,
+        status: "pending"
+      })
+      .toArray();
+
+    const existingPairs = new Set(
+      existingPending.map((c) => [...c.belief_ids].sort().join("|"))
+    );
+
+    const realIds = new Set<string>();
+    for (const v of violations) {
+      if (!Array.isArray(v.belief_ids) || v.belief_ids.length !== 2) continue;
+      const realId = v.belief_ids.find((id) => id !== "org");
+      if (realId) realIds.add(realId);
+    }
+
+    const beliefMap = new Map(
+      (
+        await this.beliefs
+          .find({ _id: { $in: [...realIds] }, user_id: userId })
+          .toArray()
+      ).map((b) => [b._id, b])
+    );
+
+    const docs: BeliefContradiction[] = [];
+    const toSupersede = new Set<string>();
+
+    for (const v of violations) {
+      if (!Array.isArray(v.belief_ids) || v.belief_ids.length !== 2) continue;
+      const realId = v.belief_ids.find((id) => id !== "org");
+      if (!realId) continue;
+      const pairKey = [realId, "org"].sort().join("|");
+      if (existingPairs.has(pairKey)) continue;
+
+      docs.push({
+        _id: randomUUID(),
+        user_id: userId,
+        agent_id: agentId,
+        scope,
+        belief_ids: [realId, "org"] as [string, string],
+        reason: v.reason,
+        status: "pending",
+        detected_at: now,
+        resolved_at: null
+      });
+
+      const belief = beliefMap.get(realId);
+      if (belief && !belief.user_edited) {
+        toSupersede.add(realId);
+      }
+    }
+
+    if (docs.length > 0) {
+      await this.contradictions.insertMany(docs);
+    }
+
+    for (const bid of toSupersede) {
+      await this.beliefs.updateOne(
+        { _id: bid, user_id: userId },
+        {
+          $set: {
+            epistemic_status: "superseded",
+            superseded_by: "org",
+            updated_at: now
+          },
+          $push: {
+            change_log: {
+              changed_at: now,
+              trigger: "auto-superseded: violates organization standards",
+              changed_by_session: null,
+              changed_by_turn: null
+            }
+          }
+        }
+      );
+    }
   }
 
   private async applyDedupMerges(
@@ -672,11 +857,11 @@ export class BeliefCompactionRunner {
       );
 
       const allInferred = mergeSources.every(
-        (b) => b.epistemic_status === 'inferred'
+        (b) => b.epistemic_status === "inferred"
       );
       const promotedStatus =
         allInferred && totalReinforcements >= INFERRED_PROMOTION_THRESHOLD
-          ? 'active'
+          ? "active"
           : source.epistemic_status;
 
       const newId = randomUUID();
@@ -696,10 +881,10 @@ export class BeliefCompactionRunner {
         change_log: [
           {
             changed_at: now,
-            trigger: `compaction: merged from ${allIds.join(', ')}${
-              promotedStatus === 'active' && allInferred
-                ? '; promoted from inferred via combined reinforcement'
-                : ''
+            trigger: `compaction: merged from ${allIds.join(", ")}${
+              promotedStatus === "active" && allInferred
+                ? "; promoted from inferred via combined reinforcement"
+                : ""
             }`,
             changed_by_session: null,
             changed_by_turn: null
@@ -712,7 +897,7 @@ export class BeliefCompactionRunner {
         { _id: { $in: allIds }, user_id: userId },
         {
           $set: {
-            epistemic_status: 'superseded',
+            epistemic_status: "superseded",
             superseded_by: newId,
             updated_at: now
           },
@@ -736,7 +921,7 @@ export class BeliefCompactionRunner {
     _config: CompactionTypeConfig
   ): Promise<void> {
     const { assessments, retireIds } = await this.callExpertiseLLM(beliefs);
-    await this.logRun(userId, scope, 'expertise', assessments.length, 'deep');
+    await this.logRun(userId, scope, "expertise", assessments.length, "deep");
     if (assessments.length === 0) return;
 
     await this.applyExpertiseAssessments(
@@ -746,7 +931,7 @@ export class BeliefCompactionRunner {
       beliefs
     );
 
-    if (scope === 'user:universal') {
+    if (scope === "user:universal") {
       await this.personaSummary.regenerate(userId);
     }
   }
@@ -769,9 +954,9 @@ export class BeliefCompactionRunner {
     }));
 
     const resp = await this.resolveAdapter().call(
-      this.modelId ?? '',
+      this.modelId ?? "",
       EXPERTISE_SYNTHESIS_PROMPT,
-      [{ role: 'user', content: JSON.stringify(payload) }],
+      [{ role: "user", content: JSON.stringify(payload) }],
       { temperature: 0.1, max_tokens: 5000 }
     );
 
@@ -798,7 +983,7 @@ export class BeliefCompactionRunner {
     for (const assessment of assessments) {
       const existing = await this.beliefs.findOne({
         user_id: userId,
-        subtype: 'expertise',
+        subtype: "expertise",
         expertise_domain: assessment.domain,
         ...ACTIVE_FILTER
       });
@@ -810,20 +995,20 @@ export class BeliefCompactionRunner {
         user_id: userId,
         agent_id:
           existing?.agent_id ?? sourceBeliefsForUser[0]?.agent_id ?? null,
-        type: 'preference',
-        subtype: 'expertise',
+        type: "preference",
+        subtype: "expertise",
         canonical_name: assessment.canonical_name,
         aliases: existing?.aliases ?? [],
         content: assessment.content,
         why_it_matters: assessment.why_it_matters,
         scope: assessment.scope,
         provenance: existing?.provenance ?? {
-          session_id: '',
-          turn_id: '',
+          session_id: "",
+          turn_id: "",
           extracted_at: now,
-          source_model: this.modelId ?? 'unknown'
+          source_model: this.modelId ?? "unknown"
         },
-        epistemic_status: 'active',
+        epistemic_status: "active",
         confidence: assessment.confidence,
         reinforcement_count: assessment.evidence_count,
         last_reinforced_at: now,
@@ -859,7 +1044,7 @@ export class BeliefCompactionRunner {
           { _id: existing._id, user_id: userId },
           {
             $set: {
-              epistemic_status: 'superseded',
+              epistemic_status: "superseded",
               superseded_by: newId,
               updated_at: now
             },
@@ -881,7 +1066,7 @@ export class BeliefCompactionRunner {
           { _id: { $in: toRetire }, user_id: userId },
           {
             $set: {
-              epistemic_status: 'superseded',
+              epistemic_status: "superseded",
               superseded_by: newId,
               updated_at: now
             },
@@ -904,7 +1089,7 @@ export class BeliefCompactionRunner {
     scope: string,
     beliefType: string,
     mergedCount: number,
-    depth: 'shallow' | 'deep' = 'deep'
+    depth: "shallow" | "deep" = "deep"
   ): Promise<void> {
     await this.compactionLog.insertOne({
       _id: randomUUID(),
@@ -919,8 +1104,8 @@ export class BeliefCompactionRunner {
 
   private extractJson(raw: string): string {
     const stripped = raw
-      .replace(/^```(?:json)?\s*/i, '')
-      .replace(/```\s*$/i, '');
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/```\s*$/i, "");
 
     const match = stripped.match(/\{[\s\S]*\}/);
     return match ? match[0] : stripped;

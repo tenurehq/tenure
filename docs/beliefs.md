@@ -53,6 +53,21 @@ From the dashboard you can:
 - Remove beliefs that are wrong or no longer relevant. They are marked superseded and hidden, recoverable from the Superseded filter.
 - View injection history: see how often and in what contexts a belief was surfaced, with pagination for high-volume beliefs
 
+## Approving and denying suggestions
+
+If your extraction mode is set to **curated**, extracted beliefs are not added
+to your world model automatically. They land in a suggestions queue for you to
+review first.
+
+To review pending beliefs, open `http://localhost:5757/beliefs`. If there are
+suggestions waiting, a **Pending** tab will appear at the top of the page. The
+tab is hidden when the queue is empty.
+
+From the Pending tab you can:
+
+- **Approve** a belief to merge it into your world model immediately
+- **Deny** a belief to discard it without affecting your existing beliefs
+
 ## Pinning
 
 Pinned beliefs are always injected regardless of query signal. Use pinning for facts that are always relevant to a session: your primary language, your framework, your narrative voice. Unpinned beliefs surface when the query is relevant to them.

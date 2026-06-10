@@ -260,6 +260,23 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
     { key: { user_id: 1 } }
   ]);
 
+  await cols.db
+    .collection("org_summaries")
+    .createIndexes([
+      { key: { org_id: 1 }, unique: true },
+      { key: { updated_at: -1 } }
+    ]);
+
+  await cols.db
+    .collection("belief_suggestions")
+    .createIndexes([
+      { key: { user_id: 1, status: 1, created_at: -1 } },
+      {
+        key: { status: 1, created_at: 1 },
+        partialFilterExpression: { status: "pending" }
+      }
+    ]);
+
   await cols.api_tokens.createIndexes([
     {
       key: { token_hash: 1 },

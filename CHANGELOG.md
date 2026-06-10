@@ -6,6 +6,26 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.25] - 2026-06-10
+
+### Added
+
+- **Memory mode configuration** (`src/config/runtime.ts`, `src/extraction/worker.ts`, `src/routes/chat.ts`, `src/routes/messages.ts`, `src/routes/admin-ui.ts`): Introduced a `memory_mode` setting supporting four modes: `autonomous` (default), `inject_only`, `curated`, and `reflective`. Autonomous extracts and merges beliefs automatically; `inject_only` disables extraction outside of imports or onboarding; `curated` queues new beliefs as pending suggestions for approval; and `reflective` extracts but never injects beliefs into sessions. The admin UI includes a dedicated memory mode selector.
+- **Curated belief suggestions** (`src/types/belief.ts`, `src/db/collections.ts`, `src/db/indexes.ts`, `src/extraction/worker.ts`, `src/routes/beliefs.ts`, `src/routes/beliefs-ui.ts`): Added the `BeliefSuggestion` type and a new `belief_suggestions` collection with supporting indexes. In `curated` mode, the extraction worker persists proposed beliefs as pending suggestions rather than merging them directly. Added API endpoints to list, approve, and reject suggestions (`GET /v1/beliefs/suggestions`, `POST .../approve`, `POST .../reject`), along with a pending suggestions panel in the beliefs UI.
+- **Belief visibility and team/org scoping** (`src/types/belief.ts`, `src/extraction/beliefWriter.ts`, `src/context/beliefsReader.ts`, `src/routes/beliefs.ts`, `src/routes/beliefs-ui.ts`): Extended beliefs with `visibility` (`private`, `team`, `org`), `team_id`, and `org_id` fields. `BeliefsReader` gained `findTeamOrgByCanonical` to resolve canonical names against team or organization scope. The beliefs list endpoint now includes team-visible beliefs for team-authenticated requests, and the beliefs UI renders team working agreements as read-only cards.
+- **Organization-aware compaction** (`src/jobs/compactionRunner.ts`, `src/server.ts`): `BeliefCompactionRunner.run` now accepts an optional `orgSummary`. When provided, the deduplication prompt receives an `org_standards` block so the LLM can flag beliefs that contradict organizational policy as org violations. Non-user-edited beliefs flagged as org violations are automatically superseded.
+- **Organization summary direct lookup** (`src/context/orgSummary.ts`, `src/app.ts`, `src/db/indexes.ts`): Replaced the previous `OrgSummaryService` and `OrgSummaryMongoCache` with a streamlined `OrgSummaryDirect` lookup backed by the `org_summaries` collection. Added `synthesizeOrgSummary` as a standalone LLM utility for summary generation. Added collection indexes on `org_id` (unique) and `updated_at`.
+- **Team administration UI route** (`src/server.ts`): Registered `registerTeamAdminUiRoute` to provide team-scoped administration capabilities.
+
+### Changed
+
+- **Application bootstrap wiring** (`src/app.ts`, `src/server.ts`), Updated bootstrap to use `OrgSummaryDirect` instead of the prior cache/service pair. Changed `ServerDeps` and beliefs route registrations to reference the `OrgSummaryLookup` interface and pass the `belief_suggestions` collection to route handlers.
+- **Extraction job context propagation** (`src/extraction/merger.ts`, `src/extraction/worker.ts`): `MergeInput` now accepts optional `teamId` and `orgId`, which the extraction worker passes from the job payload through to belief creation.
+- **Admin UI advanced settings** (`src/routes/admin-ui.ts`): Removed the session history token cap and compaction mode controls from the advanced settings panel. Restored `save-advanced`, `save-memory-mode`, and `rotate-token` click handlers.
+- **Onboarding provider setup** (`src/routes/onboarding.ts`): Corrected provider flavor placeholder references to use `FLAVORS[0]` for the default hint and URL placeholder.
+
+---
+
 ## [1.0.24] - 2026-06-09
 
 ### Added
