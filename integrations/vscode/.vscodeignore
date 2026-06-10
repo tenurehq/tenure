@@ -4,3 +4,4 @@ tsconfig.json
 *.map
 node_modules/
 tsup.config.ts
+*.patch

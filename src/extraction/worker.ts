@@ -7,9 +7,10 @@ import { safeParse, attemptRepair } from "./validator.js";
 import {
   type ExtractionResult,
   type NewBelief,
-  type StyleSignal,
+  type StyleSignal
 } from "./types.js";
 import { BeliefsReader } from "../context/beliefsReader.js";
+import { randomUUID } from "node:crypto";
 
 export interface ExtractionWorkerDeps {
   db: Db;
@@ -68,9 +69,9 @@ export class ExtractionWorker implements ExtractionWorkerLike {
       { _id: jobId, status: "pending", run_after: { $lte: now } },
       {
         $set: { status: "running", claimed_at: now, updated_at: now },
-        $inc: { attempts: 1 },
+        $inc: { attempts: 1 }
       },
-      { returnDocument: "after" },
+      { returnDocument: "after" }
     ) as Promise<ExtractionJob | null>;
   }
 
@@ -80,9 +81,9 @@ export class ExtractionWorker implements ExtractionWorkerLike {
       { status: "pending", run_after: { $lte: now } },
       {
         $set: { status: "running", claimed_at: now, updated_at: now },
-        $inc: { attempts: 1 },
+        $inc: { attempts: 1 }
       },
-      { sort: { created_at: 1 }, returnDocument: "after" },
+      { sort: { created_at: 1 }, returnDocument: "after" }
     ) as Promise<ExtractionJob | null>;
   }
 
@@ -105,9 +106,9 @@ export class ExtractionWorker implements ExtractionWorkerLike {
             status: "done",
             completed_at: new Date(),
             updated_at: new Date(),
-            result_belief_ids: beliefIds,
-          },
-        },
+            result_belief_ids: beliefIds
+          }
+        }
       );
     } catch (e) {
       const failed = job.attempts >= (job.max_attempts ?? 3);
@@ -118,9 +119,9 @@ export class ExtractionWorker implements ExtractionWorkerLike {
             status: failed ? "failed" : "pending",
             last_error: (e as Error).message.slice(0, 500),
             run_after: new Date(),
-            updated_at: new Date(),
-          },
-        },
+            updated_at: new Date()
+          }
+        }
       );
     }
   }
@@ -144,7 +145,7 @@ export class ExtractionWorker implements ExtractionWorkerLike {
     if (!result) {
       await this.jobs.updateOne(
         { _id: job._id },
-        { $set: { "payload.validation_error": error } },
+        { $set: { "payload.validation_error": error } }
       );
       return [];
     }
@@ -158,8 +159,18 @@ export class ExtractionWorker implements ExtractionWorkerLike {
     if (skippedBeliefs.length > 0) {
       await this.jobs.updateOne(
         { _id: job._id },
-        { $set: { "payload.skipped_beliefs": skippedBeliefs } },
+        { $set: { "payload.skipped_beliefs": skippedBeliefs } }
       );
+    }
+
+    const mode = await this.getMemoryMode();
+
+    if (mode === "inject_only") {
+      return [];
+    }
+
+    if (mode === "curated") {
+      return this.persistSuggestions(job, enforced);
     }
 
     if (enforced.orientation_tax && job.turn_id) {
@@ -189,8 +200,8 @@ export class ExtractionWorker implements ExtractionWorkerLike {
       ...deduped,
       new_beliefs: deduped.new_beliefs.map((nb) => ({
         ...nb,
-        user_edited: true,
-      })),
+        user_edited: true
+      }))
     };
 
     const beliefIds = await this.merge(job, withUserEdited);
@@ -210,8 +221,8 @@ export class ExtractionWorker implements ExtractionWorkerLike {
       ...result,
       new_beliefs: result.new_beliefs.map((nb) => ({
         ...nb,
-        user_edited: true,
-      })),
+        user_edited: true
+      }))
     };
 
     const beliefIds = await this.merge(job, withUserEdited);
@@ -221,7 +232,7 @@ export class ExtractionWorker implements ExtractionWorkerLike {
 
   private async merge(
     job: ExtractionJob,
-    result: ExtractionResult,
+    result: ExtractionResult
   ): Promise<string[]> {
     const wc = job.payload.workspace_context;
 
@@ -231,21 +242,23 @@ export class ExtractionWorker implements ExtractionWorkerLike {
       turnId: job.turn_id ?? "",
       sourceModel: job.payload?.source_model ?? "unknown",
       agentId: (job as any).agent_id ?? null,
+      teamId: (job as any).team_id ?? undefined,
+      orgId: (job as any).org_id ?? undefined,
       result,
       originContext: wc
         ? {
             active_file: wc.active_file,
             language: wc.language_scope,
-            project_scope: wc.project_scope,
+            project_scope: wc.project_scope
           }
-        : null,
+        : null
     });
 
     if (report.styleSignalsDeferred.length > 0) {
       await this.persistStyleSignals(
         job.user_id,
         job.session_id,
-        report.styleSignalsDeferred,
+        report.styleSignalsDeferred
       );
     }
 
@@ -264,7 +277,7 @@ export class ExtractionWorker implements ExtractionWorkerLike {
   private async persistStyleSignals(
     userId: string,
     sessionId: string,
-    signals: StyleSignal[],
+    signals: StyleSignal[]
   ): Promise<void> {
     const now = new Date();
     await Promise.all(
@@ -278,17 +291,17 @@ export class ExtractionWorker implements ExtractionWorkerLike {
               last_session_id: sessionId,
               pattern_type: ss.pattern_type,
               confidence: ss.confidence,
-              scope: ss.scope ?? [],
+              scope: ss.scope ?? []
             },
             $setOnInsert: {
               user_id: userId,
               observation: ss.observation,
-              created_at: now,
-            },
+              created_at: now
+            }
           },
-          { upsert: true },
-        ),
-      ),
+          { upsert: true }
+        )
+      )
     );
   }
 
@@ -300,11 +313,52 @@ export class ExtractionWorker implements ExtractionWorkerLike {
           key: "onboarding_status",
           value: "completed",
           encrypted: false,
-          updatedAt: new Date(),
-        },
+          updatedAt: new Date()
+        }
       },
-      { upsert: true },
+      { upsert: true }
     );
+  }
+
+  private async getMemoryMode(): Promise<
+    "inject_only" | "curated" | "autonomous" | "reflective"
+  > {
+    const doc = await this.config.findOne({ key: "memory_mode" });
+    const val = doc?.value ?? "autonomous";
+    if (
+      val === "inject_only" ||
+      val === "curated" ||
+      val === "autonomous" ||
+      val === "reflective"
+    ) {
+      return val;
+    }
+    return "autonomous";
+  }
+
+  private async persistSuggestions(
+    job: ExtractionJob,
+    result: ExtractionResult
+  ): Promise<string[]> {
+    const suggestions = this.db.collection("belief_suggestions");
+    const ids: string[] = [];
+    const now = new Date();
+
+    for (const nb of result.new_beliefs) {
+      const id = randomUUID();
+      await suggestions.insertOne({
+        _id: id as any,
+        user_id: job.user_id,
+        session_id: job.session_id,
+        turn_id: job.turn_id ?? "",
+        source_model: job.payload?.source_model ?? "unknown",
+        status: "pending",
+        proposed: nb,
+        created_at: now
+      });
+      ids.push(id);
+    }
+    return ids;
   }
 
   /**
@@ -319,7 +373,7 @@ export class ExtractionWorker implements ExtractionWorkerLike {
    */
   private async handleOrientationTax(
     job: ExtractionJob,
-    result: ExtractionResult,
+    result: ExtractionResult
   ): Promise<void> {
     const userId = job.user_id;
     const sessionId = job.session_id;
@@ -330,7 +384,7 @@ export class ExtractionWorker implements ExtractionWorkerLike {
       .collection("injection_audit")
       .updateOne(
         { request_id: turnId, user_id: userId },
-        { $set: { orientation_tax: true, orientation_tax_at: new Date() } },
+        { $set: { orientation_tax: true, orientation_tax_at: new Date() } }
       );
 
     // 2. Accelerated reinforcement for beliefs the user re-explained
@@ -342,7 +396,7 @@ export class ExtractionWorker implements ExtractionWorkerLike {
         userId,
         nb.canonical_name,
         true,
-        nb.scope,
+        nb.scope
       );
       if (existing) {
         // Double reinforce: one from merger, one from tax signal
@@ -359,7 +413,7 @@ export class ExtractionWorker implements ExtractionWorkerLike {
         session_id: sessionId,
         turn_id: turnId,
         scopes: [...scopes],
-        created_at: now,
+        created_at: now
       });
     }
   }
@@ -384,8 +438,8 @@ function checkContradictions(result: ExtractionResult): ExtractionResult {
   return {
     ...result,
     new_beliefs: result.new_beliefs.filter(
-      (nb) => !conflicts.has(nb.canonical_name.trim().toLowerCase()),
-    ),
+      (nb) => !conflicts.has(nb.canonical_name.trim().toLowerCase())
+    )
   };
 }
 
@@ -404,7 +458,7 @@ function checkContradictions(result: ExtractionResult): ExtractionResult {
  */
 function enforceIdeScope(
   result: ExtractionResult,
-  resolvedProjectScope: string,
+  resolvedProjectScope: string
 ): ExtractionResult {
   return {
     ...result,
@@ -414,7 +468,7 @@ function enforceIdeScope(
       }
 
       const preserved = nb.scope.filter(
-        (s) => s === "user:universal" || s.startsWith("domain:"),
+        (s) => s === "user:universal" || s.startsWith("domain:")
       );
 
       const hadProjectScope = nb.scope.some((s) => s.startsWith("project:"));
@@ -430,6 +484,6 @@ function enforceIdeScope(
       }
 
       return nb;
-    }),
+    })
   };
 }

@@ -53,7 +53,8 @@ import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { registerAdminSetupRoute } from "./routes/admin-setup.js";
 import helmet from "@fastify/helmet";
 import type { TeamResolutionStrategy } from "./config/teamResolution.js";
-import type { OrgSummaryService } from "./context/orgSummary.js";
+import type { OrgSummaryLookup } from "./context/orgSummary.js";
+import { registerTeamAdminUiRoute } from "./routes/team-admin-ui.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -110,7 +111,7 @@ export interface ServerDeps {
   compactionRunner: BeliefCompactionRunner;
   extractionWorker: ExtractionWorker;
   personaSummary: PersonaSummaryService;
-  orgSummaryService: OrgSummaryService;
+  orgSummaryService: OrgSummaryLookup;
   workspaceState: WorkspaceStateCache;
 }
 
@@ -413,7 +414,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     extractionWorker: deps.extractionWorker,
     runtimeStore: deps.runtimeStore,
     providers: deps.providers,
-    beliefWriter: new BeliefWriter(deps.cols.beliefs)
+    beliefWriter: new BeliefWriter(deps.cols.beliefs),
+    suggestions: deps.cols.belief_suggestions
   };
   registerBeliefsRoutes(app, beliefsDeps);
 
@@ -429,6 +431,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   registerBeliefsUiRoute(app);
   registerAdminUiRoute(app);
   registerAdminSetupRoute(app, { runtimeStore: deps.runtimeStore });
+  registerTeamAdminUiRoute(app, {
+    runtimeStore: deps.runtimeStore,
+    providers: deps.providers,
+    db: deps.db
+  });
   registerAuditUiRoute(app);
 
   const backupDeps: BackupDeps = {
@@ -478,6 +485,22 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         async () => {
           await tracer.startActiveSpan("belief-compaction", async (span) => {
             try {
+              let orgSummary: string | null = null;
+              if (
+                process.env.TENURE_MODE === "teams" &&
+                deps.orgSummaryService
+              ) {
+                const staticOrgId = process.env.TENURE_DEFAULT_ORG_ID;
+                if (staticOrgId) {
+                  orgSummary =
+                    (
+                      await deps.orgSummaryService
+                        .get(staticOrgId)
+                        .catch(() => null)
+                    )?.summary ?? null;
+                }
+              }
+
               const activeUserIds = await deps.db
                 .collection<{ userId: string }>("sessions")
                 .distinct("userId", {
@@ -492,7 +515,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
               for (const uid of targets) {
                 try {
-                  await deps.compactionRunner.run(uid);
+                  await deps.compactionRunner.run(
+                    uid,
+                    orgSummary ? { orgSummary } : undefined
+                  );
                 } catch (err) {
                   await deps.errorLogger
                     .log({

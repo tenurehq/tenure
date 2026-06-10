@@ -34,7 +34,9 @@ export interface ChangeLogEntry {
   changed_by_turn?: string | null;
 }
 
-export interface Belief {
+export type SuggestionStatus = "pending" | "approved" | "rejected";
+
+export interface BeliefBase {
   _id: string;
   user_id: string;
   agent_id: string | null;
@@ -48,14 +50,8 @@ export interface Belief {
   provenance: Provenance;
   epistemic_status: EpistemicStatus;
   confidence: number;
-  reinforcement_count: number;
-  last_reinforced_at: Date;
   pinned: boolean;
   user_edited: boolean;
-  superseded_by: string | null;
-  resolved_at: Date | null;
-  change_log: ChangeLogEntry[];
-  compaction_note?: string;
   created_at: Date;
   updated_at: Date;
   expertise_domain?: string;
@@ -67,6 +63,21 @@ export interface Belief {
   team_id?: string | null;
   visibility?: BeliefVisibility;
   org_id?: string | null;
+}
+
+export interface Belief extends BeliefBase {
+  reinforcement_count: number;
+  last_reinforced_at: Date;
+  superseded_by: string | null;
+  resolved_at: Date | null;
+  change_log: ChangeLogEntry[];
+  compaction_note?: string;
+}
+
+export interface BeliefSuggestion extends BeliefBase {
+  status: SuggestionStatus;
+  belief_id?: string | null;
+  source_model: string;
 }
 
 export interface OriginContext {

@@ -1,13 +1,25 @@
 import type { FastifyInstance } from "fastify";
 
+const isTeams = process.env.TENURE_MODE === "teams";
+
 export function registerBeliefsUiRoute(app: FastifyInstance): void {
   app.get<{ Querystring: { token?: string } }>(
     "/beliefs",
     async (req, reply) => {
+      if (isTeams && !req.tenureUserId) {
+        return reply
+          .code(401)
+          .send({ error: { message: "SSO authentication required" } });
+      }
       reply.header("content-type", "text/html; charset=utf-8");
       const nonce = (reply.raw as any).cspNonce as string | undefined;
       return reply.send(
-        buildBeliefsHtml(req.query.token ?? "", req.tenureUserId, nonce)
+        buildBeliefsHtml(
+          req.query.token ?? "",
+          req.tenureUserId,
+          nonce,
+          isTeams
+        )
       );
     }
   );
@@ -16,7 +28,8 @@ export function registerBeliefsUiRoute(app: FastifyInstance): void {
 function buildBeliefsHtml(
   embeddedToken: string,
   ssoUserId?: string,
-  nonce?: string
+  nonce?: string,
+  isTeams = false
 ): string {
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
 
@@ -161,6 +174,7 @@ let createOpen   = false;
 let injectionData = null;
 let filterScope  = "all";
 let availableScopes = [];
+let pendingSuggestions = [];
 
 const app = document.getElementById("app");
 
@@ -189,6 +203,15 @@ async function init() {
     const data = await res.json();
     beliefs = data.beliefs ?? [];
     availableScopes = [...new Set(beliefs.flatMap(b => b.scope ?? []))].sort();
+    try {
+      const sres = await apiFetch("GET", "/v1/beliefs/suggestions");
+      if (sres.ok) {
+        const sdata = await sres.json();
+        pendingSuggestions = sdata.suggestions ?? [];
+      }
+    } catch (e) {
+      pendingSuggestions = [];
+    }
     render();
   } catch (e) {
     if (e.message !== "unauthorized") {
@@ -220,12 +243,34 @@ function render() {
     renderImportPanel();
     return;
   }
+  if (filterType === "pending") {
+    renderPendingPanel();
+    return;
+  }
   const filtered = getFiltered();
+  const teamBeliefs = isTeams ? filtered.filter(b => b.visibility === "team") : [];
+  const personalBeliefs = isTeams ? filtered.filter(b => b.visibility !== "team") : filtered;
+
+  const teamByType = Object.fromEntries(TYPE_ORDER.map(t => [t, []]));
+  for (const b of teamBeliefs) (teamByType[b.type] ?? (teamByType[b.type] = [])).push(b);
+
   const byType   = Object.fromEntries(TYPE_ORDER.map(t => [t, []]));
-  for (const b of filtered) (byType[b.type] ?? (byType[b.type] = [])).push(b);
+  for (const b of personalBeliefs) (byType[b.type] ?? (byType[b.type] = [])).push(b);
+
+  const teamSection = isTeams && teamBeliefs.length
+    ? \`<div class="section">
+        <div class="section-title">Team Working Agreements</div>
+        \${TYPE_ORDER.filter(t => teamByType[t]?.length).map(t => \`
+          <div style="margin-bottom:1rem">
+            <div style="font-size:.75rem;color:var(--muted);margin-bottom:.375rem;font-weight:600">\${TYPE_LABELS[t]}</div>
+            \${(teamByType[t] ?? []).map(b => beliefCard(b, true)).join("")}
+          </div>
+        \`).join("")}
+      </div>\`
+    : "";
 
   const types = filterType === "all" ? TYPE_ORDER.filter(t => byType[t]?.length) : [filterType];
-  const sections = types.map(t => \`
+  const sections = teamSection + types.map(t => \`
     <div class="section">
       <div class="section-title">\${TYPE_LABELS[t] ?? t} <span style="opacity:.4;font-weight:400">(\${byType[t]?.length ?? 0})</span></div>
       \${(byType[t] ?? []).map(beliefCard).join("") || '<div class="empty">None</div>'}
@@ -286,11 +331,12 @@ function render() {
   renderModal();
 }
 
-function beliefCard(b) {
+function beliefCard(b, readOnly = false) {
   return \`
-    <div class="belief-card\${b.pinned ? " pinned" : ""}" data-id="\${esc(b.id)}">
+    <div class="belief-card\${b.pinned ? " pinned" : ""}\${readOnly ? " team-readonly" : ""}" data-id="\${esc(b.id)}">
       <div class="bh">
         <span class="bname">\${esc(b.canonical_name ?? "")}</span>
+        \${readOnly ? \`<span class="badge" style="background:#0d2a1a;color:#4dda8a">Team</span>\` : ""}
         <span class="badge s-\${b.epistemic_status}">\${b.epistemic_status}</span>
         \${b.confidence != null ? \`<span class="conf">\${Math.round(b.confidence * 100)}%</span>\` : ""}
       </div>
@@ -318,12 +364,16 @@ function beliefCard(b) {
           : ""
       }
       <div class="bactions">
+        \${!readOnly ? \`
         <button class="btn btn-pin\${b.pinned ? " active" : ""}" data-action="toggle-pin" data-id="\${esc(b.id)}">\${b.pinned ? "📌 Pinned" : "📌 Pin"}</button>
         <button class="btn" data-action="open-edit" data-id="\${esc(b.id)}">Edit</button>
+        \` : ""}
         <button class="btn" data-action="open-history" data-id="\${esc(b.id)}">History</button>
+        \${!readOnly ? \`
         <button class="btn" data-action="open-injections" data-id="\${esc(b.id)}">Injections</button>
         <span class="spacer"></span>
         <button class="btn btn-danger" data-action="open-delete" data-id="\${esc(b.id)}">Remove</button>
+        \` : \`<span class="spacer"></span><span style="font-size:.7rem;color:var(--muted)">Read-only</span>\`}
       </div>
     </div>\`;
 }
@@ -663,6 +713,30 @@ async function confirmDelete() {
   } catch (e) { toast(e.message, "error"); }
 }
 
+async function approveSuggestion(id) {
+  try {
+    const res = await apiFetch("POST", \`/v1/beliefs/suggestions/\${id}/approve\`, {});
+    if (!res.ok) throw new Error("Approve failed");
+    pendingSuggestions = pendingSuggestions.filter(s => s.id !== id);
+    render();
+    toast("Approved", "ok");
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+
+async function rejectSuggestion(id) {
+  try {
+    const res = await apiFetch("POST", \`/v1/beliefs/suggestions/\${id}/reject\`, {});
+    if (!res.ok) throw new Error("Reject failed");
+    pendingSuggestions = pendingSuggestions.filter(s => s.id !== id);
+    render();
+    toast("Rejected", "ok");
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+
 function showTokenScreen(err) {
   app.innerHTML = \`<div class="screen"><div class="screen-inner">
   <img src="/assets/tenure-logo.png" alt="Tenure" class="logo">
@@ -725,6 +799,10 @@ document.addEventListener("click", e => {
     case "retry":          init(); break;
     case "open-create":   openCreate(); break;
     case "submit-create": submitCreate(); break;
+    case "approve-suggestion": approveSuggestion(id); break;
+    case "reject-suggestion":  rejectSuggestion(id); break;
+    case "clear-import":  clearImport(); break;
+    case "submit-import": submitImport(); break;
   }
 });
 
@@ -754,14 +832,12 @@ function renderImportPanel() {
     </nav>
     <div class="filters">
       <div class="tabs">
-        \${["all", "preference", "decision", "entity", "open_question"]
-          .map(
-            (t) =>
-              \`<button class="tab" data-action="set-type" data-value="\${t}">
-            \${t === "all" ? "All" : TYPE_LABELS[t]}
-          </button>\`,
-          )
-          .join("")}
+        \${pendingSuggestions.length > 0 ? \`<button class="tab\${filterType === "pending" ? " active" : ""}" data-action="set-type" data-value="pending">Pending (\${pendingSuggestions.length})</button>\` : ""}
+        \${["all","preference","decision","entity","open_question"].map(t =>
+          \`<button class="tab\${filterType === t ? " active" : ""}" data-action="set-type" data-value="\${t}">
+            \${t === "all" ? "All" : t === "import" ? "Import" : TYPE_LABELS[t]}
+          </button>\`
+        ).join("")}
       </div>
       <div class="nav-right" style="margin-left:auto">
         <button class="btn btn-primary" data-action="set-type" data-value="import">Import</button>
@@ -795,8 +871,8 @@ function renderImportPanel() {
               placeholder="Paste your text here… or drag and drop a .md or .txt file"></textarea>
           </div>
           <div style="display:flex;justify-content:flex-end;gap:.625rem;margin-top:1rem">
-            <button class="btn" onclick="clearImport()">Clear</button>
-            <button class="btn btn-primary" id="import-btn" onclick="submitImport()">
+            <button class="btn" data-action="clear-import">Clear</button>
+            <button class="btn btn-primary" id="import-btn" data-action="submit-import">
               Extract beliefs
             </button>
           </div>
@@ -819,6 +895,56 @@ function renderImportPanel() {
       if (src && !src.value) src.value = file.name;
     });
   }
+}
+
+function renderPendingPanel() {
+  app.innerHTML = \`
+    <nav class="nav">
+      <a class="nav-brand" href="/beliefs">
+        <img src="/assets/tenure-logo.png" alt="Tenure" height="24" style="vertical-align:middle">
+      </a>
+      <div class="nav-links">
+        <a class="nav-link active" href="/beliefs">World Model</a>
+        <a class="nav-link" href="/admin">Settings</a>
+        <a class="nav-link" href="/audit">Audit</a>
+        <a class="nav-link" href="/onboarding">Onboarding</a>
+      </div>
+      <div class="nav-right">
+        <span class="count">\${pendingSuggestions.length} pending</span>
+        <button class="btn btn-primary" data-action="open-create">New Belief</button>
+        <button class="btn" data-action="set-type" data-value="import">Import</button>
+      </div>
+    </nav>
+    <div class="filters">
+      <div class="tabs">
+        \${pendingSuggestions.length > 0 ? \`<button class="tab active" data-action="set-type" data-value="pending">Pending (\${pendingSuggestions.length})</button>\` : ""}
+        \${["all","preference","decision","entity","open_question"].map(t =>
+          \`<button class="tab" data-action="set-type" data-value="\${t}">
+            \${t === "all" ? "All" : TYPE_LABELS[t]}
+          </button>\`
+        ).join("")}
+      </div>
+    </div>
+    <div class="main">
+      <div class="section">
+        <div class="section-title">Pending suggestions</div>
+        \${pendingSuggestions.length === 0 ? '<div class="empty">No pending suggestions.</div>' : pendingSuggestions.map(s => \`
+          <div class="belief-card" data-id="\${esc(s.id)}">
+            <div class="bh">
+              <span class="bname">\${esc(s.canonical_name ?? "")}</span>
+              <span class="badge s-\${s.epistemic_status ?? "pending"}">\${s.epistemic_status ?? "pending"}</span>
+            </div>
+            <div class="bcontent">\${esc(s.content ?? "")}</div>
+            \${s.why_it_matters ? \`<div class="bwhy">\${esc(s.why_it_matters)}</div>\` : ""}
+            <div class="bactions">
+              <button class="btn btn-primary" data-action="approve-suggestion" data-id="\${esc(s.id)}">Approve</button>
+              <button class="btn btn-danger" data-action="reject-suggestion" data-id="\${esc(s.id)}">Reject</button>
+            </div>
+          </div>
+        \`).join("")}
+      </div>
+    </div>
+  \`;
 }
 
 async function submitImport() {
@@ -879,8 +1005,9 @@ function clearImport() {
 }
 
 
-if (window.__TENURE_SSO_USER__) {
-  init(); 
+const isTeams = ${JSON.stringify(isTeams)};
+if (isTeams) {
+  init();
 } else {
   token ? init() : showTokenScreen();
 }

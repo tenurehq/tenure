@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { Collection, WithId } from "mongodb";
-import type { Belief } from "../types/belief.js";
+import type { Belief, BeliefSuggestion } from "../types/belief.js";
 import type { ExtractionJobQueue } from "../jobs/queue.js";
 import type { RuntimeConfigStore } from "../config/runtime.js";
 import type { ExtractionWorkerLike } from "../extraction/worker.js";
@@ -21,6 +21,7 @@ export interface BeliefsDeps {
   runtimeStore: RuntimeConfigStore;
   providers: ProviderRegistry;
   beliefWriter: BeliefWriter;
+  suggestions: Collection<BeliefSuggestion>;
 }
 
 export function registerBeliefsRoutes(
@@ -39,7 +40,18 @@ export function registerBeliefsRoutes(
   }>("/v1/beliefs", async (req) => {
     const userId = req.tenureUserId;
     const q = req.query;
-    const filter: Record<string, unknown> = { user_id: userId };
+    const teamId = req.tenureTeamId;
+    const notOrg = {
+      $or: [{ visibility: { $ne: "org" } }, { visibility: { $exists: false } }]
+    };
+    const filter: Record<string, unknown> = teamId
+      ? {
+          $or: [
+            { user_id: userId, ...notOrg },
+            { team_id: teamId, visibility: "team" }
+          ]
+        }
+      : { user_id: userId, ...notOrg };
 
     if (q.scope) filter.scope = { $in: q.scope.split(",") };
     if (q.type) filter.type = { $in: q.type.split(",") };
@@ -404,6 +416,119 @@ export function registerBeliefsRoutes(
       };
     }
   );
+
+  app.get("/v1/beliefs/suggestions", async (req) => {
+    const userId = req.tenureUserId;
+    const docs = await deps.suggestions
+      .find({ user_id: userId, status: "pending" })
+      .sort({ created_at: -1 })
+      .limit(50)
+      .toArray();
+    return {
+      suggestions: docs.map((s) => ({
+        id: s._id,
+        canonical_name: s.canonical_name,
+        content: s.content,
+        why_it_matters: s.why_it_matters,
+        type: s.type,
+        scope: s.scope,
+        aliases: s.aliases,
+        confidence: s.confidence,
+        epistemic_status: s.epistemic_status ?? "pending"
+      }))
+    };
+  });
+
+  app.post<{ Params: { id: string } }>(
+    "/v1/beliefs/suggestions/:id/approve",
+    async (req, reply) => {
+      const userId = req.tenureUserId;
+      const { id } = req.params;
+
+      const sug = await deps.suggestions.findOne({
+        _id: id,
+        user_id: userId,
+        status: "pending"
+      });
+      if (!sug) {
+        return reply
+          .code(404)
+          .send({ error: { message: "suggestion not found" } });
+      }
+
+      try {
+        const beliefId = await deps.beliefWriter.create({
+          user_id: userId,
+          type: sug.type,
+          subtype: sug.subtype ?? null,
+          canonical_name: sug.canonical_name,
+          aliases: sug.aliases ?? [],
+          content: sug.content,
+          why_it_matters: sug.why_it_matters ?? "",
+          scope: sug.scope ?? ["user:universal"],
+          provenance: sug.provenance ?? {
+            session_id: "curated",
+            turn_id: "curated",
+            extracted_at: new Date(),
+            source_model: sug.source_model ?? "unknown"
+          },
+          epistemic_status: sug.epistemic_status ?? "active",
+          confidence: sug.confidence ?? 0.8,
+          pinned: false,
+          user_edited: false,
+          change_log: [
+            {
+              changed_at: new Date(),
+              trigger: "curated_approval",
+              changed_by_session: null,
+              changed_by_turn: null
+            }
+          ]
+        });
+
+        await deps.suggestions.updateOne(
+          { _id: id, user_id: userId },
+          {
+            $set: {
+              status: "approved",
+              belief_id: beliefId,
+              updated_at: new Date()
+            }
+          }
+        );
+
+        return { ok: true, belief_id: beliefId };
+      } catch (e: any) {
+        if (e.constructor?.name === "CanonicalNameConflictError") {
+          return reply.code(409).send({
+            error: { message: "Belief already exists", type: "conflict" }
+          });
+        }
+        throw e;
+      }
+    }
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/v1/beliefs/suggestions/:id/reject",
+    async (req, reply) => {
+      const userId = req.tenureUserId;
+      const { id } = req.params;
+
+      const result = await deps.suggestions.updateOne(
+        { _id: id, user_id: userId, status: "pending" },
+        { $set: { status: "rejected", updated_at: new Date() } }
+      );
+
+      if (result.matchedCount === 0) {
+        return reply
+          .code(404)
+          .send({ error: { message: "suggestion not found" } });
+      }
+
+      return { ok: true };
+    }
+  );
 }
 
 function redactForClient(b: WithId<Belief>) {
@@ -417,6 +542,7 @@ function redactForClient(b: WithId<Belief>) {
     confidence: b.confidence,
     pinned: b.pinned,
     scope: b.scope,
-    aliases: b.aliases
+    aliases: b.aliases,
+    visibility: b.visibility ?? "user"
   };
 }

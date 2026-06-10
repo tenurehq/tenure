@@ -1,8 +1,8 @@
 # Tenure
 
-### Stop AI memory drift with deterministic state.
+### AI memory shouldn't be all or nothing. Different memories deserve different trust.
 
-Persistent, governable, scoped state for AI systems.
+Explicit memory boundaries. Full traceability.
 
 ![Build](https://github.com/tenurehq/tenure/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
@@ -10,33 +10,61 @@ Persistent, governable, scoped state for AI systems.
 [![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/tenure)](https://artifacthub.io/packages/search?repo=tenure)
 ![arXiv](https://img.shields.io/badge/arXiv-2605.11325-b31b1b.svg)
 
-## Your memory system will drift in ways you cannot detect.
+| Retrieval precision | Retrieval latency | Drift score | Workflow changes |
+| ------------------- | ----------------- | ----------- | ---------------- |
+| 1.0                 | <15ms             | 0.00        | 0                |
 
-Context bleeds across sessions. Projects contaminate each other. Old decisions keep resurfacing. The model still answers. Nobody knows why.
+## The problem
 
-Most AI memory systems rely on semantic similarity. Over time, irrelevant context accumulates and stale knowledge competes with the truth. The model compensates until it cannot.
+Context bleeds across sessions. Projects contaminate each other. Old decisions resurface when they shouldn't. The model still answers. Nobody knows why.
 
-Tenure treats memory as state.
+Most AI memory systems retrieve semantically similar context and hand the model a pile of candidates to reason over. Contradictions, outdated knowledge, irrelevant context: the model sorts it out until it cannot, or until you need to know why it said what it said.
 
-## AI does not need more context. It needs state.
+Tenure treats memory as state. Conversations become structured beliefs. Beliefs have provenance, versioning, hard scope boundaries, and supersession chains. The model receives a resolved belief, not raw material to re-derive.
 
-Conversations become structured beliefs. Beliefs have provenance, versioning, hard scope boundaries, and supersession chains. The model receives a resolved belief, not raw material to re-derive.
+## Trust isn't binary. It's configurable.
 
-```
-Conversations
-      |
-Structured beliefs
-      |
-Versioning + Scope
-      |
-Retrieval
-      |
-Injected state
-      |
-AI response
-```
+Every team has a different comfort level with AI memory. Tenure meets you where you are and evolves as you're ready.
 
-Memory is the output. State is the system.
+These aren't tiers. They're different philosophies. You can mix them, run them in parallel, or start with one and expand as your team gains confidence.
+
+### Document-Driven
+
+Docs only. No learning.
+
+For organizations that want AI grounded in Confluence, ADRs, READMEs, and coding standards. Nothing the model receives was learned from conversation or behavior. It was written down by a human and explicitly approved.
+
+Good for: regulated environments, enterprises, teams starting with AI memory.
+
+### Curated
+
+AI proposes. Humans approve.
+
+Tenure continuously discovers conventions and patterns from documentation, code, and conversations. Nothing reaches the model until a human approves it. Institutional memory evolves intentionally, not automatically.
+
+Good for: engineering organizations that want oversight, growing teams.
+
+### Adaptive
+
+Continuously learns from how your team actually works.
+
+Context is retrieved per turn, so topic switches don't drag irrelevant memory into the conversation. Memory doesn't sit static; it reflects how the team actually builds.
+
+Good for: fast-moving teams, startups, AI-first organizations.
+
+### Reflective
+
+Insights only. No injection.
+
+Turn work into weekly summaries, expertise maps, and organizational insights. The model never receives memory. You do. Useful for teams that want to understand what's happening before deciding whether to act on it.
+
+Good for: engineering leadership, knowledge management, teams exploring AI memory.
+
+## Learning and injection are independent
+
+You don't have to learn from everything you inject from, or inject everything you learn from. Configure each axis separately, per team or per project.
+
+Start conservatively. Expand as trust is earned.
 
 ## 30-second install
 
@@ -73,13 +101,25 @@ Run with extraction on and injection off. See exactly what Tenure learns before 
 !inject off
 ```
 
-Most users watch Tenure extract beliefs for a week or two before turning injection on. When you open the panel and read what it captured, you edit what you want and delete what you do not. You own the state before it ever reaches the model.
+Most users watch Tenure extract beliefs for a week or two before turning injection on. When you open the panel and read what it captured, you edit what you want and delete what you don't. You own the state before it ever reaches the model.
 
 ## Govern what AI knows
 
 ### Scope isolation
 
 Project A never bleeds into Project B. Scope is a hard filter, not a ranking signal. A session in `project:client-a` cannot surface beliefs from `project:client-b` regardless of how semantically close the content is. Out-of-scope beliefs are structurally absent from retrieval.
+
+If you have a character named Redis in your novel and Redis the cache in your codebase, the right belief surfaces based on the active scope, not on which one scores higher in a similarity search.
+
+Set scope automatically from your first message, or explicitly:
+
+```
+!scope domain:code
+!scope project:my-app
+!scope domain:code/typescript
+```
+
+Sub-domain scopes expand automatically. Setting `domain:code/typescript` includes `domain:code` without listing it separately.
 
 ### Provenance
 
@@ -94,8 +134,6 @@ See exactly which beliefs were in context for every turn. Not inferred. Per-turn
 Old decisions retire instead of competing with the truth. Moved from Jest to Vitest? The old belief routes to the new one. The supersession chain records that the switch happened. The model does not reason over the conflict because the conflict was resolved when it occurred.
 
 ## Why memory systems drift
-
-Most systems retrieve semantically similar context and hand the model a pile of candidates to reason over. Contradictions, alternatives, outdated context -- the model sorts it out. Until it cannot, or until you need to know why it said what it said.
 
 |                     | Traditional memory | Tenure               |
 | ------------------- | ------------------ | -------------------- |
@@ -155,7 +193,7 @@ One state layer. Every client.
 
 - **IDE:** VS Code (native), Cursor, Windsurf, Continue, Cline
 - **Chat:** Open WebUI, LibreChat, any OpenAI-compatible client
-- **Mobile:** OpenClaw on WhatsApp/Telegram -- aha moments on a walk land in the same belief store your IDE reads from tomorrow
+- **Mobile:** OpenClaw on WhatsApp/Telegram. Aha moments on a walk land in the same belief store your IDE reads from tomorrow.
 - **Claude Code:** full Anthropic wire format, works today
 - **Teams:** Helm chart, OIDC, SCIM, audit trails
 
@@ -163,23 +201,25 @@ One port. Every client. Same state.
 
 ## Architecture
 
-Tenure is on the belief system side, not the retrieval system side.
+Tenure works on the belief system side, not the retrieval system side.
+
+```
+Conversations
+      |
+Structured beliefs
+      |
+Versioning + Scope
+      |
+Retrieval
+      |
+Injected state
+      |
+AI response
+```
 
 Most memory systems store what you said and search it at inference time, handing the model a pile of candidates to reason over. Tenure does the work earlier. Every belief is extracted at write time, when the full reasoning chain is present: what was decided, what was rejected, and why.
 
 The `why_it_matters` field is not a note. It is a pre-computed instruction for how future responses should act on that fact.
-
-Scope is detected automatically from your first message or set explicitly:
-
-```
-!scope domain:code
-!scope project:my-app
-!scope domain:code/typescript
-```
-
-Sub-domain scopes expand automatically. Setting `domain:code/typescript` includes `domain:code` without listing it separately.
-
-If you have a character named Redis in your novel and Redis the cache in your codebase, the right belief surfaces based on the active scope, not on which one scores higher in a similarity search.
 
 ## Fully local
 
@@ -193,6 +233,7 @@ If you have a character named Redis in your novel and Redis the cache in your co
 ## Further reading
 
 - [How memory is structured](docs/beliefs.md)
+- [Memory Modes](https://tenureai.dev/use-case/memory-modes)
 - [Supported models](docs/models.md)
 - [Prompt caching and token efficiency](docs/prompt-caching.md)
 - [Retrieval details](docs/retrieval.md)

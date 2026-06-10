@@ -1,7 +1,7 @@
-FROM node:25-bookworm-slim AS crypt
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*
+FROM dhi.io/node:26-alpine-dev AS crypt
+RUN apk add --no-cache curl ca-certificates
 
-ARG MONGO_CRYPT_VERSION=8.2.6
+ARG MONGO_CRYPT_VERSION=8.3.2
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "aarch64" ]; then \
       URL="https://downloads.mongodb.com/linux/mongo_crypt_shared_v1-linux-aarch64-enterprise-ubuntu2204-${MONGO_CRYPT_VERSION}.tgz"; \
@@ -12,12 +12,12 @@ RUN ARCH=$(uname -m) && \
     curl -fsSL --max-time 120 "$URL" | tar -xz -C /tmp/crypt --strip-components=1 && \
     find /tmp/crypt -name "mongo_crypt_v1.so" -exec cp {} /tmp/lib/mongo_crypt_v1.so \;
 
-FROM node:25-bookworm-slim AS deps
+FROM dhi.io/node:26-debian13-dev AS deps
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 
-FROM node:25-bookworm-slim AS build
+FROM dhi.io/node:26-alpine-dev AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY package*.json ./
@@ -25,10 +25,14 @@ COPY tsconfig*.json ./
 COPY src ./src
 RUN npm run build
 
-FROM node:25-bookworm-slim AS runtime
+FROM dhi.io/node:26-alpine-dev AS setup
+RUN addgroup -S tenure && adduser -S -G tenure -H -s /sbin/nologin tenure
+
+FROM dhi.io/node:26-debian13-dev AS runtime
 WORKDIR /app
 
-RUN groupadd --system tenure && useradd --system --gid tenure --no-create-home --shell /usr/sbin/nologin tenure
+COPY --from=setup /etc/passwd /etc/passwd
+COPY --from=setup /etc/group /etc/group
 
 COPY --from=build /app/dist ./dist
 COPY --from=deps /app/node_modules ./node_modules
@@ -39,13 +43,14 @@ COPY --from=crypt /tmp/lib/mongo_crypt_v1.so /app/vendor/mongo_crypt_v1.so
 COPY docker-compose.yml /app/docker-compose.yml
 
 RUN mkdir -p /app/config /app/.tenure && \
-    chown -R tenure:tenure /app
+    chown -R tenure:tenure /app/config /app/.tenure
 
-RUN apt-get update && apt-get install -y --no-install-recommends gosu && rm -rf /var/lib/apt/lists/*
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENV NODE_ENV=production
+
+USER tenure
 
 EXPOSE 5757
 
