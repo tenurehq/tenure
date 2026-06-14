@@ -6,10 +6,6 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-Here's the changelog entry based on the patch:
-
----
-
 ## [1.0.23]
 
 ### Changed
