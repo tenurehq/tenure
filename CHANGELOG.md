@@ -6,6 +6,22 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.24] - 2026-06-13
+
+### Changed
+
+- **Dependency updates** (`package.json`, `package-lock.json`): Bumped `@anthropic-ai/sdk` from `0.95.2` to `0.104.1`. Upgraded `mongodb` from `7.2.0` to `7.3.0`. Updated all OpenTelemetry packages to pinned versions (`auto-instrumentations-node` to `0.77.0`, `exporter-trace-otlp-proto` to `0.219.0`, `instrumentation-dns` to `0.62.0`, `instrumentation-mongodb` to `0.72.0`, `instrumentation-net` to `0.63.0`, `sdk-node` to `0.219.0`). Pinned `ua-parser-js` to `2.0.10` and `tsx` (dev) to `4.22.4`. All OpenTelemetry version constraints were changed from range specifiers (`^`) to exact pins.
+
+### Added
+
+- **`systeminformation` dependency** (`package-lock.json`): Added `systeminformation` `5.31.7`, a cross-platform system/hardware information library.
+
+### Removed
+
+- **`get-tsconfig` and `resolve-pkg-maps` dev dependencies** (`package-lock.json`): Dropped both transitive dev dependencies, which were previously pulled in by `tsx`. The updated `tsx` `4.22.4` no longer requires them.
+
+---
+
 ## [1.0.25] - 2026-06-10
 
 ### Added
