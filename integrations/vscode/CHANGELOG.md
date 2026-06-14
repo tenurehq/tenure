@@ -6,6 +6,23 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+Here's the changelog entry based on the patch:
+
+---
+
+## [1.0.22]
+
+### Changed
+
+- **`tsx` updated to `4.22.4`** (`package-lock.json`): Dev dependency bumped from `4.22.2`.
+- **`esbuild` platform packages updated to `0.28.1`** (`package-lock.json`): All `@esbuild/*` platform-specific packages (aix-ppc64, android-arm, android-arm64, android-x64, darwin-arm64, darwin-x64, freebsd-arm64, freebsd-x64, linux-arm, linux-arm64, linux-ia32, linux-loong64, linux-mips64el, linux-ppc64, and others) bumped from `0.28.0` to `0.28.1`.
+- **Build tooling migrated from `tsup` to `tsdown`** (`package.json`, `package-lock.json`): The VS Code extension's build scripts now use `tsdown` instead of `tsup`. The `build` script is simplified to a bare `tsdown` call, and `build:test` is updated with `tsdown`-compatible flags. The `tsup` dev dependency is replaced with `tsdown@^0.22.2`. The `tsdown` package replaces `tsup`'s dependency set with a new set including `rolldown`, `unconfig-core`, `hookable`, `empathic`, and others, and raises the minimum Node.js requirement to `^22.18.0 || >=24.0.0`.
+- **`typescript` no longer marked as a peer-only dependency** (`package-lock.json`): The `peer` flag was removed from the `typescript` entry, making it a standard dev dependency.
+- **`tslib@2.8.1` added** (`package-lock.json`): New transitive dev dependency introduced alongside the `tsdown` migration.
+- **`ufo` replaced by `unconfig-core@7.5.0`** (`package-lock.json`): The `ufo` package is removed and `unconfig-core` (with dependencies `@quansync/fs` and `quansync`) takes its place as part of the `tsdown` dependency tree.
+
+---
+
 ### Changed
 
 - **README restructured**: Restructured to align with the website and Github.

@@ -1,8 +1,8 @@
 {
   "name": "tenure-vscode",
-  "displayName": "Tenure",
+  "displayName": "Tenure for VSCode",
   "description": "Persistent AI memory that follows you across every tool, session, and interface. Fully local.",
-  "version": "1.0.22",
+  "version": "1.0.23",
   "publisher": "tenureai",
   "license": "MIT",
   "icon": "resources/tenure-logo-icon.png",
@@ -152,8 +152,8 @@
     "vscode.git"
   ],
   "scripts": {
-    "build": "tsup src/extension.ts --out-dir out --format cjs --external vscode --no-splitting",
-    "build:test": "tsup 'src/test/**/*.ts' --out-dir out/test --format cjs --external vscode --no-splitting --tsconfig tsconfig.test.json",
+    "build": "tsdown",
+    "build:test": "tsdown 'src/test/**/*.ts' --out-dir out/test --format cjs --out-extension .js --no-splitting --deps.neverBundle vscode",
     "watch": "tsc -watch -p tsconfig.json",
     "package": "npm run build && vsce package",
     "publish": "vsce publish",
@@ -169,7 +169,7 @@
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "3.9.1",
     "mocha": "^11.7.5",
-    "tsup": "^8.5.1",
+    "tsdown": "^0.22.2",
     "typescript": "6.0.3"
   },
   "overrides": {
