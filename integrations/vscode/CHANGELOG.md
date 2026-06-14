@@ -10,7 +10,7 @@ Here's the changelog entry based on the patch:
 
 ---
 
-## [1.0.22]
+## [1.0.23]
 
 ### Changed
 
