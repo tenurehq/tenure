@@ -1,6 +1,6 @@
 {
   "name": "tenure",
-  "version": "v1.0.26",
+  "version": "v1.0.27",
   "description": "",
   "license": "MIT",
   "author": "",
@@ -33,6 +33,7 @@
     "@opentelemetry/instrumentation-net": "0.63.0",
     "@opentelemetry/sdk-node": "0.219.0",
     "fastify": "5.8.5",
+    "jsonrepair": "^3.14.0",
     "mongodb": "7.3.0",
     "mongodb-client-encryption": "7.0.0",
     "smol-toml": "1.6.1",
@@ -40,15 +41,14 @@
     "ua-parser-js": "2.0.10"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.31.0",
-    "@types/node": "25.6.0",
+    "@types/node": "25.9.3",
     "@types/sinon": "21.0.1",
     "@types/ws": "^8.18.1",
     "@typescript/native-preview": "7.0.0-dev.20260506.1",
-    "ava": "8.0.0",
+    "ava": "8.0.1",
     "c8": "11.0.0",
-    "mongodb-memory-server": "11.0.1",
-    "sinon": "21.1.2",
+    "mongodb-memory-server": "11.2.0",
+    "sinon": "22.0.0",
     "tsx": "4.22.4",
     "typescript": "6.0.3"
   },

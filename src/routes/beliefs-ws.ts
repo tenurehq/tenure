@@ -40,6 +40,7 @@ export type ClientMessage =
       project_scope: string | null;
     }
   | { type: "file_meta"; path: string; size_bytes: number }
+  | { type: "file_edited"; path: string; project_scope: string }
   | { type: "rename_file"; old_path: string; new_path: string }
   | {
       type: "workspace_state";
@@ -355,6 +356,38 @@ export function registerBeliefsWsRoute(
               JSON.stringify({
                 type: "error",
                 request_type: "file_meta",
+                message: (e as Error).message
+              } satisfies ServerMessage)
+            );
+          }
+          break;
+        }
+
+        case "file_edited": {
+          try {
+            const now = new Date();
+            await fileMeta.updateOne(
+              { _id: `${userId}:${msg.path}` },
+              {
+                $set: {
+                  last_edited_at: now,
+                  project_scope: msg.project_scope,
+                  updated_at: now
+                },
+                $setOnInsert: {
+                  user_id: userId,
+                  path: msg.path,
+                  belief_ids: [],
+                  created_at: now
+                }
+              },
+              { upsert: true }
+            );
+          } catch (e) {
+            socket.send(
+              JSON.stringify({
+                type: "error",
+                request_type: "file_edited",
                 message: (e as Error).message
               } satisfies ServerMessage)
             );

@@ -117,14 +117,27 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
     networks:
       - internal
     volumes:
       - mongo_data:/data/db
+      - mongo_configdb:/data/configdb
 
   tenure:
     image: $IMAGE
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
     ports:
       - "${TENURE_PORT:-5757}:5757"
     volumes:
@@ -133,6 +146,7 @@ services:
     environment:
       CONFIG_PATH: /app/config/bootstrap.toml
       TENURE_HOME: /app/.tenure
+      NODE_OPTIONS: "--max-old-space-size=768"
       MONGODB_URI: mongodb://\${MONGO_INITDB_ROOT_USERNAME}:\${MONGO_INITDB_ROOT_PASSWORD}@mongo:27017/?directConnection=true&authSource=admin
     depends_on:
       mongo:
@@ -150,6 +164,7 @@ networks:
 
 volumes:
   mongo_data:
+  mongo_configdb:
 EOF
 
 info "Pulling latest image..."
@@ -170,7 +185,7 @@ info "Waiting for Tenure to be ready..."
 ATTEMPTS=0
 MAX_ATTEMPTS=30
 while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
-  if curl -sf "http://localhost:${TENURE_PORT}/health" >/dev/null 2>&1; then
+  if curl -sf "http://localhost:${TENURE_PORT}/healthz" >/dev/null 2>&1; then
     break
   fi
   ATTEMPTS=$((ATTEMPTS + 1))

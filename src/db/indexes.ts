@@ -267,15 +267,13 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
       { key: { updated_at: -1 } }
     ]);
 
-  await cols.db
-    .collection("belief_suggestions")
-    .createIndexes([
-      { key: { user_id: 1, status: 1, created_at: -1 } },
-      {
-        key: { status: 1, created_at: 1 },
-        partialFilterExpression: { status: "pending" }
-      }
-    ]);
+  await cols.db.collection("belief_suggestions").createIndexes([
+    { key: { user_id: 1, status: 1, created_at: -1 } },
+    {
+      key: { status: 1, created_at: 1 },
+      partialFilterExpression: { status: "pending" }
+    }
+  ]);
 
   await cols.api_tokens.createIndexes([
     {
@@ -296,8 +294,6 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
   await scimGroupsCol.createIndexes([
     { key: { displayName: 1 }, unique: true },
     { key: { externalId: 1 }, sparse: true },
-    // Powers getGroupsForUser — without this every group membership lookup
-    // is a full collection scan
     { key: { "members.value": 1 }, name: "scim_groups_member_lookup" }
   ]);
 
@@ -337,6 +333,14 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
       { key: { generated_at: -1 } },
       { key: { beliefs_hash: 1 } }
     ]);
+
+  await cols.file_meta.createIndexes([
+    {
+      key: { user_id: 1, project_scope: 1, last_edited_at: -1 },
+      name: "file_meta_project_edits",
+      partialFilterExpression: { last_edited_at: { $exists: true } }
+    }
+  ]);
 }
 
 export async function ensureSearchIndexes(db: Db): Promise<void> {

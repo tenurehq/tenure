@@ -299,6 +299,30 @@ export async function activate(
     lmProvider
   );
 
+  async function requireProjectContext(): Promise<{
+    token: string;
+    projectName: string;
+    baseUrl: string;
+  } | null> {
+    const token = await tokenStore.get();
+    if (!token) {
+      vscode.window.showWarningMessage("Tenure: No token configured.");
+      return null;
+    }
+    if (!sync) {
+      vscode.window.showWarningMessage("Tenure: Open a workspace first.");
+      return null;
+    }
+    const projectName = sync.getLastProjectName();
+    if (!projectName) {
+      vscode.window.showWarningMessage(
+        "Tenure: Project scope not resolved yet."
+      );
+      return null;
+    }
+    return { token, projectName, baseUrl: getBaseUrl() };
+  }
+
   {
     const token = await tokenStore.get();
     if (token) {
@@ -376,6 +400,42 @@ export async function activate(
       }
       vscode.commands.executeCommand("tenure.beliefsView.focus");
       beliefsProvider!.openRecordForm();
+    }),
+
+    vscode.commands.registerCommand("tenure.generateResume", async () => {
+      const ctx = await requireProjectContext();
+      if (!ctx) return;
+
+      try {
+        const res = await fetch(`${ctx.baseUrl}/v1/resume/generate`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${ctx.token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({})
+        });
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => `HTTP ${res.status}`);
+          throw new Error(text);
+        }
+
+        const { snapshot } = (await res.json()) as {
+          snapshot: Record<string, unknown>;
+        };
+
+        const panel = vscode.window.createWebviewPanel(
+          "tenureResume",
+          "Tenure: Project Resume",
+          vscode.ViewColumn.One,
+          { enableScripts: true }
+        );
+
+        panel.webview.html = buildResumeHtml(snapshot);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Tenure: ${(err as Error).message}`);
+      }
     }),
 
     vscode.workspace.onDidRenameFiles((event) => {
@@ -490,6 +550,117 @@ function slugify(name: string): string {
     .replace(/[^a-z0-9-]/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+function escapeHtml(raw: string): string {
+  return raw
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function buildResumeHtml(snapshot: Record<string, unknown>): string {
+  const files = (snapshot.active_files as any[] | undefined) ?? [];
+  const beliefs = (snapshot.created_beliefs as any[] | undefined) ?? [];
+  const queries = (snapshot.audit_queries as any[] | undefined) ?? [];
+  const next = (snapshot.inferred_next_steps as string[] | undefined) ?? [];
+  const openQuestions =
+    (snapshot.open_question_beliefs as any[] | undefined) ?? [];
+
+  const list = (items: string[]) =>
+    items.length
+      ? `<ul>${items.map((i) => `<li>${escapeHtml(i)}</li>`).join("")}</ul>`
+      : "<p>None</p>";
+
+  const fileList = files.length
+    ? files
+        .map(
+          (f) =>
+            `<div class="file"><strong>${escapeHtml(f.path)}</strong>
+            <div class="meta">${new Date(
+              f.last_seen_at
+            ).toLocaleString()}</div></div>`
+        )
+        .join("")
+    : "<p>No recently edited files.</p>";
+
+  const beliefList = beliefs.length
+    ? beliefs
+        .map(
+          (b) =>
+            `<div class="belief">
+              <div class="name">${escapeHtml(b.canonical_name ?? b.id)}</div>
+              <div class="content">${escapeHtml(b.content)}</div>
+              ${
+                b.why_it_matters
+                  ? `<div class="why">${escapeHtml(b.why_it_matters)}</div>`
+                  : ""
+              }
+            </div>`
+        )
+        .join("")
+    : "<p>No recent beliefs.</p>";
+
+  const queryList = queries.length
+    ? queries
+        .map(
+          (q) =>
+            `<div class="query">
+              <div class="time">${new Date(q.timestamp).toLocaleString()}</div>
+              <div>${escapeHtml(q.query)}</div>
+            </div>`
+        )
+        .join("")
+    : "<p>No recent queries.</p>";
+
+  const openList = openQuestions.length
+    ? openQuestions
+        .map(
+          (q) =>
+            `<div class="belief"><div class="content">${escapeHtml(
+              q.content
+            )}</div></div>`
+        )
+        .join("")
+    : "<p>No open questions.</p>";
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body { font-family: var(--vscode-font-family); font-size: 13px; padding: 20px; color: var(--vscode-foreground); max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 18px; margin-bottom: 4px; }
+  .subtitle { color: var(--vscode-descriptionForeground); margin-bottom: 16px; }
+  .section { margin-top: 20px; }
+  .section h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--vscode-descriptionForeground); border-bottom: 1px solid var(--vscode-panel-border); padding-bottom: 4px; margin-bottom: 10px; }
+  .summary { line-height: 1.5; margin-bottom: 12px; }
+  .file { padding: 6px 0; border-bottom: 1px solid var(--vscode-panel-border); }
+  .file:last-child { border-bottom: none; }
+  .meta { color: var(--vscode-descriptionForeground); font-size: 11px; }
+  .belief { padding: 10px; margin-bottom: 8px; background: var(--vscode-editor-inactiveSelectionBackground); border-radius: 4px; }
+  .belief .name { font-weight: 600; margin-bottom: 4px; }
+  .belief .why { font-style: italic; color: var(--vscode-descriptionForeground); margin-top: 4px; font-size: 12px; }
+  .query { padding: 6px 0; border-bottom: 1px solid var(--vscode-panel-border); }
+  .query .time { font-size: 11px; color: var(--vscode-descriptionForeground); margin-bottom: 2px; }
+  ul { margin: 0; padding-left: 18px; }
+  li { margin-bottom: 4px; }
+</style>
+</head>
+<body>
+  <h1>${escapeHtml((snapshot.title as string) ?? "Project Resume")}</h1>
+  <div class="subtitle">Confidence: ${Math.round(
+    ((snapshot.confidence as number) ?? 0) * 100
+  )}% — ${escapeHtml((snapshot.confidence_reason as string) ?? "")}</div>
+  <div class="summary">${escapeHtml((snapshot.summary as string) ?? "")}</div>
+
+  <div class="section"><h2>Active Files</h2>${fileList}</div>
+  <div class="section"><h2>Recent Beliefs</h2>${beliefList}</div>
+  <div class="section"><h2>Recent Queries</h2>${queryList}</div>
+  <div class="section"><h2>Inferred Next Steps</h2>${list(next)}</div>
+  <div class="section"><h2>Open Questions</h2>${openList}</div>
+</body>
+</html>`;
 }
 
 async function configureDeployment(

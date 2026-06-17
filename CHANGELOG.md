@@ -6,6 +6,22 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.27] - 2026-06-17
+
+### Added
+
+- **Project Resume generation** (`src/context/projectResume.js`, `src/app.ts`, `src/server.ts`, `src/routes/resume.js`, `integrations/vscode/src/extension.ts`, `integrations/vscode/src/beliefsViewProvider.ts`): Introduced `ProjectResumeService` and a new `POST /v1/resume/generate` endpoint that synthesizes a project snapshot containing active files, recent beliefs, audit queries, inferred next steps, open questions, title, summary, and confidence score . The VS Code extension adds a "Generate Project Resume" button to the beliefs panel and renders the result in a dedicated webview panel via `buildResumeHtml` .
+
+- **File edit tracking** (`src/db/collections.ts`, `src/db/indexes.ts`, `src/routes/beliefs-ws.ts`, `integrations/vscode/src/beliefsViewProvider.ts`): Extended `FileMetaDoc` with `last_edited_at` and `project_scope` fields to record when files are modified . Added the `file_edited` WebSocket message type so the VS Code extension can push edit events to the server, which upserts the corresponding `file_meta` record . Added a `file_meta_project_edits` partial index on `user_id`, `project_scope`, and `last_edited_at` to support efficient per-project lookups of recently edited files .
+
+### Changed
+
+- **VS Code beliefs panel UI** (`integrations/vscode/src/beliefsViewProvider.ts`): Added a "Generate Project Resume" button bar, displayed when the categorized state view is active .
+
+- **Extension command helpers** (`integrations/vscode/src/extension.ts`): Added `requireProjectContext` to centralize validation of authentication token, workspace sync, and resolved project scope before executing project-level commands such as resume generation .
+
+---
+
 ## [1.0.26] - 2026-06-13
 
 ### Changed

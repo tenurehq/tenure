@@ -81,7 +81,6 @@ test.before(async () => {
 test.beforeEach(async () => {
   await deps.cols.api_tokens.deleteMany({});
   delete process.env.TENURE_MODE;
-  // Reset apiToken in case a rotation test changed it
   deps.apiToken = "mp_test_root_token";
   app = await buildApp();
 });
