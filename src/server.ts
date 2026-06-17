@@ -314,7 +314,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         req.tenureOrgId = membership.orgId;
       }
 
-      deps.cols.api_tokens
+      await deps.cols.api_tokens
         .updateOne({ _id: pat._id }, { $set: { last_used_at: new Date() } })
         .catch(() => {});
       return;
@@ -344,10 +344,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         stage: req.url.startsWith("/v1/chat")
           ? "provider_call"
           : req.url.startsWith("/admin")
-          ? "config"
-          : req.url.startsWith("/v1/beliefs")
-          ? "belief_write"
-          : "provider_call",
+            ? "config"
+            : req.url.startsWith("/v1/beliefs")
+              ? "belief_write"
+              : "provider_call",
         message: fastifyError.message,
         error: error instanceof Error ? error : new Error(fastifyError.message),
         user_id: req.tenureUserId ?? deps.userId,

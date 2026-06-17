@@ -99,7 +99,7 @@ test.serial(
       "gpt-4o",
       "",
       [{ role: "user", content: "Hi" }],
-      { temperature: 0.1, max_tokens: 256 }
+      { temperature: 0.7, max_tokens: 256 }
     );
 
     const body = JSON.parse(fetchStub.firstCall.args[1]?.body as string);
