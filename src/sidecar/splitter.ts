@@ -1,17 +1,19 @@
-export const SIDECAR_BEGIN = '<<<SIDECAR_JSON>>>';
-export const SIDECAR_END = '<<<END_SIDECAR>>>';
+import { jsonrepair } from "jsonrepair";
+
+export const SIDECAR_BEGIN = "<<<SIDECAR_JSON>>>";
+export const SIDECAR_END = "<<<END_SIDECAR>>>";
 
 export interface SplitResult {
   visible: string;
   sidecarRaw: string | null;
-  parseStatus: 'parsed' | 'needs_repair' | 'missing';
+  parseStatus: "parsed" | "needs_repair" | "missing";
 }
 
 const SIDECAR_FENCE_RE = /^```[^\n]*\n([\s\S]*?)\n```$/gm;
 
 function unwrapSidecarFence(content: string): string {
   return content.replace(SIDECAR_FENCE_RE, (match, inner: string) => {
-    if (inner.includes('SIDECAR_JSON') || inner.includes('END_SIDECAR')) {
+    if (inner.includes("SIDECAR_JSON") || inner.includes("END_SIDECAR")) {
       return inner;
     }
     return match;
@@ -25,8 +27,8 @@ function unwrapSidecarFence(content: string): string {
  */
 function stripInnerFences(raw: string): string {
   return raw
-    .replace(/^```[a-zA-Z0-9_-]*\s*\n?/i, '')
-    .replace(/\n?```\s*$/i, '');
+    .replace(/^```[a-zA-Z0-9_-]*\s*\n?/i, "")
+    .replace(/\n?```\s*$/i, "");
 }
 
 /**
@@ -35,7 +37,7 @@ function stripInnerFences(raw: string): string {
  * poisoning JSON.parse.
  */
 function extractFirstJsonObject(text: string): string | null {
-  const start = text.indexOf('{');
+  const start = text.indexOf("{");
   if (start === -1) return null;
 
   let depth = 0;
@@ -49,7 +51,7 @@ function extractFirstJsonObject(text: string): string | null {
       escape = false;
       continue;
     }
-    if (ch === '\\' && inString) {
+    if (ch === "\\" && inString) {
       escape = true;
       continue;
     }
@@ -59,8 +61,8 @@ function extractFirstJsonObject(text: string): string | null {
     }
     if (inString) continue;
 
-    if (ch === '{') depth++;
-    else if (ch === '}') depth--;
+    if (ch === "{") depth++;
+    else if (ch === "}") depth--;
 
     if (depth === 0) return text.slice(start, i + 1);
   }
@@ -83,7 +85,7 @@ export function splitSidecar(content: string): SplitResult {
     return {
       visible: content.trimEnd(),
       sidecarRaw: null,
-      parseStatus: 'missing'
+      parseStatus: "missing"
     };
   }
 
@@ -104,13 +106,13 @@ export function splitSidecar(content: string): SplitResult {
   }
 
   if (!sidecarRaw) {
-    return { visible, sidecarRaw: null, parseStatus: 'needs_repair' };
+    return { visible, sidecarRaw: null, parseStatus: "needs_repair" };
   }
 
   return {
     visible,
     sidecarRaw,
-    parseStatus: endIdx === -1 ? 'needs_repair' : 'parsed'
+    parseStatus: endIdx === -1 ? "needs_repair" : "parsed"
   };
 }
 
@@ -136,6 +138,10 @@ export function parseSidecar(raw: string | null): SidecarPayload | null {
   try {
     return JSON.parse(cleaned) as SidecarPayload;
   } catch {
-    return null;
+    try {
+      return JSON.parse(jsonrepair(cleaned)) as SidecarPayload;
+    } catch {
+      return null;
+    }
   }
 }

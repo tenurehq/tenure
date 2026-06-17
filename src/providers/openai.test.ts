@@ -5,13 +5,13 @@ import { OpenAIAdapter, ProviderError } from "./openai.js";
 const MOCK_BODY = {
   model: "gpt-4o",
   choices: [{ message: { content: "Hello!" }, finish_reason: "stop" }],
-  usage: { prompt_tokens: 10, completion_tokens: 5 },
+  usage: { prompt_tokens: 10, completion_tokens: 5 }
 };
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json" }
   });
 
 test.afterEach.always(() => sinon.restore());
@@ -22,7 +22,7 @@ test.serial("call() maps response to NormalizedResponse", async (t) => {
     "gpt-4o",
     "",
     [{ role: "user", content: "Hi" }],
-    {},
+    {}
   );
 
   t.is(result.content, "Hello!");
@@ -39,7 +39,7 @@ test.serial("call() sets Bearer authorization header", async (t) => {
     "gpt-4o",
     "",
     [{ role: "user", content: "Hi" }],
-    {},
+    {}
   );
 
   const headers = fetchStub.firstCall.args[1]?.headers as Record<
@@ -60,15 +60,15 @@ test.serial(
       "Injected",
       [
         { role: "system", content: "Base" },
-        { role: "user", content: "Hi" },
+        { role: "user", content: "Hi" }
       ],
-      {},
+      {}
     );
 
     const body = JSON.parse(fetchStub.firstCall.args[1]?.body as string);
     t.is(body.messages[0].role, "system");
     t.is(body.messages[0].content, "Injected\n\nBase");
-  },
+  }
 );
 
 test.serial(
@@ -81,12 +81,12 @@ test.serial(
       "gpt-4o",
       "",
       [{ role: "user", content: "Hi" }],
-      {},
+      {}
     );
 
     const body = JSON.parse(fetchStub.firstCall.args[1]?.body as string);
     t.is(body.messages[0].role, "user");
-  },
+  }
 );
 
 test.serial(
@@ -99,7 +99,7 @@ test.serial(
       "gpt-4o",
       "",
       [{ role: "user", content: "Hi" }],
-      { temperature: 0.7, max_tokens: 256 },
+      { temperature: 0.7, max_tokens: 256 }
     );
 
     const body = JSON.parse(fetchStub.firstCall.args[1]?.body as string);
@@ -107,7 +107,7 @@ test.serial(
     t.is(body.temperature, 0.7);
     t.is(body.max_tokens, 256);
     t.false(body.stream);
-  },
+  }
 );
 
 test.serial("call() throws ProviderError on non-2xx response", async (t) => {
@@ -118,9 +118,9 @@ test.serial("call() throws ProviderError on non-2xx response", async (t) => {
         "gpt-4o",
         "",
         [{ role: "user", content: "Hi" }],
-        {},
+        {}
       ),
-    { instanceOf: ProviderError },
+    { instanceOf: ProviderError }
   );
   t.regex(err!.message, /400/);
 });
@@ -133,7 +133,7 @@ test.serial("call() uses custom baseUrl instead of default", async (t) => {
     "gpt-4o",
     "",
     [{ role: "user", content: "Hi" }],
-    {},
+    {}
   );
 
   const url = fetchStub.firstCall.args[0] as string;
@@ -150,12 +150,12 @@ test.serial(
       "gpt-4o",
       "",
       [{ role: "user", content: "Hi" }],
-      {},
+      {}
     );
 
     const body = JSON.parse(fetchStub.firstCall.args[1]?.body as string);
     t.deepEqual(body.prompt_caching, { system: true, messages: true });
-  },
+  }
 );
 
 test.serial(
@@ -168,12 +168,12 @@ test.serial(
       "gpt-4o",
       "",
       [{ role: "user", content: "Hi" }],
-      {},
+      {}
     );
 
     const body = JSON.parse(fetchStub.firstCall.args[1]?.body as string);
     t.is(body.prompt_caching, undefined);
-  },
+  }
 );
 
 test.serial(
@@ -183,8 +183,8 @@ test.serial(
       jsonResponse({
         model: "gpt-4o",
         choices: [],
-        usage: { prompt_tokens: 10, completion_tokens: 0 },
-      }),
+        usage: { prompt_tokens: 10, completion_tokens: 0 }
+      })
     );
 
     const err = await t.throwsAsync(
@@ -193,12 +193,12 @@ test.serial(
           "gpt-4o",
           "",
           [{ role: "user", content: "Hi" }],
-          {},
+          {}
         ),
-      { instanceOf: ProviderError },
+      { instanceOf: ProviderError }
     );
     t.regex(err!.message, /empty choices/);
-  },
+  }
 );
 
 test.serial(
@@ -212,19 +212,19 @@ test.serial(
       {
         static: "You are helpful.",
         beliefs: "User likes cats.",
-        dynamic: "Today is Monday.",
+        dynamic: "Today is Monday."
       },
       [{ role: "user", content: "Hi" }],
-      {},
+      {}
     );
 
     const body = JSON.parse(fetchStub.firstCall.args[1]?.body as string);
     t.is(body.messages[0].role, "system");
     t.is(
       body.messages[0].content,
-      "You are helpful.\n\nUser likes cats.\n\nToday is Monday.",
+      "You are helpful.\n\nUser likes cats.\n\nToday is Monday."
     );
-  },
+  }
 );
 
 test.serial(
@@ -241,17 +241,17 @@ test.serial(
           role: "system",
           content: [
             { type: "text", text: "Part A" },
-            { type: "text", text: "Part B" },
-          ],
+            { type: "text", text: "Part B" }
+          ]
         },
-        { role: "user", content: "Hi" },
+        { role: "user", content: "Hi" }
       ],
-      {},
+      {}
     );
 
     const body = JSON.parse(fetchStub.firstCall.args[1]?.body as string);
     t.is(body.messages[0].content, "Injected\n\nPart A\nPart B");
-  },
+  }
 );
 
 function sseStream(lines: string[]): Response {
@@ -260,11 +260,11 @@ function sseStream(lines: string[]): Response {
     start(controller) {
       controller.enqueue(new TextEncoder().encode(text));
       controller.close();
-    },
+    }
   });
   return new Response(body, {
     status: 200,
-    headers: { "content-type": "text/event-stream" },
+    headers: { "content-type": "text/event-stream" }
   });
 }
 
@@ -274,13 +274,13 @@ test.serial(
     sinon.stub(globalThis, "fetch").resolves(
       sseStream([
         JSON.stringify({
-          choices: [{ delta: { content: "Hello" } }],
+          choices: [{ delta: { content: "Hello" } }]
         }),
         JSON.stringify({
-          choices: [{ delta: { content: " world" } }],
+          choices: [{ delta: { content: " world" } }]
         }),
-        "[DONE]",
-      ]),
+        "[DONE]"
+      ])
     );
 
     const events: import("./types.js").StreamEvent[] = [];
@@ -288,7 +288,7 @@ test.serial(
       "gpt-4o",
       "",
       [{ role: "user", content: "Hi" }],
-      {},
+      {}
     )) {
       events.push(event);
     }
@@ -301,7 +301,7 @@ test.serial(
     t.is(events[2].type, "stream_end");
     t.is(events[2].finish_reason, "stop");
     t.deepEqual(events[2].usage, { input_tokens: 0, output_tokens: 0 });
-  },
+  }
 );
 
 test.serial("callStream() stops on [DONE] marker", async (t) => {
@@ -311,8 +311,8 @@ test.serial("callStream() stops on [DONE] marker", async (t) => {
       sseStream([
         JSON.stringify({ choices: [{ delta: { content: "Hi" } }] }),
         "[DONE]",
-        JSON.stringify({ choices: [{ delta: { content: "ignored" } }] }),
-      ]),
+        JSON.stringify({ choices: [{ delta: { content: "ignored" } }] })
+      ])
     );
 
   const events: import("./types.js").StreamEvent[] = [];
@@ -320,7 +320,7 @@ test.serial("callStream() stops on [DONE] marker", async (t) => {
     "gpt-4o",
     "",
     [{ role: "user", content: "Hi" }],
-    {},
+    {}
   )) {
     events.push(event);
   }
@@ -345,14 +345,14 @@ test.serial(
           "gpt-4o",
           "",
           [{ role: "user", content: "Hi" }],
-          {},
+          {}
         )) {
         }
       },
-      { instanceOf: ProviderError },
+      { instanceOf: ProviderError }
     );
     t.regex(err!.message, /500/);
-  },
+  }
 );
 
 test.serial(
@@ -368,14 +368,14 @@ test.serial(
           "gpt-4o",
           "",
           [{ role: "user", content: "Hi" }],
-          {},
+          {}
         )) {
         }
       },
-      { instanceOf: ProviderError },
+      { instanceOf: ProviderError }
     );
     t.regex(err!.message, /empty stream body/);
-  },
+  }
 );
 
 test.serial(
@@ -387,8 +387,8 @@ test.serial(
         sseStream([
           "not valid json",
           JSON.stringify({ choices: [{ delta: { content: "ok" } }] }),
-          "[DONE]",
-        ]),
+          "[DONE]"
+        ])
       );
 
     const events: import("./types.js").StreamEvent[] = [];
@@ -396,7 +396,7 @@ test.serial(
       "gpt-4o",
       "",
       [{ role: "user", content: "Hi" }],
-      {},
+      {}
     )) {
       events.push(event);
     }
@@ -406,7 +406,7 @@ test.serial(
     t.is(events[0].delta, "ok");
     t.is(events[1].type, "stream_end");
     t.is(events[1].finish_reason, "stop");
-  },
+  }
 );
 
 test.serial("listModels() returns model list on success", async (t) => {
@@ -417,16 +417,16 @@ test.serial("listModels() returns model list on success", async (t) => {
           id: "gpt-4o",
           object: "model",
           created: 1700000000,
-          owned_by: "openai",
+          owned_by: "openai"
         },
         {
           id: "gpt-4o-mini",
           object: "model",
           created: 1700000001,
-          owned_by: "openai",
-        },
-      ],
-    }),
+          owned_by: "openai"
+        }
+      ]
+    })
   );
 
   const models = await new OpenAIAdapter("key").listModels();
@@ -442,7 +442,7 @@ test.serial("listModels() throws ProviderError on 401 status", async (t) => {
 
   const err = await t.throwsAsync(
     () => new OpenAIAdapter("bad-key").listModels(),
-    { instanceOf: ProviderError },
+    { instanceOf: ProviderError }
   );
   t.regex(err!.message, /authentication failed/i);
 });
@@ -456,5 +456,5 @@ test.serial(
 
     const models = await new OpenAIAdapter("key").listModels();
     t.deepEqual(models, []);
-  },
+  }
 );

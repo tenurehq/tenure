@@ -55,6 +55,8 @@ import helmet from "@fastify/helmet";
 import type { TeamResolutionStrategy } from "./config/teamResolution.js";
 import type { OrgSummaryLookup } from "./context/orgSummary.js";
 import { registerTeamAdminUiRoute } from "./routes/team-admin-ui.js";
+import type { ProjectResumeService } from "./context/projectResume.js";
+import { registerResumeRoutes, type ResumeRouteDeps } from "./routes/resume.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -112,6 +114,7 @@ export interface ServerDeps {
   extractionWorker: ExtractionWorker;
   personaSummary: PersonaSummaryService;
   orgSummaryService: OrgSummaryLookup;
+  projectResume: ProjectResumeService;
   workspaceState: WorkspaceStateCache;
 }
 
@@ -311,7 +314,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         req.tenureOrgId = membership.orgId;
       }
 
-      deps.cols.api_tokens
+      await deps.cols.api_tokens
         .updateOne({ _id: pat._id }, { $set: { last_used_at: new Date() } })
         .catch(() => {});
       return;
@@ -341,10 +344,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         stage: req.url.startsWith("/v1/chat")
           ? "provider_call"
           : req.url.startsWith("/admin")
-          ? "config"
-          : req.url.startsWith("/v1/beliefs")
-          ? "belief_write"
-          : "provider_call",
+            ? "config"
+            : req.url.startsWith("/v1/beliefs")
+              ? "belief_write"
+              : "provider_call",
         message: fastifyError.message,
         error: error instanceof Error ? error : new Error(fastifyError.message),
         user_id: req.tenureUserId ?? deps.userId,
@@ -462,6 +465,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     injectionAudit: deps.cols.injection_audit
   };
   registerAuditRoutes(app, auditDeps);
+
+  const resumeDeps: ResumeRouteDeps = {
+    projectResume: deps.projectResume
+  };
+  registerResumeRoutes(app, resumeDeps);
 
   const scimDeps: ScimDeps = { db: deps.db, cols: deps.cols };
   registerScimRoutes(app, scimDeps);

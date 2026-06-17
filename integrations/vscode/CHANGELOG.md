@@ -6,6 +6,22 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.24]
+
+### Added
+
+- **Project Resume command** (`extension.ts`): New `tenure.generateResume` command POSTs to `/v1/resume/generate` and opens a webview panel titled "Tenure: Project Resume" to display the generated project snapshot.
+- **Resume HTML renderer** (`extension.ts`): Added `buildResumeHtml()` function which formats the snapshot into styled sections for title, confidence, summary, active files, recent beliefs, recent queries, inferred next steps, and open questions, using a new `escapeHtml()` utility for safe rendering.
+- **Project context helper** (`extension.ts`): Added `requireProjectContext()` to validate that a token, workspace, and project scope are available before executing project-scoped commands.
+- **Project Resume sidebar button** (`beliefsViewProvider.ts`): Added a "Generate Project Resume" button (`resume-bar`) to the beliefs webview; its visibility toggles alongside the record-belief-bar based on connection and workspace state.
+- **`file_edited` message support** (`beliefsViewProvider.ts`): Introduced a new `ClientMessage` variant `file_edited` and a `sendFileEdited()` method for relaying file edit events to the webview.
+
+### Changed
+
+- **Version and packaging** (`package.json`, `package-lock.json`): Updated extension version to `1.0.24` and bumped the `@vscode/vsce` devDependency from `3.9.1` to `3.9.2`.
+
+---
+
 ## [1.0.23]
 
 ### Changed

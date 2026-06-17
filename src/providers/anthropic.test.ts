@@ -6,7 +6,7 @@ import { AnthropicAdapter, type AnthropicCallRequest } from "./anthropic.js";
 
 const BASE_REQ: AnthropicCallRequest = {
   model: "claude-3-5-sonnet-20241022",
-  messages: [{ role: "user", content: "Hi" }],
+  messages: [{ role: "user", content: "Hi" }]
 };
 
 const MOCK_RESPONSE = {
@@ -17,7 +17,7 @@ const MOCK_RESPONSE = {
   stop_reason: "end_turn",
   stop_sequence: null,
   content: [{ type: "text", text: "Hello!" }],
-  usage: { input_tokens: 10, output_tokens: 5 },
+  usage: { input_tokens: 10, output_tokens: 5 }
 } as unknown as Anthropic.Message;
 
 const makeSdkError = (Cls: {
@@ -50,10 +50,10 @@ test("call() filters system role messages out of conversation", async (t) => {
       ...BASE_REQ,
       messages: [
         { role: "system", content: "Should be filtered" },
-        { role: "user", content: "Hi" },
-      ],
+        { role: "user", content: "Hi" }
+      ]
     },
-    "Injected",
+    "Injected"
   );
 
   const params = createStub.firstCall.args[0] as any;
@@ -77,7 +77,7 @@ const stopReasonMacro = test.macro<[stopReason: string, expected: string]>(
     stubCreate(adapter).resolves({ ...MOCK_RESPONSE, stop_reason: stopReason });
     const result = await adapter.call(BASE_REQ, "");
     t.is(result.finish_reason, expected);
-  },
+  }
 );
 
 test("stop_reason end_turn → stop", stopReasonMacro, "end_turn", "stop");
@@ -85,19 +85,19 @@ test(
   "stop_reason max_tokens → length",
   stopReasonMacro,
   "max_tokens",
-  "length",
+  "length"
 );
 test(
   "stop_reason stop_sequence → stop",
   stopReasonMacro,
   "stop_sequence",
-  "stop",
+  "stop"
 );
 test(
   "stop_reason tool_use → tool_calls",
   stopReasonMacro,
   "tool_use",
-  "tool_calls",
+  "tool_calls"
 );
 
 test("call() extracts tool_use blocks into toolCalls", async (t) => {
@@ -110,9 +110,9 @@ test("call() extracts tool_use blocks into toolCalls", async (t) => {
         type: "tool_use",
         id: "tu_01",
         name: "get_weather",
-        input: { location: "NYC" },
-      },
-    ],
+        input: { location: "NYC" }
+      }
+    ]
   });
 
   const result = await adapter.call(BASE_REQ, "");
@@ -144,7 +144,7 @@ test("call() maps generic APIError with status code", async (t) => {
   const adapter = new AnthropicAdapter("key");
   const sdkErr = Object.assign(makeSdkError(Anthropic.APIError), {
     status: 503,
-    message: "Service unavailable",
+    message: "Service unavailable"
   });
   stubCreate(adapter).rejects(sdkErr);
 
@@ -159,7 +159,7 @@ test("call() produces structured TextBlockParam[] system with SystemPromptParts"
   await adapter.call(BASE_REQ, {
     static: "You are helpful.",
     beliefs: "User likes cats.",
-    dynamic: "Today is Monday.",
+    dynamic: "Today is Monday."
   });
 
   const params = createStub.firstCall.args[0] as any;
@@ -210,8 +210,8 @@ test("call() passes native Anthropic tools through verbatim", async (t) => {
     {
       name: "get_weather",
       description: "Get current weather",
-      input_schema: { type: "object", properties: {} },
-    },
+      input_schema: { type: "object", properties: {} }
+    }
   ];
 
   await adapter.call({ ...BASE_REQ, passThrough: { tools: nativeTools } }, "");
@@ -229,12 +229,12 @@ test("call() passes native Anthropic tool_choice through verbatim", async (t) =>
       ...BASE_REQ,
       passThrough: {
         tools: [
-          { name: "fn1", input_schema: { type: "object", properties: {} } },
+          { name: "fn1", input_schema: { type: "object", properties: {} } }
         ],
-        tool_choice: { type: "any" },
-      },
+        tool_choice: { type: "any" }
+      }
     },
-    "",
+    ""
   );
 
   const params = createStub.firstCall.args[0] as any;
@@ -248,9 +248,9 @@ test("call() passes top_p and stop_sequences through verbatim", async (t) => {
   await adapter.call(
     {
       ...BASE_REQ,
-      passThrough: { top_p: 0.9, stop_sequences: ["END", "HALT"] },
+      passThrough: { top_p: 0.9, stop_sequences: ["END", "HALT"] }
     },
-    "",
+    ""
   );
 
   const params = createStub.firstCall.args[0] as any;
@@ -263,7 +263,7 @@ test("call() throws when model is empty", async (t) => {
   stubCreate(adapter).resolves(MOCK_RESPONSE);
 
   const err = await t.throwsAsync(() =>
-    adapter.call({ ...BASE_REQ, model: "" }, ""),
+    adapter.call({ ...BASE_REQ, model: "" }, "")
   );
   t.regex(err!.message, /No model specified/);
 });
@@ -276,7 +276,7 @@ test("callPositional() delegates to call() correctly", async (t) => {
     "claude-3-5-sonnet-20241022",
     "Be helpful",
     [{ role: "user", content: "Hi" }],
-    { temperature: 0.5 },
+    { temperature: 0.1 }
   );
 
   t.is(result.content, "Hello!");
@@ -298,12 +298,12 @@ function makeMockStream(events: any[], finalMessage: any) {
             return Promise.resolve({ value: events[i++], done: false });
           }
           return Promise.resolve({ value: undefined, done: true });
-        },
+        }
       };
     },
     finalMessage() {
       return Promise.resolve(finalMessage);
-    },
+    }
   };
 }
 
@@ -316,15 +316,15 @@ test("callStream() yields content_delta events from text_delta", async (t) => {
       [
         {
           type: "content_block_delta",
-          delta: { type: "text_delta", text: "Hello" },
+          delta: { type: "text_delta", text: "Hello" }
         },
         {
           type: "content_block_delta",
-          delta: { type: "text_delta", text: " world" },
-        },
+          delta: { type: "text_delta", text: " world" }
+        }
       ],
-      { ...MOCK_RESPONSE, model: "claude-3-5-sonnet-20241022" },
-    ),
+      { ...MOCK_RESPONSE, model: "claude-3-5-sonnet-20241022" }
+    )
   );
 
   const events: import("./types.js").StreamEvent[] = [];
@@ -347,11 +347,11 @@ test("callStream() yields text_block_start on new text block", async (t) => {
       [
         {
           type: "content_block_start",
-          content_block: { type: "text", text: "" },
-        },
+          content_block: { type: "text", text: "" }
+        }
       ],
-      MOCK_RESPONSE,
-    ),
+      MOCK_RESPONSE
+    )
   );
 
   const events: import("./types.js").StreamEvent[] = [];
@@ -376,17 +376,17 @@ test("callStream() yields tool_call_delta on tool_use blocks", async (t) => {
             type: "tool_use",
             id: "toolu_01",
             name: "get_weather",
-            input: {},
-          },
+            input: {}
+          }
         },
         {
           type: "content_block_delta",
-          delta: { type: "input_json_delta", partial_json: '{"loc' },
+          delta: { type: "input_json_delta", partial_json: '{"loc' }
         },
         {
           type: "content_block_delta",
-          delta: { type: "input_json_delta", partial_json: '":"NYC"}' },
-        },
+          delta: { type: "input_json_delta", partial_json: '":"NYC"}' }
+        }
       ],
       {
         ...MOCK_RESPONSE,
@@ -396,11 +396,11 @@ test("callStream() yields tool_call_delta on tool_use blocks", async (t) => {
             type: "tool_use",
             id: "toolu_01",
             name: "get_weather",
-            input: { loc: "NYC" },
-          },
-        ],
-      },
-    ),
+            input: { loc: "NYC" }
+          }
+        ]
+      }
+    )
   );
 
   const events: import("./types.js").StreamEvent[] = [];
@@ -423,16 +423,16 @@ test("callStream() emits stream_end with model, finish_reason, and usage", async
       [
         {
           type: "content_block_delta",
-          delta: { type: "text_delta", text: "Hi" },
-        },
+          delta: { type: "text_delta", text: "Hi" }
+        }
       ],
       {
         ...MOCK_RESPONSE,
         model: "claude-3-5-sonnet-20241022",
         stop_reason: "end_turn",
-        usage: { input_tokens: 20, output_tokens: 10 },
-      },
-    ),
+        usage: { input_tokens: 20, output_tokens: 10 }
+      }
+    )
   );
 
   const events: import("./types.js").StreamEvent[] = [];
@@ -471,8 +471,8 @@ test("listModels() returns mapped model list on success", async (t) => {
   stubListModels(adapter).resolves({
     data: [
       { id: "claude-3-5-sonnet-20241022", created_at: "2024-10-22T00:00:00Z" },
-      { id: "claude-3-haiku-20240307", created_at: "2024-03-07T00:00:00Z" },
-    ],
+      { id: "claude-3-haiku-20240307", created_at: "2024-03-07T00:00:00Z" }
+    ]
   });
 
   const models = await adapter.listModels();

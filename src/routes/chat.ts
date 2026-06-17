@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyBaseLogger } from "fastify";
 import type { ServerResponse } from "node:http";
-
 import { SessionManager, type Session } from "../session/manager.js";
 import { splitSidecar, SIDECAR_BEGIN } from "../sidecar/splitter.js";
 import { ContextBuilder, EMPTY_CONTEXT } from "../context/contextBuilder.js";

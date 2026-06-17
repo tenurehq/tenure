@@ -29,6 +29,7 @@ import { randomBytes } from "node:crypto";
 import { WorkspaceStateCache } from "./workspace/stateCache.js";
 import type { InternalLLMCaller } from "./providers/types.js";
 import { OrgSummaryDirect } from "./context/orgSummary.js";
+import { ProjectResumeService } from "./context/projectResume.js";
 
 const mongoTlsOptions: MongoClientOptions = {};
 if (process.env.MONGODB_TLS_CA_FILE) {
@@ -208,6 +209,15 @@ export async function buildApp(config: BootstrapConfig) {
     personaSummary
   });
 
+  const projectResume = new ProjectResumeService({
+    injectionAudit: cols.injection_audit,
+    beliefs: cols.beliefs,
+    fileMeta: cols.file_meta,
+    workspaceState,
+    adapter: resolveAdapter,
+    modelId: runtimeConfig.default_model ?? ""
+  });
+
   const server = await buildServer({
     db,
     cols,
@@ -224,6 +234,7 @@ export async function buildApp(config: BootstrapConfig) {
     compactionRunner,
     extractionWorker,
     personaSummary,
+    projectResume,
     orgSummaryService,
     workspaceState
   });

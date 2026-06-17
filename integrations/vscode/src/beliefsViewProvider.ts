@@ -90,6 +90,7 @@ type ClientMessage =
       active_file: string | null;
       active_language: string | null;
     }
+  | { type: "file_edited"; path: string; project_scope: string }
   | { type: "file_meta"; path: string; size_bytes: number }
   | { type: "set_toggle"; toggle: "injection" | "extraction"; value: boolean }
   | { type: "fetch_toggles" };
@@ -196,6 +197,10 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
       if (msg.command === "configureDeployment") {
         vscode.commands.executeCommand("tenure.configureDeployment");
       }
+
+      if (msg.command === "generateResume") {
+        vscode.commands.executeCommand("tenure.generateResume");
+      }
     });
   }
 
@@ -293,6 +298,10 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
 
   sendFileMeta(path: string, sizeBytes: number): void {
     this.send({ type: "file_meta", path, size_bytes: sizeBytes });
+  }
+
+  sendFileEdited(path: string, projectScope: string): void {
+    this.send({ type: "file_edited", path, project_scope: projectScope });
   }
 
   setNoWorkspace(value: boolean): void {
@@ -528,7 +537,7 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
 
   private pushCategorizedState(): void {
     const activeFileName = this.currentActiveFile
-      ? this.currentActiveFile.split("/").pop() ?? this.currentActiveFile
+      ? (this.currentActiveFile.split("/").pop() ?? this.currentActiveFile)
       : null;
 
     this.view?.webview.postMessage({
@@ -756,6 +765,11 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
       </div>
     </div>
   </div>
+  <div id="resume-bar" style="display:none; border-top:1px solid var(--vscode-panel-border);margin-top:8px;padding-top:8px;">
+    <button onclick="post('generateResume')" style="width:100%;background:var(--vscode-button-background);border:none;color:var(--vscode-button-foreground);font-family:inherit;font-size:11px;padding:5px;cursor:pointer;border-radius:3px;">
+      Generate Project Resume
+    </button>
+  </div>
   <div id="record-belief-bar" style="display:none; border-top:1px solid var(--vscode-panel-border);margin-top:8px;padding-top:8px;">
     <button onclick="openForm()" id="open-form-btn"
       style="width:100%;background:var(--vscode-button-secondaryBackground);border:none;color:var(--vscode-button-secondaryForeground);font-family:inherit;font-size:11px;padding:5px;cursor:pointer;border-radius:3px;">
@@ -919,6 +933,8 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
       document.getElementById("section-file").style.display = "none";
       document.getElementById("section-project").style.display = "none";
       document.getElementById("section-universal").style.display = "none";
+      document.getElementById("resume-bar").style.display = "none";
+      document.getElementById("record-belief-bar").style.display = "none";
       const emptyState = document.getElementById("empty-state");
       emptyState.style.display = "block";
       emptyState.innerHTML = '<strong>' + label + '</strong><br>' + line1 +
@@ -930,11 +946,13 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
         case "categorized_state":
           renderCategorized(data);
           document.getElementById("record-belief-bar").style.display = "block";
+          document.getElementById("resume-bar").style.display = "block";
           break;
         case "state":
           // Legacy flat support - treat all as project
           renderCategorized({ file: [], project: data.beliefs, universal: [], totalActive: data.beliefs.length, activeFileName: null });
           document.getElementById("record-belief-bar").style.display = "block";
+          document.getElementById("resume-bar").style.display = "block";
           break;
         case "toggles_state":
           document.getElementById("toggles-bar").style.display = "flex";
@@ -963,10 +981,12 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
           document.getElementById("main-header").style.display = "none";
           document.getElementById("beliefs-container").style.display = "none";
           document.getElementById("record-belief-bar").style.display = "none";
+          document.getElementById("resume-bar").style.display = "none";
           break;
         case "disconnected":
           renderEmpty("Not connected", "Tenure server not found.", "<span class=\\"link\\" onclick=\\"post('configureDeployment')\\">Install locally</span> &nbsp;|&nbsp; <span class=\\"link\\" onclick=\\"post('configureDeployment')\\">Connect to Tenure Teams</span>");
           document.getElementById("record-belief-bar").style.display = "none";
+          document.getElementById("resume-bar").style.display = "none";
           break;
         case "client_status": {
           const section = document.getElementById("clients-section");

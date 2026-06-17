@@ -122,14 +122,27 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
     networks:
       - internal
     volumes:
       - mongo_data:/data/db
+      - mongo_configdb:/data/configdb
 
   tenure:
     image: $Image
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
     ports:
       - "`${TENURE_PORT:-5757}:5757"
     volumes:
@@ -153,6 +166,7 @@ networks:
 
 volumes:
   mongo_data:
+  mongo_configdb:
 "@ | Set-Content -Path $ComposeFile -Encoding UTF8
 
 Write-Info "Pulling latest image..."
@@ -180,7 +194,7 @@ $ready = $false
 
 while ($attempts -lt $maxAttempts) {
   try {
-    $response = Invoke-WebRequest -Uri "http://localhost:$TenurePort/health" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+    $response = Invoke-WebRequest -Uri "http://localhost:$TenurePort/healthz" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
     if ($response.StatusCode -eq 200) {
       $ready = $true
       break
