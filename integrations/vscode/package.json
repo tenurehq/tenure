@@ -2,7 +2,7 @@
   "name": "tenure-vscode",
   "displayName": "Tenure for VSCode",
   "description": "Persistent AI memory that follows you across every tool, session, and interface. Fully local.",
-  "version": "1.0.23",
+  "version": "1.0.24",
   "publisher": "tenureai",
   "license": "MIT",
   "icon": "resources/tenure-logo-icon.png",
@@ -119,6 +119,10 @@
       {
         "command": "tenure.configureDeployment",
         "title": "Tenure: Configure Deployment"
+      },
+      {
+        "command": "tenure.generateResume",
+        "title": "Tenure: Project Resume"
       }
     ],
     "menus": {
@@ -167,7 +171,7 @@
     "@typescript/native-preview": "^7.0.0-dev.20260519.1",
     "@vscode/test-cli": "^0.0.11",
     "@vscode/test-electron": "^2.5.2",
-    "@vscode/vsce": "3.9.1",
+    "@vscode/vsce": "3.9.2",
     "mocha": "^11.7.5",
     "tsdown": "^0.22.2",
     "typescript": "6.0.3"

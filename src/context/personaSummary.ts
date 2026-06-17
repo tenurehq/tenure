@@ -35,7 +35,7 @@ export class PersonaSummaryService {
   constructor(private readonly deps: PersonaGeneratorDeps) {}
 
   async ensureFresh(
-    userId: string,
+    userId: string
   ): Promise<"fresh" | "regenerated" | "stale-served"> {
     const { universalBeliefs } = await this.loadContributing(userId);
     const hash = this.hash(universalBeliefs);
@@ -53,7 +53,7 @@ export class PersonaSummaryService {
   async regenerate(
     userId: string,
     universalBeliefs?: Belief[],
-    hash?: string,
+    hash?: string
   ): Promise<void> {
     const existing = this.inFlight.get(userId);
     if (existing) {
@@ -74,7 +74,7 @@ export class PersonaSummaryService {
   private async doRegenerate(
     userId: string,
     universalBeliefs?: Belief[],
-    hash?: string,
+    hash?: string
   ): Promise<void> {
     const loaded =
       universalBeliefs === undefined
@@ -97,7 +97,7 @@ export class PersonaSummaryService {
       contributing_belief_ids: loaded.universalBeliefs.map((b) => b._id),
       beliefs_hash: digest,
       generated_at: new Date(),
-      model: this.deps.modelId,
+      model: this.deps.modelId
     };
     await this.deps.cache.put(doc);
   }
@@ -111,14 +111,14 @@ export class PersonaSummaryService {
         type: "preference",
         resolved_at: null,
         superseded_by: null,
-        epistemic_status: { $in: ["active", "inferred"] },
+        epistemic_status: { $in: ["active", "inferred"] }
       })
       .sort({ last_reinforced_at: -1 })
       .limit(80)
       .toArray();
 
     const universalBeliefs = all.filter((b) =>
-      b.scope.includes(UNIVERSAL_SCOPE),
+      b.scope.includes(UNIVERSAL_SCOPE)
     );
 
     return { universalBeliefs };
@@ -136,10 +136,10 @@ export class PersonaSummaryService {
     if (universalBeliefs.length === 0) return "";
 
     const expertiseBeliefs = universalBeliefs.filter(
-      (b) => b.subtype === "expertise",
+      (b) => b.subtype === "expertise"
     );
     const preferenceBeliefs = universalBeliefs.filter(
-      (b) => b.subtype !== "expertise",
+      (b) => b.subtype !== "expertise"
     );
 
     const toPayload = (b: Belief) => ({
@@ -149,13 +149,13 @@ export class PersonaSummaryService {
       epistemic_status: b.epistemic_status,
       ...(b.subtype === "expertise" && {
         expertise_domain: b.expertise_domain,
-        expertise_depth: b.expertise_depth,
-      }),
+        expertise_depth: b.expertise_depth
+      })
     });
 
     const payload = {
       expertise_beliefs: expertiseBeliefs.map(toPayload),
-      preference_beliefs: preferenceBeliefs.map(toPayload),
+      preference_beliefs: preferenceBeliefs.map(toPayload)
     };
 
     const adapter = this.deps.adapter();
@@ -163,7 +163,7 @@ export class PersonaSummaryService {
       this.deps.modelId,
       PERSONA_PRELUDE_PROMPT,
       [{ role: "user", content: JSON.stringify(payload) }],
-      { temperature: 0.3, max_tokens: 1200 },
+      { temperature: 0.1, max_tokens: 1200 }
     );
     const parsed = JSON.parse(this.extractJson(resp.content));
     return String(parsed.universal ?? "");

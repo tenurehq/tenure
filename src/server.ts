@@ -55,6 +55,8 @@ import helmet from "@fastify/helmet";
 import type { TeamResolutionStrategy } from "./config/teamResolution.js";
 import type { OrgSummaryLookup } from "./context/orgSummary.js";
 import { registerTeamAdminUiRoute } from "./routes/team-admin-ui.js";
+import type { ProjectResumeService } from "./context/projectResume.js";
+import { registerResumeRoutes, type ResumeRouteDeps } from "./routes/resume.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -112,6 +114,7 @@ export interface ServerDeps {
   extractionWorker: ExtractionWorker;
   personaSummary: PersonaSummaryService;
   orgSummaryService: OrgSummaryLookup;
+  projectResume: ProjectResumeService;
   workspaceState: WorkspaceStateCache;
 }
 
@@ -462,6 +465,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     injectionAudit: deps.cols.injection_audit
   };
   registerAuditRoutes(app, auditDeps);
+
+  const resumeDeps: ResumeRouteDeps = {
+    projectResume: deps.projectResume
+  };
+  registerResumeRoutes(app, resumeDeps);
 
   const scimDeps: ScimDeps = { db: deps.db, cols: deps.cols };
   registerScimRoutes(app, scimDeps);

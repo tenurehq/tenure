@@ -33,6 +33,8 @@ export interface FileMetaDoc {
   path: string;
   size_bytes: number;
   belief_ids: string[];
+  last_edited_at?: Date;
+  project_scope?: string;
   created_at: Date;
   updated_at: Date;
 }
