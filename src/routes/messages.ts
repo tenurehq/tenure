@@ -105,7 +105,7 @@ function buildAnthropicResponse(
   visibleText: string,
   finishReason: string,
   usage: { input_tokens: number; output_tokens: number },
-  toolCalls?: unknown[]
+  toolUses?: AnthropicToolUseOutputBlock[]
 ): AnthropicResponse {
   const content: AnthropicOutputBlock[] = [];
 
@@ -113,24 +113,9 @@ function buildAnthropicResponse(
     content.push({ type: "text", text: visibleText });
   }
 
-  if (toolCalls?.length) {
-    for (const tc of toolCalls as Array<{
-      id: string;
-      type: "function";
-      function: { name: string; arguments: string };
-    }>) {
-      let input: Record<string, unknown> = {};
-      try {
-        input = JSON.parse(tc.function.arguments) as Record<string, unknown>;
-      } catch {
-        input = {};
-      }
-      content.push({
-        type: "tool_use",
-        id: tc.id,
-        name: tc.function.name,
-        input
-      });
+  if (toolUses?.length) {
+    for (const tu of toolUses) {
+      content.push(tu);
     }
   }
 
@@ -220,6 +205,9 @@ export function registerMessagesRoute(
       }
 
       const userId = req.tenureUserId;
+      const teamId = (req as any).tenureTeamId ?? null;
+      const orgId = (req as any).tenureOrgId ?? null;
+
       const requestId = randomUUID();
 
       const systemText = extractSystemText(body.system);
@@ -369,7 +357,9 @@ export function registerMessagesRoute(
           try {
             const existingScopes = await fetchExistingUserScopes(
               userId,
-              deps.scopeDetector.db
+              deps.scopeDetector.db,
+              teamId,
+              orgId
             );
             const detected = await detectScopeFromMessage(
               latestUserMessage,
@@ -416,7 +406,7 @@ export function registerMessagesRoute(
       const agentId = ocAgentId && ocAgentId !== "main" ? ocAgentId : null;
 
       const beliefCtx = await deps.context
-        .build(userId, scope, latestUserMessage, agentId)
+        .build(userId, scope, latestUserMessage, agentId, teamId, orgId)
         .catch((err) => {
           req.log.warn({ err }, "context assembly failed");
           return EMPTY_CONTEXT;
@@ -528,6 +518,8 @@ export function registerMessagesRoute(
             requestId,
             sessionId,
             userId,
+            teamId,
+            orgId,
             requestedModel,
             latestUserMessage,
             rawContent,
@@ -592,7 +584,7 @@ export function registerMessagesRoute(
             input_tokens: providerResp.usage.input_tokens,
             output_tokens: providerResp.usage.output_tokens
           },
-          providerResp.toolCalls
+          providerResp.toolUses
         )
       );
 
@@ -600,6 +592,8 @@ export function registerMessagesRoute(
         deps,
         userId,
         agentId,
+        teamId,
+        orgId,
         sessionId,
         requestId,
         latestUserMessage,
@@ -627,6 +621,8 @@ interface StreamingCtx {
   requestId: string;
   sessionId: string;
   userId: string;
+  teamId: string | null;
+  orgId: string | null;
   requestedModel: string;
   latestUserMessage: string;
   rawContent: string | ContentPart[];
@@ -693,10 +689,6 @@ async function handleAnthropicStream(
   let currentTextBlockIndex = -1;
   let currentToolBlockIndex = -1;
   let activeBlockIndex = -1;
-  const toolCallAccumulator: Record<
-    number,
-    { id: string; name: string; arguments: string }
-  > = {};
 
   const abortController = new AbortController();
   raw.on("close", () => abortController.abort());
@@ -775,50 +767,41 @@ async function handleAnthropicStream(
         });
       }
 
-      if (event.type === "tool_call_delta") {
-        const idx = event.toolCallIndex;
-        if (idx === undefined) continue;
+      if (event.type === "tool_use_start") {
+        if (activeBlockIndex !== -1) {
+          writeAnthropicSSE(raw, "content_block_stop", {
+            type: "content_block_stop",
+            index: activeBlockIndex
+          });
+        }
 
-        if (!toolCallAccumulator[idx]) {
-          toolCallAccumulator[idx] = { id: "", name: "", arguments: "" };
+        currentToolBlockIndex = nextBlockIndex;
+        activeBlockIndex = nextBlockIndex;
+        nextBlockIndex++;
 
-          if (activeBlockIndex !== -1) {
-            writeAnthropicSSE(raw, "content_block_stop", {
-              type: "content_block_stop",
-              index: activeBlockIndex
-            });
+        writeAnthropicSSE(raw, "content_block_start", {
+          type: "content_block_start",
+          index: currentToolBlockIndex,
+          content_block: {
+            type: "tool_use",
+            id: event.id ?? `toolu_${randomUUID()}`,
+            name: event.name ?? "",
+            input: {}
           }
+        });
+      }
 
-          currentToolBlockIndex = nextBlockIndex;
-          activeBlockIndex = nextBlockIndex;
-          nextBlockIndex++;
+      if (event.type === "tool_use_delta") {
+        if (currentToolBlockIndex === -1) continue;
 
-          writeAnthropicSSE(raw, "content_block_start", {
-            type: "content_block_start",
-            index: currentToolBlockIndex,
-            content_block: {
-              type: "tool_use",
-              id: event.toolCallId ?? `toolu_${randomUUID()}`,
-              name: event.toolCallName ?? "",
-              input: {}
-            }
-          });
-        }
-
-        const acc = toolCallAccumulator[idx];
-        if (event.toolCallId) acc.id = event.toolCallId;
-        if (event.toolCallName) acc.name = event.toolCallName;
-        if (event.toolCallArguments) {
-          acc.arguments += event.toolCallArguments;
-          writeAnthropicSSE(raw, "content_block_delta", {
-            type: "content_block_delta",
-            index: currentToolBlockIndex,
-            delta: {
-              type: "input_json_delta",
-              partial_json: event.toolCallArguments
-            }
-          });
-        }
+        writeAnthropicSSE(raw, "content_block_delta", {
+          type: "content_block_delta",
+          index: currentToolBlockIndex,
+          delta: {
+            type: "input_json_delta",
+            partial_json: event.partialJson
+          }
+        });
       }
 
       if (event.type === "stream_end") {
@@ -901,6 +884,8 @@ async function handleAnthropicStream(
     deps: ctx.deps,
     userId: ctx.userId,
     agentId: ctx.agentId,
+    teamId: ctx.teamId,
+    orgId: ctx.orgId,
     sessionId: ctx.sessionId,
     requestId: ctx.requestId,
     latestUserMessage: ctx.latestUserMessage,

@@ -1,4 +1,4 @@
-# Tenure for VS Code
+# Tenure
 
 > Persistent, governable state for AI systems. Fully local, fully private, fully automatic. Bring your own key and use Tenure directly inside VS Code's native chat interface. No Copilot subscription required.
 

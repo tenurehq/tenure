@@ -5,7 +5,7 @@ import type {
   StreamEvent,
   ModelInfo,
   Message,
-  SystemPrompt,
+  SystemPrompt
 } from "./types.ts";
 
 export interface AnthropicCallRequest {
@@ -22,7 +22,12 @@ export interface AnthropicCallResponse {
   model: string;
   finish_reason: string;
   usage: { input_tokens: number; output_tokens: number };
-  toolCalls?: unknown[];
+  toolUses?: Array<{
+    type: "tool_use";
+    id: string;
+    name: string;
+    input: Record<string, unknown>;
+  }>;
 }
 
 export class AnthropicAdapter implements ProviderAdapter {
@@ -35,11 +40,11 @@ export class AnthropicAdapter implements ProviderAdapter {
 
   async call(
     req: AnthropicCallRequest,
-    systemPrompt: SystemPrompt,
+    systemPrompt: SystemPrompt
   ): Promise<AnthropicCallResponse> {
     if (!req.model) {
       throw new Error(
-        "No model specified — select a model in your client settings.",
+        "No model specified — select a model in your client settings."
       );
     }
 
@@ -49,13 +54,13 @@ export class AnthropicAdapter implements ProviderAdapter {
     try {
       response = await this.client.messages.create({
         ...base,
-        stream: false as const,
+        stream: false as const
       });
     } catch (e) {
       throw mapError(e);
     }
 
-    const { text, toolCalls } = extractResponseParts(response.content);
+    const { text, toolUses } = extractResponseParts(response.content);
 
     return {
       content: text,
@@ -63,26 +68,26 @@ export class AnthropicAdapter implements ProviderAdapter {
       finish_reason: mapStopReason(response.stop_reason),
       usage: {
         input_tokens: response.usage.input_tokens,
-        output_tokens: response.usage.output_tokens,
+        output_tokens: response.usage.output_tokens
       },
-      ...(toolCalls.length && { toolCalls }),
+      ...(toolUses.length && { toolUses })
     };
   }
 
   async *callStream(
     req: AnthropicCallRequest,
-    systemPrompt: SystemPrompt,
+    systemPrompt: SystemPrompt
   ): AsyncGenerator<StreamEvent> {
     if (!req.model) {
       throw new Error(
-        "No model specified — select a model in your client settings.",
+        "No model specified — select a model in your client settings."
       );
     }
 
     const base = this.buildCallParams(req, systemPrompt);
     const stream = this.client.messages.stream({
       ...base,
-      ...(req.abortSignal ? { signal: req.abortSignal } : {}),
+      ...(req.abortSignal ? { signal: req.abortSignal } : {})
     } as unknown as Parameters<typeof this.client.messages.stream>[0]);
 
     try {
@@ -101,7 +106,7 @@ export class AnthropicAdapter implements ProviderAdapter {
           event.content_block.type === "text"
         ) {
           yield {
-            type: "text_block_start" as const,
+            type: "text_block_start" as const
           };
         }
 
@@ -111,11 +116,10 @@ export class AnthropicAdapter implements ProviderAdapter {
         ) {
           currentToolIndex++;
           yield {
-            type: "tool_call_delta" as const,
-            toolCallIndex: currentToolIndex,
-            toolCallId: event.content_block.id,
-            toolCallName: event.content_block.name,
-            toolCallArguments: "",
+            type: "tool_use_start" as const,
+            index: currentToolIndex,
+            id: event.content_block.id,
+            name: event.content_block.name
           };
         }
 
@@ -124,16 +128,14 @@ export class AnthropicAdapter implements ProviderAdapter {
           event.delta.type === "input_json_delta"
         ) {
           yield {
-            type: "tool_call_delta" as const,
-            toolCallIndex: currentToolIndex,
-            toolCallId: undefined,
-            toolCallName: undefined,
-            toolCallArguments: event.delta.partial_json,
+            type: "tool_use_delta" as const,
+            index: currentToolIndex,
+            partialJson: event.delta.partial_json
           };
         }
       }
       const final = await stream.finalMessage();
-      const { toolCalls } = extractResponseParts(final.content);
+      const { toolUses } = extractResponseParts(final.content);
 
       yield {
         type: "stream_end",
@@ -141,17 +143,9 @@ export class AnthropicAdapter implements ProviderAdapter {
         finish_reason: mapStopReason(final.stop_reason),
         usage: {
           input_tokens: final.usage.input_tokens,
-          output_tokens: final.usage.output_tokens,
+          output_tokens: final.usage.output_tokens
         },
-        ...(toolCalls.length
-          ? {
-              toolCalls: toolCalls as Array<{
-                id: string;
-                type: "function";
-                function: { name: string; arguments: string };
-              }>,
-            }
-          : {}),
+        ...(toolUses.length && { toolUses })
       };
     } catch (e) {
       throw mapError(e);
@@ -163,7 +157,7 @@ export class AnthropicAdapter implements ProviderAdapter {
     systemPrompt: SystemPrompt,
     messages: Message[],
     body: Record<string, unknown>,
-    abortSignal?: AbortSignal,
+    abortSignal?: AbortSignal
   ): Promise<{
     content: string;
     model: string;
@@ -174,13 +168,13 @@ export class AnthropicAdapter implements ProviderAdapter {
       model,
       messages,
       ...(body.temperature !== undefined && {
-        temperature: body.temperature as number,
+        temperature: body.temperature as number
       }),
       ...(body.max_tokens !== undefined && {
-        max_tokens: body.max_tokens as number,
+        max_tokens: body.max_tokens as number
       }),
       passThrough: body,
-      ...(abortSignal !== undefined && { abortSignal }),
+      ...(abortSignal !== undefined && { abortSignal })
     };
 
     const resp = await this.call(req, systemPrompt);
@@ -188,7 +182,7 @@ export class AnthropicAdapter implements ProviderAdapter {
       content: resp.content,
       model: resp.model,
       finish_reason: resp.finish_reason,
-      usage: resp.usage,
+      usage: resp.usage
     };
   }
   async listModels(): Promise<ModelInfo[]> {
@@ -198,7 +192,7 @@ export class AnthropicAdapter implements ProviderAdapter {
         id: m.id,
         object: "model" as const,
         created: Math.floor(new Date(m.created_at).getTime() / 1000),
-        owned_by: "anthropic",
+        owned_by: "anthropic"
       }));
     } catch (e) {
       if (e instanceof Anthropic.AuthenticationError) throw mapError(e);
@@ -208,7 +202,7 @@ export class AnthropicAdapter implements ProviderAdapter {
 
   private buildCallParams(
     req: AnthropicCallRequest,
-    systemPrompt: SystemPrompt,
+    systemPrompt: SystemPrompt
   ) {
     let system: string | Anthropic.TextBlockParam[] | undefined;
 
@@ -221,7 +215,7 @@ export class AnthropicAdapter implements ProviderAdapter {
         blocks.push({
           type: "text",
           text: systemPrompt.static,
-          cache_control: { type: "ephemeral" },
+          cache_control: { type: "ephemeral" }
         });
       }
 
@@ -230,14 +224,14 @@ export class AnthropicAdapter implements ProviderAdapter {
         blocks.push({
           type: "text",
           text: beliefText,
-          cache_control: { type: "ephemeral" },
+          cache_control: { type: "ephemeral" }
         });
       }
 
       if (systemPrompt.dynamic) {
         blocks.push({
           type: "text",
-          text: systemPrompt.dynamic,
+          text: systemPrompt.dynamic
         });
       }
 
@@ -245,7 +239,7 @@ export class AnthropicAdapter implements ProviderAdapter {
     }
 
     const conversation = req.messages.filter(
-      (m) => m.role !== "system",
+      (m) => m.role !== "system"
     ) as unknown as Anthropic.MessageParam[];
 
     const {
@@ -262,34 +256,42 @@ export class AnthropicAdapter implements ProviderAdapter {
       ...(req.temperature !== undefined
         ? { temperature: req.temperature }
         : {}),
-      ...nativeFields,
+      ...nativeFields
     };
   }
 }
 
 function extractResponseParts(blocks: Anthropic.ContentBlock[]): {
   text: string;
-  toolCalls: unknown[];
+  toolUses: Array<{
+    type: "tool_use";
+    id: string;
+    name: string;
+    input: Record<string, unknown>;
+  }>;
 } {
   let text = "";
-  const toolCalls: unknown[] = [];
+  const toolUses: Array<{
+    type: "tool_use";
+    id: string;
+    name: string;
+    input: Record<string, unknown>;
+  }> = [];
 
   for (const block of blocks) {
     if (block.type === "text") {
       text += block.text;
     } else if (block.type === "tool_use") {
-      toolCalls.push({
+      toolUses.push({
+        type: "tool_use",
         id: block.id,
-        type: "function",
-        function: {
-          name: block.name,
-          arguments: JSON.stringify(block.input),
-        },
+        name: block.name,
+        input: block.input as Record<string, unknown>
       });
     }
   }
 
-  return { text, toolCalls };
+  return { text, toolUses };
 }
 
 function mapStopReason(reason: string | null): string {
@@ -310,7 +312,7 @@ function mapStopReason(reason: string | null): string {
 function mapError(e: unknown): Error {
   if (e instanceof Anthropic.AuthenticationError) {
     return new Error(
-      "Anthropic authentication failed — check your API key in the admin UI",
+      "Anthropic authentication failed — check your API key in the admin UI"
     );
   }
   if (e instanceof Anthropic.RateLimitError) {

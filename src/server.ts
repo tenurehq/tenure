@@ -159,13 +159,16 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const strategy = (cfg.team_resolution_strategy ??
       "static") as TeamResolutionStrategy;
 
+    const resolvedDefaultTeam = cfg.default_team_id ?? defaultTeamId;
+    const resolvedDefaultOrg = cfg.default_org_id ?? defaultOrgId;
+
     switch (strategy) {
       case "disabled":
         return null;
 
       case "static": {
-        if (!defaultTeamId || !defaultOrgId) return null;
-        return { teamId: defaultTeamId, orgId: defaultOrgId };
+        if (!resolvedDefaultTeam || !resolvedDefaultOrg) return null;
+        return { teamId: resolvedDefaultTeam, orgId: resolvedDefaultOrg };
       }
 
       case "header": {
@@ -174,36 +177,37 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         const teamId = req.headers[teamHeader] as string | undefined;
         const orgId = req.headers[orgHeader] as string | undefined;
         if (teamId && orgId) return { teamId, orgId };
-        // Graceful fallback to static if headers absent
-        if (defaultTeamId && defaultOrgId)
-          return { teamId: defaultTeamId, orgId: defaultOrgId };
+        if (resolvedDefaultTeam && resolvedDefaultOrg)
+          return { teamId: resolvedDefaultTeam, orgId: resolvedDefaultOrg };
         return null;
       }
 
-      case "manual":
-        // Future: look up user_id -> team_id in an admin-managed collection
+      case "manual": {
+        const doc = await deps.cols.team_memberships.findOne({
+          user_id: userId
+        });
+        if (doc) return { teamId: doc.team_id, orgId: doc.org_id };
+        if (resolvedDefaultTeam && resolvedDefaultOrg)
+          return { teamId: resolvedDefaultTeam, orgId: resolvedDefaultOrg };
         return null;
+      }
 
       case "scim_group": {
-        // cfg.scim_group_mappings is an array of
-        // { groupId: string; teamId: string; orgId: string }
-        // stored in runtime config or a collection
         const mappings: Array<{
           groupId: string;
           teamId: string;
           orgId: string;
         }> = cfg.scim_group_mappings ?? [];
         if (!mappings.length) {
-          // Fall through to static defaults
-          if (defaultTeamId && defaultOrgId)
-            return { teamId: defaultTeamId, orgId: defaultOrgId };
+          if (resolvedDefaultTeam && resolvedDefaultOrg)
+            return { teamId: resolvedDefaultTeam, orgId: resolvedDefaultOrg };
           return null;
         }
 
         const scimUserId = await getScimUserIdByUserName(deps.db, userId);
         if (!scimUserId) {
-          if (defaultTeamId && defaultOrgId)
-            return { teamId: defaultTeamId, orgId: defaultOrgId };
+          if (resolvedDefaultTeam && resolvedDefaultOrg)
+            return { teamId: resolvedDefaultTeam, orgId: resolvedDefaultOrg };
           return null;
         }
 
@@ -214,9 +218,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
           }
         }
 
-        // User is provisioned but not in any mapped group — fall back
-        if (defaultTeamId && defaultOrgId)
-          return { teamId: defaultTeamId, orgId: defaultOrgId };
+        if (resolvedDefaultTeam && resolvedDefaultOrg)
+          return { teamId: resolvedDefaultTeam, orgId: resolvedDefaultOrg };
         return null;
       }
     }
@@ -433,11 +436,16 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   registerBeliefsUiRoute(app);
   registerAdminUiRoute(app);
-  registerAdminSetupRoute(app, { runtimeStore: deps.runtimeStore });
+  registerAdminSetupRoute(app, {
+    runtimeStore: deps.runtimeStore,
+    db: deps.db,
+    providers: deps.providers
+  });
   registerTeamAdminUiRoute(app, {
     runtimeStore: deps.runtimeStore,
     providers: deps.providers,
-    db: deps.db
+    db: deps.db,
+    cols: deps.cols
   });
   registerAuditUiRoute(app);
 
@@ -471,7 +479,14 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   };
   registerResumeRoutes(app, resumeDeps);
 
-  const scimDeps: ScimDeps = { db: deps.db, cols: deps.cols };
+  const scimDeps: ScimDeps = {
+    db: deps.db,
+    cols: deps.cols,
+    getToken: async () => {
+      const cfg = await deps.runtimeStore.load();
+      return (cfg as any).scim_token ?? process.env.TENURE_SCIM_TOKEN;
+    }
+  };
   registerScimRoutes(app, scimDeps);
 
   await app.register(fastifyWebsocket);

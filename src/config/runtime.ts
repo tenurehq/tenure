@@ -1,5 +1,6 @@
 import type { Collections } from "../db/collections.js";
 import type { CredentialVault } from "./encryption.js";
+import type { TeamResolutionStrategy } from "./teamResolution.js";
 
 export type OnboardingStatus =
   | "pending"
@@ -42,6 +43,17 @@ export interface RuntimeConfig {
   scope_auto_detect: boolean;
   ide_extraction_enabled: boolean;
   memory_mode: "inject_only" | "curated" | "autonomous" | "reflective";
+  team_resolution_strategy: TeamResolutionStrategy;
+  default_team_id: string | null;
+  default_org_id: string | null;
+  team_header_name: string | null;
+  org_header_name: string | null;
+  scim_group_mappings: Array<{
+    groupId: string;
+    teamId: string;
+    orgId: string;
+  }> | null;
+  scim_token: string | null;
 }
 
 export const DEFAULTS: RuntimeConfig = {
@@ -63,7 +75,14 @@ export const DEFAULTS: RuntimeConfig = {
   compaction_mode: "aggressive",
   scope_auto_detect: true,
   ide_extraction_enabled: true,
-  memory_mode: "autonomous" as const
+  memory_mode: "autonomous" as const,
+  team_resolution_strategy: "static",
+  default_team_id: null,
+  default_org_id: null,
+  team_header_name: null,
+  org_header_name: null,
+  scim_group_mappings: null,
+  scim_token: null
 };
 
 const ENCRYPTED_KEYS = new Set<keyof RuntimeConfig>([

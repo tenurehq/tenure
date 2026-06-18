@@ -57,6 +57,15 @@ export interface ApiTokenDoc {
   revoked_at?: Date | null;
 }
 
+export interface TeamMembershipDoc {
+  _id: string;
+  user_id: string;
+  team_id: string;
+  org_id: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
 export interface ScimUserDoc {
   _id: string;
   userName: string;
@@ -90,6 +99,7 @@ export interface Collections {
   api_tokens: Collection<ApiTokenDoc>;
   scim_users: Collection<ScimUserDoc>;
   belief_suggestions: Collection<BeliefSuggestion>;
+  team_memberships: Collection<TeamMembershipDoc>;
 }
 
 export function getCollections(db: Db, plainDb?: Db): Collections {
@@ -112,6 +122,7 @@ export function getCollections(db: Db, plainDb?: Db): Collections {
     injection_audit: db.collection<InjectionAuditRecord>("injection_audit"),
     api_tokens: db.collection<ApiTokenDoc>("api_tokens"),
     scim_users: db.collection<ScimUserDoc>("scim_users"),
-    belief_suggestions: db.collection<BeliefSuggestion>("belief_suggestions")
+    belief_suggestions: db.collection<BeliefSuggestion>("belief_suggestions"),
+    team_memberships: db.collection<TeamMembershipDoc>("team_memberships")
   };
 }

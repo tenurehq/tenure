@@ -48,12 +48,12 @@
       "tenure"
     ],
     "compat": {
-      "pluginApi": ">=2026.6.1",
-      "minGatewayVersion": "2026.6.1"
+      "pluginApi": ">=2026.6.8",
+      "minGatewayVersion": "2026.6.8"
     },
     "build": {
-      "openclawVersion": "2026.6.1",
-      "pluginSdkVersion": "2026.6.1"
+      "openclawVersion": "2026.6.8",
+      "pluginSdkVersion": "2026.6.8"
     }
   },
   "scripts": {
@@ -63,14 +63,11 @@
     "test": "ava",
     "test:watch": "ava --watch"
   },
-  "peerDependencies": {
-    "openclaw": ">=2026.6.1"
-  },
   "devDependencies": {
     "@types/node": "25.6.0",
     "@typescript/native-preview": "7.0.0-dev.20260518.1",
-    "ava": "8.0.0",
-    "openclaw": "2026.6.6",
+    "ava": "8.0.1",
+    "openclaw": "2026.6.8",
     "tsx": "4.22.4",
     "typescript": "6.0.3"
   },
