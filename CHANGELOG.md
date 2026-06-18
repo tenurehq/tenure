@@ -4,6 +4,34 @@ All notable changes to Tenure will be documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.28] - 2026-06-18
+
+### Added
+
+- **Team mode and multi-tenant resolution** (`src/config/runtime.ts`, `src/server.ts`, `src/db/collections.ts`, `src/db/indexes.ts`, `src/routes/scim.ts`, `docs/teams/deployment.md`): Introduced `TENURE_MODE=teams` with configurable resolution strategies (`static`, `header`, `scim_group`, `manual`, `disabled`). Added `team_resolution_strategy`, `default_team_id`, `default_org_id`, `team_header_name`, `org_header_name`, `scim_group_mappings`, and `scim_token` to runtime config. Added `team_memberships` collection with unique `user_id` index and `team_id/org_id` index. Team and org IDs now propagate through request lifecycle, extraction jobs, compaction, and context assembly.
+
+- **Team Admin UI** (`src/routes/team-admin-ui.ts`): Built `/admin/team` interface allowing admins to select a resolution strategy, configure custom header names, generate and rotate SCIM tokens, map SCIM groups to teams/orgs, and manually assign individual users to teams.
+
+- **Organization summary in setup wizard** (`src/routes/admin-setup.ts`): Moved org summary synthesis from the general team admin UI into the initial setup wizard behind `requireRootToken` guard. Added `POST /admin/setup/org-summary`, `showOrgSetup`, `submitOrgSetup`, and `skipOrg` flows so only the IT admin holding the root token can create the governance prelude.
+
+- **Native Anthropic tool-use events** (`src/providers/anthropic.ts`, `src/providers/types.ts`, `src/routes/messages.ts`): Replaced OpenAI-style `tool_call_delta` translation with provider-native `tool_use_start` and `tool_use_delta` stream events. `AnthropicCallResponse` now carries `toolUses` with native `tool_use` shape instead of normalized `toolCalls`.
+
+- **Tenant context propagation** (`src/routes/chat.ts`, `src/routes/messages.ts`, `src/routes/shared/sideEffects.ts`, `src/jobs/queue.ts`, `src/jobs/compactionRunner.ts`, `src/helpers/scopeDetector.ts`, `src/types/job.ts`): Threaded `teamId` and `orgId` through chat and messages routes, extraction job enqueueing, belief compaction, scope detection, and side effects.
+
+### Changed
+
+- **StreamEvent type** (`src/providers/types.ts`): Replaced monolithic interface with a discriminated union supporting `content_delta`, `text_block_start`, `tool_call_delta`, `tool_use_start`, `tool_use_delta`, and `stream_end`.
+
+- **Messages route Anthropic handling** (`src/routes/messages.ts`): Refactored streaming and non-streaming response builders to accept native `AnthropicToolUseOutputBlock[]` directly, eliminating the OpenAI-format round-trip of stringifying and re-parsing tool arguments.
+
+- **SCIM token resolution** (`src/routes/scim.ts`, `src/server.ts`, `src/routes/scim.test.ts`): Changed from resolving `TENURE_SCIM_TOKEN` once at module load to dynamic resolution via `deps.getToken()`, which checks runtime config first and falls back to the environment variable.
+
+- **Admin setup dependencies** (`src/server.ts`, `src/routes/admin-setup.ts`): Extended `AdminSetupDeps` to require `db` and `providers` so the setup wizard can synthesize org summaries. Applied `requireRootToken` `preHandler` to `/admin/setup` and `/admin/setup/org-summary`.
+
+### Fixed
+
+- **Streaming event type narrowing** (`src/routes/chat.ts`): Guarded `event.delta` access behind an `event.type === "content_delta"` check for safe union-type narrowing.
+
 ---
 
 ## [1.0.27] - 2026-06-17

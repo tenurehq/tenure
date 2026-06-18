@@ -4,6 +4,8 @@ import type { ExtractionJob, ParseStatus } from "../types/job.js";
 
 export interface EnqueueParams {
   userId: string;
+  teamId?: string | null;
+  orgId?: string | null;
   agentId?: string | null;
   sessionId: string;
   requestId: string;
@@ -24,6 +26,8 @@ export interface EnqueueParams {
 
 export interface EnqueueOnboardingParams {
   userId: string;
+  teamId?: string | null;
+  orgId?: string | null;
   sessionId: string;
   sidecarRaw: string;
   sourceModel: string;
@@ -31,6 +35,8 @@ export interface EnqueueOnboardingParams {
 
 export interface EnqueueImportParams {
   userId: string;
+  teamId?: string | null;
+  orgId?: string | null;
   sourceLabel: string;
   sidecarJson: string;
   sourceModel: string;
@@ -50,6 +56,8 @@ export class ExtractionJobQueue {
       _id: randomUUID(),
       type: "extract_beliefs",
       user_id: params.userId,
+      team_id: params.teamId ?? null,
+      org_id: params.orgId ?? null,
       session_id: params.sessionId,
       turn_id: params.requestId,
       agent_id: params.agentId ?? null,
@@ -69,15 +77,15 @@ export class ExtractionJobQueue {
         scope: params.scope,
         source_model: params.sourceModel,
         ...(params.clientCategory !== undefined && {
-          client_category: params.clientCategory,
+          client_category: params.clientCategory
         }),
         ...(params.extractionMode !== undefined && {
-          extraction_mode: params.extractionMode,
+          extraction_mode: params.extractionMode
         }),
         ...(params.workspaceContext !== undefined && {
-          workspace_context: params.workspaceContext,
-        }),
-      },
+          workspace_context: params.workspaceContext
+        })
+      }
     };
     await this.col.insertOne(job);
     return job._id;
@@ -89,6 +97,8 @@ export class ExtractionJobQueue {
       _id: randomUUID(),
       type: "onboarding_extraction",
       user_id: params.userId,
+      team_id: params.teamId ?? null,
+      org_id: params.orgId ?? null,
       session_id: params.sessionId,
       turn_id: "",
       status: "pending",
@@ -105,8 +115,8 @@ export class ExtractionJobQueue {
         sidecar: params.sidecarRaw,
         parse_status: "parsed",
         scope: ["user:universal"],
-        source_model: params.sourceModel,
-      },
+        source_model: params.sourceModel
+      }
     };
     await this.col.insertOne(job);
     return job._id;
@@ -118,6 +128,8 @@ export class ExtractionJobQueue {
       _id: randomUUID(),
       type: "import_extraction",
       user_id: params.userId,
+      team_id: params.teamId ?? null,
+      org_id: params.orgId ?? null,
       session_id: `import_${Date.now()}`,
       turn_id: "",
       status: "pending",
@@ -135,8 +147,8 @@ export class ExtractionJobQueue {
         parse_status: "parsed",
         scope: params.scope ?? ["user:universal"],
         source_model: params.sourceModel,
-        source_label: params.sourceLabel,
-      },
+        source_label: params.sourceLabel
+      }
     };
     await this.col.insertOne(job);
     return job._id;

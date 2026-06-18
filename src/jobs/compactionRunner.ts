@@ -289,7 +289,26 @@ export class BeliefCompactionRunner {
     private readonly options: CompactionRunnerOptions = {}
   ) {}
 
-  async run(userId: string, opts?: { orgSummary?: string }): Promise<void> {
+  private currentTeamId: string | null = null;
+  private currentOrgId: string | null = null;
+
+  private tenantBase(userId: string): Record<string, unknown> {
+    const f: Record<string, unknown> = { user_id: userId };
+    if (this.currentTeamId) f.team_id = this.currentTeamId;
+    if (this.currentOrgId) f.org_id = this.currentOrgId;
+    return f;
+  }
+
+  async run(
+    userId: string,
+    opts?: {
+      teamId?: string | null;
+      orgId?: string | null;
+      orgSummary?: string;
+    }
+  ): Promise<void> {
+    this.currentTeamId = opts?.teamId ?? null;
+    this.currentOrgId = opts?.orgId ?? null;
     const orgSummary = opts?.orgSummary;
 
     for (const [beliefType, config] of Object.entries(TYPE_CONFIGS)) {
@@ -359,7 +378,13 @@ export class BeliefCompactionRunner {
           _id: { scope: string; agent_id: string | null };
           count: number;
         }>([
-          { $match: { user_id: userId, ...ACTIVE_FILTER, ...typeFilter } },
+          {
+            $match: {
+              ...this.tenantBase(userId),
+              ...ACTIVE_FILTER,
+              ...typeFilter
+            }
+          },
           { $unwind: "$scope" },
           {
             $group: {
@@ -372,7 +397,7 @@ export class BeliefCompactionRunner {
         .toArray(),
       this.compactionLog
         .find({
-          user_id: userId,
+          ...this.tenantBase(userId),
           belief_type: beliefType,
           ran_at: { $gte: new Date(Date.now() - cooldownMs) }
         })
@@ -460,7 +485,7 @@ export class BeliefCompactionRunner {
       : { agent_id: null };
 
     const baseFilter: Record<string, unknown> = {
-      user_id: userId,
+      ...this.tenantBase(userId),
       scope: { $in: [scope] },
       ...ACTIVE_FILTER
     };

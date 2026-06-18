@@ -6,6 +6,7 @@ import type { Collections } from "../db/collections.js";
 export interface ScimDeps {
   db: Db;
   cols: Collections;
+  getToken: () => Promise<string | undefined>;
 }
 
 interface ScimUser {
@@ -109,13 +110,13 @@ export async function getScimUserIdByUserName(
 }
 
 export function registerScimRoutes(app: FastifyInstance, deps: ScimDeps): void {
-  const scimToken = process.env.TENURE_SCIM_TOKEN;
   const isTeams = process.env.TENURE_MODE === "teams";
 
   if (!isTeams) return;
 
   app.addHook("onRequest", async (req, reply) => {
     if (!req.url.startsWith("/scim/v2")) return;
+    const scimToken = await deps.getToken();
     if (!scimToken) {
       return scimError(reply, 503, "SCIM not configured");
     }
