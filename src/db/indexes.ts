@@ -341,6 +341,11 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
       partialFilterExpression: { last_edited_at: { $exists: true } }
     }
   ]);
+
+  await cols.team_memberships.createIndexes([
+    { key: { user_id: 1 }, unique: true },
+    { key: { team_id: 1, org_id: 1 } }
+  ]);
 }
 
 export async function ensureSearchIndexes(db: Db): Promise<void> {

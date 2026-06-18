@@ -31,22 +31,35 @@ export interface ModelInfo {
   owned_by: string;
 }
 
-export interface StreamEvent {
-  type: "content_delta" | "tool_call_delta" | "stream_end" | "text_block_start";
-  delta?: string;
-  toolCallIndex?: number;
-  toolCallId?: string | undefined;
-  toolCallName?: string | undefined;
-  toolCallArguments?: string | undefined;
-  model?: string;
-  finish_reason?: string;
-  usage?: { input_tokens: number; output_tokens: number };
-  toolCalls?: Array<{
-    id: string;
-    type: "function";
-    function: { name: string; arguments: string };
-  }>;
-}
+export type StreamEvent =
+  | { type: "content_delta"; delta: string }
+  | { type: "text_block_start" }
+  | {
+      type: "tool_call_delta";
+      toolCallIndex: number;
+      toolCallId?: string | undefined;
+      toolCallName?: string | undefined;
+      toolCallArguments: string;
+    }
+  | { type: "tool_use_start"; index: number; id: string; name: string }
+  | { type: "tool_use_delta"; index: number; partialJson: string }
+  | {
+      type: "stream_end";
+      model: string;
+      finish_reason: string;
+      usage: { input_tokens: number; output_tokens: number };
+      toolCalls?: Array<{
+        id: string;
+        type: "function";
+        function: { name: string; arguments: string };
+      }>;
+      toolUses?: Array<{
+        type: "tool_use";
+        id: string;
+        name: string;
+        input: Record<string, unknown>;
+      }>;
+    };
 
 export interface SystemPromptParts {
   static: string;
@@ -80,7 +93,7 @@ export interface InternalLLMCaller {
     model: string,
     systemPrompt: SystemPrompt,
     messages: Message[],
-    body: Record<string, unknown>,
+    body: Record<string, unknown>
   ): Promise<{
     content: string;
     model: string;

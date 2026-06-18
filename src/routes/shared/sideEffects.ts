@@ -7,6 +7,8 @@ import type { ParsedClient } from "../../helpers/clientDetector.js";
 export interface SideEffectInput {
   deps: SideEffectDeps;
   userId: string;
+  teamId: string | null;
+  orgId: string | null;
   agentId: string | null;
   sessionId: string;
   requestId: string;
@@ -35,6 +37,8 @@ export interface SideEffectDeps {
   jobs: {
     enqueue: (args: {
       userId: string;
+      teamId: string | null;
+      orgId: string | null;
       sessionId: string;
       requestId: string;
       userMessage: string;
@@ -66,12 +70,14 @@ export async function runSideEffects(input: SideEffectInput): Promise<void> {
           ? ({
               project_scope: input.ideProjectScope,
               language_scope: input.ideLanguageScope,
-              active_file: input.ideActiveFile,
+              active_file: input.ideActiveFile
             } as const)
           : undefined;
 
       const jobId = await input.deps.jobs.enqueue({
         userId: input.userId,
+        teamId: input.teamId,
+        orgId: input.orgId,
         sessionId: input.sessionId,
         requestId: input.requestId,
         userMessage: input.latestUserMessage,
@@ -83,7 +89,7 @@ export async function runSideEffects(input: SideEffectInput): Promise<void> {
         clientCategory: input.client.category,
         agentId: input.agentId,
         extractionMode: input.extractionMode,
-        ...(workspaceContext !== undefined && { workspaceContext }),
+        ...(workspaceContext !== undefined && { workspaceContext })
       });
 
       input.deps.extractionWorker
@@ -91,13 +97,13 @@ export async function runSideEffects(input: SideEffectInput): Promise<void> {
         .catch((err) =>
           input.logger.warn(
             { err, jobId, sessionId: input.sessionId },
-            "inline extraction failed — sweep will retry",
-          ),
+            "inline extraction failed — sweep will retry"
+          )
         );
     } catch (err) {
       input.logger.error(
         { err, sessionId: input.sessionId, requestId: input.requestId },
-        "job enqueue failed — turn persisted but extraction will not run",
+        "job enqueue failed — turn persisted but extraction will not run"
       );
     }
   }
@@ -108,8 +114,8 @@ export async function runSideEffects(input: SideEffectInput): Promise<void> {
       .catch((err) =>
         input.logger.warn(
           { err, sessionId: input.sessionId },
-          "session touch failed",
-        ),
+          "session touch failed"
+        )
       );
   }
 }

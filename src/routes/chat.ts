@@ -51,6 +51,8 @@ interface ResolveScopeArgs {
   session: (Session & { providerId: string; model: string }) | null;
   sessionId: string;
   userId: string;
+  teamId: string | null;
+  orgId: string | null;
   latestUserMessage: string;
   cfg: { scope_auto_detect?: boolean };
   deps: ChatDeps;
@@ -85,6 +87,8 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
     }
 
     const userId = req.tenureUserId;
+    const teamId = (req as any).tenureTeamId ?? null;
+    const orgId = (req as any).tenureOrgId ?? null;
 
     const requestedModel = body.model;
     if (!requestedModel) {
@@ -182,7 +186,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
 
     let scope = metadata?.scope?.length
       ? metadata.scope
-      : session?.activeScope ?? [];
+      : (session?.activeScope ?? []);
 
     const requestId = randomUUID();
     const rawContent: string | ContentPart[] = messages.at(-1)?.content ?? "";
@@ -345,6 +349,8 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       session,
       sessionId,
       userId,
+      teamId,
+      orgId,
       latestUserMessage,
       cfg,
       deps,
@@ -385,7 +391,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
     const agentId = ocAgentId && ocAgentId !== "main" ? ocAgentId : null;
 
     const beliefCtx = await deps.context
-      .build(userId, scope, latestUserMessage, agentId)
+      .build(userId, scope, latestUserMessage, agentId, teamId, orgId)
       .catch((err) => {
         req.log.warn({ err }, "context assembly failed");
         return EMPTY_CONTEXT;
@@ -396,8 +402,8 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       incomingSystem === undefined
         ? undefined
         : typeof incomingSystem === "string"
-        ? incomingSystem
-        : extractText(incomingSystem);
+          ? incomingSystem
+          : extractText(incomingSystem);
 
     let ideScope: {
       projectScope: string | null;
@@ -491,6 +497,8 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
           requestId,
           sessionId,
           userId,
+          teamId,
+          orgId,
           requestedModel,
           latestUserMessage,
           rawContent,
@@ -582,6 +590,8 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       runSideEffects({
         deps,
         userId,
+        teamId,
+        orgId,
         sessionId,
         requestId,
         latestUserMessage,
@@ -615,6 +625,8 @@ interface StreamingCtx {
   requestId: string;
   sessionId: string;
   userId: string;
+  teamId: string | null;
+  orgId: string | null;
   requestedModel: string;
   latestUserMessage: string;
   rawContent: string | ContentPart[];
@@ -703,10 +715,13 @@ async function handleStreamingResponse(
         continue;
       }
 
+      if (event.type !== "content_delta") {
+        continue;
+      }
+
       fullContent += event.delta;
 
       if (sidecarDetected) continue;
-
       const markerIdx = fullContent.indexOf(SIDECAR_BEGIN);
       if (markerIdx !== -1) {
         const remaining = fullContent.slice(flushedIdx, markerIdx);
@@ -833,6 +848,8 @@ async function handleStreamingResponse(
   runSideEffects({
     deps: ctx.deps,
     userId: ctx.userId,
+    teamId: ctx.teamId,
+    orgId: ctx.orgId,
     sessionId: ctx.sessionId,
     requestId: ctx.requestId,
     latestUserMessage: ctx.latestUserMessage,
@@ -875,6 +892,8 @@ async function resolveScope(args: ResolveScopeArgs): Promise<string[]> {
     session,
     sessionId,
     userId,
+    teamId,
+    orgId,
     latestUserMessage,
     cfg,
     deps,
@@ -908,7 +927,9 @@ async function resolveScope(args: ResolveScopeArgs): Promise<string[]> {
   try {
     const existingScopes = await fetchExistingUserScopes(
       userId,
-      deps.scopeDetector.db
+      deps.scopeDetector.db,
+      teamId,
+      orgId
     );
 
     const detected = await detectScopeFromMessage(

@@ -11,10 +11,6 @@ import {
   type ScimDeps
 } from "./scim.js";
 
-/* ------------------------------------------------------------------ */
-/* Shared in-memory MongoDB                                            */
-/* ------------------------------------------------------------------ */
-
 let mongod: MongoMemoryServer;
 let client: MongoClient;
 let db: Db;
@@ -38,14 +34,11 @@ test.beforeEach(async () => {
   await db.collection("sessions").deleteMany({});
 });
 
-/* ------------------------------------------------------------------ */
-/* Helpers                                                             */
-/* ------------------------------------------------------------------ */
-
 function getDeps(): ScimDeps {
   return {
     db,
-    cols: getCollections(db)
+    cols: getCollections(db),
+    getToken: async () => process.env.TENURE_SCIM_TOKEN
   };
 }
 
@@ -93,10 +86,6 @@ async function seedUsers(col: Collection<any>, count: number) {
   await col.insertMany(docs);
   return docs;
 }
-
-/* ------------------------------------------------------------------ */
-/* Exported helpers                                                    */
-/* ------------------------------------------------------------------ */
 
 test.serial(
   "getGroupsForUser returns empty array when no groups exist",
@@ -180,10 +169,6 @@ test.serial(
   }
 );
 
-/* ------------------------------------------------------------------ */
-/* Auth edge cases                                                     */
-/* ------------------------------------------------------------------ */
-
 test.serial(
   "SCIM endpoint returns 503 when TENURE_SCIM_TOKEN is unset",
   async (t) => {
@@ -229,10 +214,6 @@ test.serial("SCIM endpoint succeeds with correct bearer token", async (t) => {
 
   restore();
 });
-
-/* ------------------------------------------------------------------ */
-/* ServiceProviderConfig / Schemas / ResourceTypes                     */
-/* ------------------------------------------------------------------ */
 
 test.serial(
   "GET /scim/v2/ServiceProviderConfig returns expected shape",
@@ -295,10 +276,6 @@ test.serial("GET /scim/v2/ResourceTypes returns User and Group", async (t) => {
 
   restore();
 });
-
-/* ------------------------------------------------------------------ */
-/* Users – list, filter, pagination                                    */
-/* ------------------------------------------------------------------ */
 
 test.serial("GET /scim/v2/Users returns empty list", async (t) => {
   const restore = withEnv("teams", "tok");
@@ -449,10 +426,6 @@ test.serial("GET /scim/v2/Users startIndex clamped to minimum 1", async (t) => {
   restore();
 });
 
-/* ------------------------------------------------------------------ */
-/* Users – single resource                                             */
-/* ------------------------------------------------------------------ */
-
 test.serial("GET /scim/v2/Users/:id returns 404 when missing", async (t) => {
   const restore = withEnv("teams", "tok");
   const { app } = await buildApp();
@@ -495,10 +468,6 @@ test.serial("GET /scim/v2/Users/:id returns existing user", async (t) => {
 
   restore();
 });
-
-/* ------------------------------------------------------------------ */
-/* Users – create & idempotency                                        */
-/* ------------------------------------------------------------------ */
 
 test.serial("POST /scim/v2/Users creates user and returns 201", async (t) => {
   const restore = withEnv("teams", "tok");
@@ -605,10 +574,6 @@ test.serial("POST /scim/v2/Users rejects missing userName", async (t) => {
   restore();
 });
 
-/* ------------------------------------------------------------------ */
-/* Users – update & deactivation / revocation                          */
-/* ------------------------------------------------------------------ */
-
 test.serial("PUT /scim/v2/Users/:id updates existing user", async (t) => {
   const restore = withEnv("teams", "tok");
   const { app } = await buildApp();
@@ -712,10 +677,6 @@ test.serial(
     restore();
   }
 );
-
-/* ------------------------------------------------------------------ */
-/* Users – PATCH                                                       */
-/* ------------------------------------------------------------------ */
 
 test.serial(
   "PATCH /scim/v2/Users/:id updates active via boolean value with no path",
@@ -872,10 +833,6 @@ test.serial("PATCH /scim/v2/Users/:id returns 404 when missing", async (t) => {
   restore();
 });
 
-/* ------------------------------------------------------------------ */
-/* Users – DELETE                                                      */
-/* ------------------------------------------------------------------ */
-
 test.serial(
   "DELETE /scim/v2/Users/:id removes user and group memberships",
   async (t) => {
@@ -1001,10 +958,6 @@ test.serial(
   }
 );
 
-/* ------------------------------------------------------------------ */
-/* Groups – list, read                                                 */
-/* ------------------------------------------------------------------ */
-
 test.serial("GET /scim/v2/Groups returns empty list", async (t) => {
   const restore = withEnv("teams", "tok");
   const { app } = await buildApp();
@@ -1105,10 +1058,6 @@ test.serial("GET /scim/v2/Groups/:id returns existing group", async (t) => {
   restore();
 });
 
-/* ------------------------------------------------------------------ */
-/* Groups – create                                                     */
-/* ------------------------------------------------------------------ */
-
 test.serial("POST /scim/v2/Groups creates group and returns 201", async (t) => {
   const restore = withEnv("teams", "tok");
   const { app } = await buildApp();
@@ -1180,10 +1129,6 @@ test.serial("POST /scim/v2/Groups rejects missing displayName", async (t) => {
   restore();
 });
 
-/* ------------------------------------------------------------------ */
-/* Groups – update                                                     */
-/* ------------------------------------------------------------------ */
-
 test.serial("PUT /scim/v2/Groups/:id updates existing group", async (t) => {
   const restore = withEnv("teams", "tok");
   const { app } = await buildApp();
@@ -1230,10 +1175,6 @@ test.serial("PUT /scim/v2/Groups/:id returns 404 when missing", async (t) => {
 
   restore();
 });
-
-/* ------------------------------------------------------------------ */
-/* Groups – PATCH members                                              */
-/* ------------------------------------------------------------------ */
 
 test.serial("PATCH /scim/v2/Groups/:id adds members", async (t) => {
   const restore = withEnv("teams", "tok");

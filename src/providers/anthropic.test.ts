@@ -100,7 +100,7 @@ test(
   "tool_calls"
 );
 
-test("call() extracts tool_use blocks into toolCalls", async (t) => {
+test("call() extracts tool_use blocks into toolUses", async (t) => {
   const adapter = new AnthropicAdapter("key");
   stubCreate(adapter).resolves({
     ...MOCK_RESPONSE,
@@ -116,12 +116,12 @@ test("call() extracts tool_use blocks into toolCalls", async (t) => {
   });
 
   const result = await adapter.call(BASE_REQ, "");
-  const tc = (result.toolCalls as any[])[0];
+  const tc = result.toolUses![0];
 
+  t.is(tc.type, "tool_use");
   t.is(tc.id, "tu_01");
-  t.is(tc.type, "function");
-  t.is(tc.function.name, "get_weather");
-  t.deepEqual(JSON.parse(tc.function.arguments), { location: "NYC" });
+  t.is(tc.name, "get_weather");
+  t.deepEqual(tc.input, { location: "NYC" });
 });
 
 test("call() maps AuthenticationError to friendly message", async (t) => {
@@ -363,7 +363,7 @@ test("callStream() yields text_block_start on new text block", async (t) => {
   t.is(blockStarts.length, 1);
 });
 
-test("callStream() yields tool_call_delta on tool_use blocks", async (t) => {
+test("callStream() yields tool_use_start and tool_use_delta on tool_use blocks", async (t) => {
   const adapter = new AnthropicAdapter("key");
   const streamStub = stubStream(adapter);
 
@@ -408,10 +408,19 @@ test("callStream() yields tool_call_delta on tool_use blocks", async (t) => {
     events.push(event);
   }
 
-  const toolDeltas = events.filter((e) => e.type === "tool_call_delta");
-  t.true(toolDeltas.length >= 1);
-  t.is(toolDeltas[0].toolCallId, "toolu_01");
-  t.is(toolDeltas[0].toolCallName, "get_weather");
+  const toolStarts = events.filter((e) => e.type === "tool_use_start");
+  t.is(toolStarts.length, 1);
+  t.is(toolStarts[0].id, "toolu_01");
+  t.is(toolStarts[0].name, "get_weather");
+
+  const toolDeltas = events.filter((e) => e.type === "tool_use_delta");
+  t.is(toolDeltas.length, 2);
+  t.is(toolDeltas[0].partialJson, '{"loc');
+  t.is(toolDeltas[1].partialJson, '":"NYC"}');
+
+  const endEvent = events.find((e) => e.type === "stream_end");
+  t.truthy(endEvent?.toolUses);
+  t.is(endEvent!.toolUses![0].id, "toolu_01");
 });
 
 test("callStream() emits stream_end with model, finish_reason, and usage", async (t) => {
