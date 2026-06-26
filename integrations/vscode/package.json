@@ -1,8 +1,8 @@
 {
   "name": "tenure-vscode",
-  "displayName": "Tenure for VSCode",
+  "displayName": "Tenure",
   "description": "Persistent AI memory that follows you across every tool, session, and interface. Fully local.",
-  "version": "1.0.24",
+  "version": "1.0.25",
   "publisher": "tenureai",
   "license": "MIT",
   "icon": "resources/tenure-logo-icon.png",
@@ -39,8 +39,13 @@
     "world model",
     "local ai",
     "openai",
-    "byok"
+    "byok",
+    "language-models"
   ],
+  "bugs": {
+    "url": "https://github.com/tenurehq/tenure/issues"
+  },
+  "homepage": "https://tenureai.dev",
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -157,11 +162,11 @@
   ],
   "scripts": {
     "build": "tsdown",
-    "build:test": "tsdown 'src/test/**/*.ts' --out-dir out/test --format cjs --out-extension .js --no-splitting --deps.neverBundle vscode",
+    "build:test": "tsdown --config tsdown.config.ts",
     "watch": "tsc -watch -p tsconfig.json",
     "package": "npm run build && vsce package",
     "publish": "vsce publish",
-    "test": "npm run build && npm run build:test && vscode-test"
+    "test": "npm run build && vscode-test --config .vscode-test.cjs"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

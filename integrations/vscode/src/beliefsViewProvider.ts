@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { TokenStore } from "./tokenStore.js";
 import WebSocket from "ws";
+import { getTenureFilePolicyForPath } from "./filePolicy.js";
 
 interface BeliefSummary {
   id: string;
@@ -255,10 +256,22 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
       .slice(0, 5)
       .join("_");
 
-    const activeFile =
+    const rawActiveFile =
       activeFileOverride !== undefined
         ? activeFileOverride
         : this.currentActiveFile;
+
+    let safeActiveFile: string | null = rawActiveFile ?? null;
+    let safeActiveLanguage: string | null =
+      this.pendingWorkspaceState?.active_language ?? null;
+
+    if (rawActiveFile) {
+      const policy = getTenureFilePolicyForPath(rawActiveFile);
+      if (policy.suppressMetadata) {
+        safeActiveFile = null;
+        safeActiveLanguage = null;
+      }
+    }
 
     this.ensureConnected()
       .then(() => {
@@ -269,8 +282,8 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
           why_it_matters: whyItMatters,
           scope,
           canonical_name: canonicalName,
-          active_file: activeFile,
-          active_language: this.pendingWorkspaceState?.active_language ?? null,
+          active_file: safeActiveFile,
+          active_language: safeActiveLanguage,
           project_scope: this.currentScope
         });
       })
@@ -297,10 +310,14 @@ export class TenureBeliefsViewProvider implements vscode.WebviewViewProvider {
   }
 
   sendFileMeta(path: string, sizeBytes: number): void {
+    const policy = getTenureFilePolicyForPath(path);
+    if (policy.suppressContent) return;
     this.send({ type: "file_meta", path, size_bytes: sizeBytes });
   }
 
   sendFileEdited(path: string, projectScope: string): void {
+    const policy = getTenureFilePolicyForPath(path);
+    if (policy.suppressContent) return;
     this.send({ type: "file_edited", path, project_scope: projectScope });
   }
 

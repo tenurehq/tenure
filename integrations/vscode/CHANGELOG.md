@@ -6,6 +6,33 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.25]
+
+### Added
+
+- **`.tenure.json` configuration format** (`tenureConfig.ts`): Introduced a new JSON-based project configuration file supporting `projectId`, `ignore`, and `noiseIgnores` fields alongside the legacy plain-text `.tenure` file. The JSON format is preferred when both files exist, with automatic fallback to `.tenure`.
+- **`generateDefaultTenureConfig()`** (`tenureConfig.ts`): Added a utility function that produces a pretty-printed `.tenure.json` template with empty `ignore` and `noiseIgnores` arrays, used when prompting users to create a new config file.
+- **File policy module** (`filePolicy.ts`): Added `getTenureFilePolicy()` and `getTenureFilePolicyForPath()` to support per-file metadata and content suppression rules, preventing sensitive files from leaking active file paths, language IDs, edit events, or content to the Tenure proxy.
+- **`.tenure.json` file watcher** (`extension.ts`): Added a dedicated filesystem watcher for `.tenure.json` changes that invalidates the sync cache and triggers a re-sync, alongside the existing `.tenure` watcher.
+
+### Changed
+
+- **Version and display name** (`package.json`, `package-lock.json`): Bumped extension version to `1.0.25`, updated the display name to "Tenure", added `language-models` to keywords, set `"type": "module"`, and added `bugs` and `homepage` fields.
+- **Build configuration** (`package.json`, `tsdown.config.ts`): Replaced the separate `build:test` npm script with a unified tsdown config that handles both extension and test builds. The test command now references `.vscode-test.cjs` instead of the removed `.vscode-test.js`.
+- **Onboarding prompt wording** (`workspaceSync.ts`): Updated the missing config file prompt to reference `.tenure.json` instead of `.tenure`, now creating a JSON document with `generateDefaultTenureConfig()` rather than a plain-text file.
+- **File metadata suppression in workspace sync** (`workspaceSync.ts`): Integrated file policy checks into `buildWorkspaceState()` and `sendActiveFileUpdate()` so that files matching suppression rules omit their path and language from workspace state payloads.
+- **File metadata suppression in beliefs provider** (`beliefsViewProvider.ts`): Added file policy checks to `sendFileMeta()`, `sendFileEdited()`, and the belief record submission flow, suppressing metadata and content for files covered by suppression rules.
+- **Active editor change handling** (`extension.ts`): Updated the `onDidChangeActiveTextEditor` handler to respect file policy suppression, skipping active file propagation for suppressed files.
+- **README update** (`README.md`): Revised the project description, feature descriptions, and drift explanation to emphasize Tenure as a governed context layer rather than just persistent memory.
+
+### Removed
+
+- **`.vscode-test.js`** (`integrations/vscode/.vscode-test.js`): Deleted the legacy test runner configuration file, replaced by `.vscode-test.cjs`.
+- **Unused `@emnapi/core` and `@emnapi/runtime` packages** (`package-lock.json`): Removed these optional dependencies from the lockfile.
+- **Redundant platform metadata** (`package-lock.json`): Stripped `libc` annotations from optional native dependency entries (`@emnapi/wasi-threads` platform variants).
+
+---
+
 ## [1.0.24]
 
 ### Added

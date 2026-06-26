@@ -1,11 +1,15 @@
 import * as vscode from "vscode";
 import { resolveGitRemote } from "./gitResolver.js";
 import type { TokenStore } from "./tokenStore.js";
-import { readTenureConfig } from "./tenureConfig.js";
+import {
+  generateDefaultTenureConfig,
+  readTenureConfig
+} from "./tenureConfig.js";
 import { TenureBeliefsViewProvider } from "./beliefsViewProvider.js";
 import type { TenureLmProvider } from "./lmProvider.js";
 import path, { basename } from "node:path";
 import { createHash } from "node:crypto";
+import { getTenureFilePolicyForPath } from "./filePolicy.js";
 
 export interface WorkspaceState {
   workspace_root: string;
@@ -30,7 +34,7 @@ export class WorkspaceSync {
     private readonly context: vscode.ExtensionContext,
     private readonly statusBar?: vscode.StatusBarItem,
     private readonly beliefsProvider?: TenureBeliefsViewProvider,
-    private readonly lmProvider?: TenureLmProvider,
+    private readonly lmProvider?: TenureLmProvider
   ) {
     this.lastSyncedState = null;
 
@@ -68,22 +72,27 @@ export class WorkspaceSync {
   sendActiveFileUpdate(
     activeFile: string,
     activeLanguage: string,
-    fileUri: vscode.Uri,
+    fileUri: vscode.Uri
   ): void {
     if (!this.beliefsProvider || !this.cachedProjectName) return;
 
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) return;
 
+    const policy = getTenureFilePolicyForPath(activeFile, workspaceFolder.uri);
+
+    const safeActiveFile = policy.suppressMetadata ? null : activeFile;
+    const safeActiveLanguage = policy.suppressMetadata ? null : activeLanguage;
+
     this.beliefsProvider.sendWorkspaceState({
       workspace_root: workspaceFolder.uri.fsPath,
       project_name: this.cachedProjectName,
       git_remote: this.cachedGitRemote,
-      active_file: activeFile,
-      active_language: activeLanguage,
+      active_file: safeActiveFile,
+      active_language: safeActiveLanguage
     });
 
-    if (fileUri.scheme === "file") {
+    if (!policy.suppressContent && fileUri.scheme === "file") {
       vscode.workspace.fs.stat(fileUri).then((stat) => {
         this.beliefsProvider?.sendFileMeta(activeFile, stat.size);
       });
@@ -124,12 +133,26 @@ export class WorkspaceSync {
     const activeFile = activeFileUri ? toRelativeFile(activeFileUri) : null;
     const activeLanguage = activeEditor?.document.languageId ?? null;
 
+    let safeActiveFile = activeFile;
+    let safeActiveLanguage = activeLanguage;
+
+    if (activeFileUri) {
+      const policy = getTenureFilePolicyForPath(
+        activeFile ?? "",
+        workspaceFolder.uri
+      );
+      if (policy.suppressMetadata) {
+        safeActiveFile = null;
+        safeActiveLanguage = null;
+      }
+    }
+
     const state: WorkspaceState = {
       workspace_root: workspaceFolder.uri.fsPath,
       project_name: this.cachedProjectName!,
       git_remote: this.cachedGitRemote,
-      active_file: activeFile,
-      active_language: activeLanguage,
+      active_file: safeActiveFile,
+      active_language: safeActiveLanguage
     };
 
     const stateKey = JSON.stringify(state);
@@ -146,7 +169,7 @@ export class WorkspaceSync {
           previousState.project_name,
           state.project_name,
           token,
-          baseUrl,
+          baseUrl
         ).catch(() => {});
       }
     }
@@ -173,7 +196,7 @@ export class WorkspaceSync {
 
   private async checkAndPromptOnboarding(
     baseUrl: string,
-    token: string,
+    token: string
   ): Promise<void> {
     if (this.onboardingPromptShown) return;
 
@@ -181,12 +204,12 @@ export class WorkspaceSync {
       const [providersRes, cfgRes] = await Promise.all([
         fetch(`${baseUrl}/admin/providers`, {
           headers: { Authorization: `Bearer ${token}` },
-          signal: AbortSignal.timeout(10_000),
+          signal: AbortSignal.timeout(10_000)
         }),
         fetch(`${baseUrl}/admin/config`, {
           headers: { Authorization: `Bearer ${token}` },
-          signal: AbortSignal.timeout(10_000),
-        }),
+          signal: AbortSignal.timeout(10_000)
+        })
       ]);
 
       if (!providersRes.ok || !cfgRes.ok) return;
@@ -200,7 +223,7 @@ export class WorkspaceSync {
           openai_configured: boolean;
           anthropic_configured: boolean;
           [key: string]: unknown;
-        }>,
+        }>
       ]);
 
       const hasProvider = providersData.providers.some((p) => p.configured);
@@ -211,20 +234,20 @@ export class WorkspaceSync {
         this.onboardingPromptShown = true;
 
         const alreadyDismissed = this.context.globalState.get<boolean>(
-          "tenure.onboardingNudgeDismissed",
+          "tenure.onboardingNudgeDismissed"
         );
         if (!alreadyDismissed) {
           const action = await vscode.window.showInformationMessage(
             "Tenure: No provider configured. Run setup to connect an LLM and enable memory injection.",
             "Set up Tenure",
-            "Dismiss",
+            "Dismiss"
           );
           if (action === "Set up Tenure") {
             vscode.commands.executeCommand("tenure.runOnboarding");
           } else if (action === "Dismiss") {
             await this.context.globalState.update(
               "tenure.onboardingNudgeDismissed",
-              true,
+              true
             );
           }
         }
@@ -235,20 +258,20 @@ export class WorkspaceSync {
         this.onboardingPromptShown = true;
 
         const alreadyDismissed = this.context.globalState.get<boolean>(
-          "tenure.onboardingNudgeDismissed",
+          "tenure.onboardingNudgeDismissed"
         );
         if (!alreadyDismissed) {
           const action = await vscode.window.showInformationMessage(
             "Tenure: Provider is connected but no model has been selected. Run setup to finish.",
             "Run Setup",
-            "Dismiss",
+            "Dismiss"
           );
           if (action === "Run Setup") {
             vscode.commands.executeCommand("tenure.runOnboarding");
           } else if (action === "Dismiss") {
             await this.context.globalState.update(
               "tenure.onboardingNudgeDismissed",
-              true,
+              true
             );
           }
         }
@@ -276,20 +299,30 @@ export class WorkspaceSync {
   }
 
   private async checkAndPromptTenureFile(
-    workspaceRoot: vscode.Uri,
+    workspaceRoot: vscode.Uri
   ): Promise<void> {
     const alreadyPrompted = this.context.globalState.get<boolean>(
-      "tenure.tenureFilePromptShown",
+      "tenure.tenureFilePromptShown"
     );
     if (alreadyPrompted) return;
 
-    const tenureFileUri = vscode.Uri.joinPath(workspaceRoot, ".tenure");
+    const tenureJsonUri = vscode.Uri.joinPath(workspaceRoot, ".tenure.json");
+    const tenureLegacyUri = vscode.Uri.joinPath(workspaceRoot, ".tenure");
 
     try {
-      await vscode.workspace.fs.stat(tenureFileUri);
+      await vscode.workspace.fs.stat(tenureJsonUri);
       await this.context.globalState.update(
         "tenure.tenureFilePromptShown",
-        true,
+        true
+      );
+      return;
+    } catch {}
+
+    try {
+      await vscode.workspace.fs.stat(tenureLegacyUri);
+      await this.context.globalState.update(
+        "tenure.tenureFilePromptShown",
+        true
       );
       return;
     } catch {}
@@ -301,19 +334,19 @@ export class WorkspaceSync {
     await this.context.globalState.update("tenure.tenureFilePromptShown", true);
 
     const action = await vscode.window.showInformationMessage(
-      "Tenure: No `.tenure` file found. Preview one to enable project-scoped memory?",
-      "Preview `.tenure`",
-      "Remind me later",
+      "Tenure: No `.tenure.json` file found. Create one to enable project-scoped memory?",
+      "Create `.tenure.json`",
+      "Remind me later"
     );
 
-    if (action !== "Preview `.tenure`") return;
+    if (action !== "Create `.tenure.json`") return;
 
     const inferredName =
       this.cachedProjectName ?? slugify(path.basename(workspaceRoot.fsPath));
 
     const doc = await vscode.workspace.openTextDocument({
-      content: inferredName,
-      language: "plaintext",
+      content: generateDefaultTenureConfig(inferredName),
+      language: "json"
     });
     await vscode.window.showTextDocument(doc);
   }
@@ -322,19 +355,19 @@ export class WorkspaceSync {
     oldName: string,
     newName: string,
     token: string,
-    baseUrl: string,
+    baseUrl: string
   ): Promise<void> {
     await fetch(`${baseUrl}/v1/workspace/migrate-scope`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${token}`
       },
       body: JSON.stringify({
         old_scope: `project:${slugify(oldName)}`,
-        new_scope: `project:${slugify(newName)}`,
+        new_scope: `project:${slugify(newName)}`
       }),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(5000)
     });
   }
 }
