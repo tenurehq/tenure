@@ -19,6 +19,7 @@ import {
 } from "./tenureInstaller.js";
 import { injectContinueConfig } from "./clientIntegrations.js";
 import { detectHostApp } from "./hostEnvironment.js";
+import { getTenureFilePolicy } from "./filePolicy.js";
 
 export async function activate(
   context: vscode.ExtensionContext
@@ -345,24 +346,25 @@ export async function activate(
   }
 
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-  const tenureWatcher = workspaceFolder
-    ? vscode.workspace.createFileSystemWatcher(
-        new vscode.RelativePattern(workspaceFolder, ".tenure")
-      )
-    : null;
-
-  if (tenureWatcher) {
+  const setupConfigWatcher = (pattern: string) => {
+    if (!workspaceFolder) return;
+    const watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(workspaceFolder, pattern)
+    );
     const handleConfigMutation = () => {
       sync.invalidateCache();
       sync.scheduleSync();
     };
     context.subscriptions.push(
-      tenureWatcher.onDidChange(handleConfigMutation),
-      tenureWatcher.onDidCreate(handleConfigMutation),
-      tenureWatcher.onDidDelete(handleConfigMutation),
-      tenureWatcher
+      watcher.onDidChange(handleConfigMutation),
+      watcher.onDidCreate(handleConfigMutation),
+      watcher.onDidDelete(handleConfigMutation),
+      watcher
     );
-  }
+  };
+
+  setupConfigWatcher(".tenure.json");
+  setupConfigWatcher(".tenure");
 
   context.subscriptions.push(
     vscode.commands.registerCommand("tenure.startInstall", async () => {
@@ -448,7 +450,10 @@ export async function activate(
     }),
 
     vscode.window.onDidChangeActiveTextEditor((editor) => {
-      if (editor?.document.uri && editor.document.uri.scheme === "file") {
+      if (editor?.document.uri) {
+        const policy = getTenureFilePolicy(editor.document.uri);
+        if (policy.suppressMetadata) return;
+
         const relativePath = vscode.workspace.asRelativePath(
           editor.document.uri,
           true
