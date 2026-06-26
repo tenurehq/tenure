@@ -1,8 +1,8 @@
 # Tenure
 
-> Persistent, governable state for AI systems. Fully local, fully private, fully automatic. Bring your own key and use Tenure directly inside VS Code's native chat interface. No Copilot subscription required.
+> The governed context layer for AI coding agents. Tenure preserves project decisions, constraints, and team conventions across tools, sessions, and interfaces, locally, privately, and automatically.
 
-## BYOK. Your models. Your memory.
+## BYOK. Your models. Governed project context.
 
 Tenure registers as a native language model provider in VS Code. Connect your own API key during setup, pick from any model your provider offers, and those models appear directly in the Copilot Chat picker. No subscription to GitHub Copilot. No third-party billing. Just your key, your models, and your context.
 
@@ -12,7 +12,7 @@ Supported providers include OpenAI, Anthropic, AWS Bedrock, local models, and an
 
 You spend an hour in OpenWebUI thinking through an architecture problem. You explore options, rule some out, and land on a direction. Then you open VS Code to start building.
 
-Tenure is already there. It knows what you decided, what you rejected, and why. You do not re-explain anything. You just build.
+Tenure is already there. It carries forward the decision state: what you chose, what you rejected, why it mattered, and which project it belongs to. You do not re-explain anything. You just build.
 
 This works because Tenure runs as a local proxy outside any single tool. OpenWebUI, LibreChat, Cline, Continue, Windsurf, and any OpenAI-compatible client connect through `localhost:5757`. The VS Code extension brings your IDE into the same memory layer, and because it registers as a native language model provider, Tenure appears directly in Copilot Chat with no manual configuration.
 
@@ -35,13 +35,13 @@ If Docker Desktop is not running, the extension will prompt you to start it. If 
 - **Pushes workspace context** on every file switch so the proxy resolves the right project scope before your first message.
 - **Auto-configures other extensions** when possible (for example, Continue) and shows copy-paste instructions for the rest.
 
-## How it solves drift
+## Why governed context beats copied instructions
 
 Beyond cross-interface continuity, Tenure fixes the way AI coding sessions break through drift. A script gets renamed in `package.json`. A config file moves. A rule you wrote for Cline never makes it into the equivalent for Windsurf. The agent works from whatever it was last told, and what it was last told is increasingly wrong.
 
 The deeper issue is duplication. Anything that copies information already in your code or config will go stale. Anything that points to that information tends to stay correct. Most `AGENTS.md` files are full of copies.
 
-Tenure does not duplicate. It learns.
+Tenure does not treat project context as another file to copy. It keeps decision state in the proxy layer and resolves the right scope before the model responds.
 
 ## Which clients work with Tenure?
 
