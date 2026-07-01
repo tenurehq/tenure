@@ -357,20 +357,33 @@ export class BeliefMerger {
 
     if (existing.content !== nb.content) {
       const margin = nb.confidence - existing.confidence;
-      if (Math.abs(margin) < this.policy.conflictConfidenceMargin) {
+      const decisive = Math.abs(margin) >= this.policy.conflictConfidenceMargin;
+
+      if (decisive && margin > 0) {
         return {
           action: MergeAction.FLAGGED_CONFLICT,
           beliefId: existing._id,
           reason:
-            "content differs within confidence margin; queued for user review"
+            "content differs with higher-confidence incoming; queued for user review"
         };
       }
+
+      if (decisive && margin <= 0) {
+        return {
+          action: MergeAction.SKIPPED_LOW_CONFIDENCE,
+          beliefId: existing._id,
+          reason: `content differs; incoming confidence significantly lower (margin ${margin.toFixed(
+            2
+          )})`
+        };
+      }
+
       return {
         action: MergeAction.SKIPPED_LOW_CONFIDENCE,
         beliefId: existing._id,
-        reason: `content differs; incoming margin ${
-          margin >= 0 ? "+" : ""
-        }${margin.toFixed(2)} insufficient without explicit supersede signal`
+        reason: `content differs within confidence margin (${Math.abs(
+          margin
+        ).toFixed(2)}); no explicit supersede signal`
       };
     }
 
