@@ -147,9 +147,11 @@ export class ExtractionWorker implements ExtractionWorkerLike {
         { _id: job._id },
         { $set: { "payload.validation_error": error } }
       );
+      if (parseStatus === "parsed") {
+        throw new Error(error ?? "failed to parse sidecar");
+      }
       return [];
     }
-
     const enforced =
       payload.extraction_mode === "ide" &&
       payload.workspace_context?.project_scope
@@ -171,6 +173,10 @@ export class ExtractionWorker implements ExtractionWorkerLike {
 
     if (mode === "curated") {
       return this.persistSuggestions(job, enforced);
+    }
+
+    if (mode === "reflective") {
+      return [];
     }
 
     if (enforced.orientation_tax && job.turn_id) {

@@ -4,6 +4,24 @@ All notable changes to Tenure will be documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+---
+
+## [1.0.29] - 2026-07-01
+
+### Changed
+
+- **Belief merger conflict resolution** (`src/extraction/merger.ts`): Refactored content conflict logic to distinguish three outcomes: when incoming confidence is significantly higher the belief is now flagged for user review (`FLAGGED_CONFLICT`); when incoming confidence is significantly lower it is skipped as low-confidence (`SKIPPED_LOW_CONFIDENCE`); and when the margin falls within the conflict threshold the belief is also skipped with a reason indicating the margin is insufficient without an explicit supersede signal.
+
+- **Reflective mode extraction** (`src/extraction/worker.ts`): Added an early return for `reflective` extraction mode so that no suggestions are persisted, no orientation tax is handled, and no sidecars are processed. Parse errors for sidecars now also re-throw when the parse status is `parsed`.
+
+- **Compaction deduplication and atomicity** (`src/jobs/compactionRunner.ts`): Added a pre-insert duplicate check to detect when a merged belief already exists under the same canonical name. When a duplicate is found, the original beliefs are superseded into the existing document instead of creating a redundant merge. The insert of the merged belief is now wrapped in a try/catch so that if insertion fails, the previously retired beliefs are rolled back to active status and the retirement log entry is removed.
+
+- **js-yaml dependency** (`package-lock.json`): Bumped `js-yaml` from 3.14.2 to 3.15.0.
+
+- **Test suite formatting** (`src/eval/session-retrieval.eval.test.ts`): Applied consistent code style across the evaluation test file, including trailing comma cleanup, formatting adjustments, and removal of extraneous `gcp-metadata` entry from the lockfile.
+
+---
+
 ## [1.0.28] - 2026-06-18
 
 ### Added
