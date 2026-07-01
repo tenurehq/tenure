@@ -917,25 +917,73 @@ export class BeliefCompactionRunner {
         ]
       };
 
-      await this.beliefs.insertOne(merged);
+      const dup = await this.beliefs.findOne({
+        canonical_name: merged.canonical_name,
+        user_id: userId,
+        ...ACTIVE_FILTER,
+        _id: { $nin: allIds }
+      });
+
+      if (dup) {
+        await this.beliefs.updateMany(
+          { _id: { $in: allIds }, user_id: userId },
+          {
+            $set: {
+              epistemic_status: "superseded",
+              superseded_by: dup._id,
+              updated_at: now
+            },
+            $push: {
+              change_log: {
+                changed_at: now,
+                trigger: `superseded by compaction: merged into existing ${dup._id}`,
+                changed_by_session: null,
+                changed_by_turn: null
+              }
+            }
+          }
+        );
+        continue;
+      }
+
+      const retiringAt = now;
+      const retirementLogEntry = {
+        changed_at: retiringAt,
+        trigger: `superseded by compaction: ${newId}`,
+        changed_by_session: null,
+        changed_by_turn: null
+      };
+
       await this.beliefs.updateMany(
         { _id: { $in: allIds }, user_id: userId },
         {
           $set: {
             epistemic_status: "superseded",
             superseded_by: newId,
-            updated_at: now
+            updated_at: retiringAt
           },
           $push: {
-            change_log: {
-              changed_at: now,
-              trigger: `superseded by compaction: ${newId}`,
-              changed_by_session: null,
-              changed_by_turn: null
-            }
+            change_log: retirementLogEntry
           }
         }
       );
+
+      try {
+        await this.beliefs.insertOne(merged);
+      } catch (err) {
+        await this.beliefs.updateMany(
+          { _id: { $in: allIds }, user_id: userId },
+          {
+            $set: {
+              epistemic_status: "active",
+              superseded_by: null,
+              updated_at: retiringAt
+            },
+            $pull: { change_log: { trigger: retirementLogEntry.trigger } }
+          }
+        );
+        throw err;
+      }
     }
   }
 

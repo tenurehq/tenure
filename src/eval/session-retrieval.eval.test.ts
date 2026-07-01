@@ -6,13 +6,13 @@ import { resolve } from "node:path";
 import { BeliefsReader } from "../context/beliefsReader.js";
 import {
   ContextBuilder,
-  type PersonaLookup,
+  type PersonaLookup
 } from "../context/contextBuilder.js";
 import type { Belief } from "../types/belief.js";
 import type { Turn, TurnSignal } from "../history/manager.js";
 import {
   buildReportPayload,
-  ReportSummaryOptions,
+  ReportSummaryOptions
 } from "./buildRetrievalReport.js";
 
 interface BeliefsExpect {
@@ -116,8 +116,8 @@ function extractClauses(node: ScoreNode): ScoreClause[] {
       {
         path: single[1],
         term: single[2],
-        score: Math.round(node.value * 100) / 100,
-      },
+        score: Math.round(node.value * 100) / 100
+      }
     ];
   }
   const phrase = BM25_PHRASE.exec(node.description);
@@ -126,8 +126,8 @@ function extractClauses(node: ScoreNode): ScoreClause[] {
       {
         path: phrase[1],
         term: phrase[2],
-        score: Math.round(node.value * 100) / 100,
-      },
+        score: Math.round(node.value * 100) / 100
+      }
     ];
   }
   return node.details.flatMap(extractClauses);
@@ -144,7 +144,7 @@ const READY_POLL_MS = 500;
 const USER_ID = "test-user";
 const FIXTURE_BELIEFS = resolve("src/__fixtures__/beliefs.seed.json");
 const FIXTURE_SESSION_CASES = resolve(
-  "src/__fixtures__/session-retrieval.cases.json",
+  "src/__fixtures__/session-retrieval.cases.json"
 );
 const REPORT_DIR = resolve("test-results");
 const REPORT_PATH = resolve(REPORT_DIR, "session-retrieval-report.json");
@@ -153,7 +153,7 @@ const DATE_FIELDS = [
   "created_at",
   "updated_at",
   "last_reinforced_at",
-  "resolved_at",
+  "resolved_at"
 ] as const;
 
 const EVAL_PERSONA: PersonaLookup = {
@@ -166,10 +166,10 @@ const EVAL_PERSONA: PersonaLookup = {
             "domain:code":
               "You work in TypeScript with strict mode, Fastify for HTTP, and MongoDB with the raw driver — never an ORM. You prefer composition over inheritance and Go-style explicit error returns.",
             "domain:writing":
-              "You write close third-person, present tense, set in 1970s Lisbon. No omniscient asides, no reconciliation arcs.",
-          },
+              "You write close third-person, present tense, set in 1970s Lisbon. No omniscient asides, no reconciliation arcs."
+          }
         }
-      : null,
+      : null
 };
 
 function containerExists(): boolean {
@@ -179,7 +179,7 @@ function containerExists(): boolean {
     "--filter",
     `name=^${CONTAINER_NAME}$`,
     "--format",
-    "{{.Names}}",
+    "{{.Names}}"
   ]);
   return result.stdout.toString().trim() === CONTAINER_NAME;
 }
@@ -190,7 +190,7 @@ function containerRunning(): boolean {
     "--filter",
     `name=^${CONTAINER_NAME}$`,
     "--format",
-    "{{.Names}}",
+    "{{.Names}}"
   ]);
   return result.stdout.toString().trim() === CONTAINER_NAME;
 }
@@ -206,9 +206,9 @@ function startContainer(): void {
       "docker run -d",
       `--name ${CONTAINER_NAME}`,
       `-p ${HOST_PORT}:27017`,
-      ATLAS_IMAGE,
+      ATLAS_IMAGE
     ].join(" "),
-    { stdio: "pipe" },
+    { stdio: "pipe" }
   );
 }
 
@@ -223,7 +223,7 @@ async function waitForMongo(): Promise<void> {
   while (Date.now() < deadline) {
     try {
       const c = new MongoClient(MONGO_URI, {
-        serverSelectionTimeoutMS: READY_POLL_MS,
+        serverSelectionTimeoutMS: READY_POLL_MS
       });
       await c.connect();
       await c.db("admin").command({ ping: 1 });
@@ -234,14 +234,14 @@ async function waitForMongo(): Promise<void> {
     }
   }
   throw new Error(
-    `Atlas Local container did not become ready within ${READY_TIMEOUT_MS}ms`,
+    `Atlas Local container did not become ready within ${READY_TIMEOUT_MS}ms`
   );
 }
 
 async function retryUntilReady<T>(
   fn: () => Promise<T>,
   label: string,
-  timeoutMs = READY_TIMEOUT_MS,
+  timeoutMs = READY_TIMEOUT_MS
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   let lastErr: unknown;
@@ -256,7 +256,7 @@ async function retryUntilReady<T>(
   throw new Error(
     `${label} did not succeed within ${timeoutMs}ms — last error: ${
       lastErr instanceof Error ? lastErr.message : String(lastErr)
-    }`,
+    }`
   );
 }
 
@@ -282,7 +282,7 @@ let ingestionTimings = {
   insertMs: 0,
   searchSyncMs: 0,
   totalReadyMs: 0,
-  beliefCount: 0,
+  beliefCount: 0
 };
 
 test.before(async () => {
@@ -311,8 +311,8 @@ test.before(async () => {
               tokenizer: { type: "whitespace" },
               tokenFilters: [
                 { type: "lowercase" },
-                { type: "englishPossessive" },
-              ],
+                { type: "englishPossessive" }
+              ]
             },
             {
               name: "whole_name_analyzer",
@@ -320,12 +320,12 @@ test.before(async () => {
               tokenizer: {
                 type: "regexCaptureGroup",
                 pattern: "[^,;|]+",
-                group: 0,
+                group: 0
               },
               tokenFilters: [
                 { type: "lowercase" },
-                { type: "englishPossessive" },
-              ],
+                { type: "englishPossessive" }
+              ]
             },
             {
               name: "canonical_query_search_analyzer",
@@ -364,15 +364,15 @@ test.before(async () => {
                     "this",
                     "how",
                     "what",
-                    "does",
-                  ],
+                    "does"
+                  ]
                 },
                 {
                   type: "shingle",
                   minShingleSize: 2,
-                  maxShingleSize: 2,
-                },
-              ],
+                  maxShingleSize: 2
+                }
+              ]
             },
             {
               name: "alias_search_analyzer",
@@ -383,10 +383,10 @@ test.before(async () => {
                 {
                   type: "shingle",
                   minShingleSize: 2,
-                  maxShingleSize: 2,
-                },
-              ],
-            },
+                  maxShingleSize: 2
+                }
+              ]
+            }
           ],
           mappings: {
             dynamic: false,
@@ -401,9 +401,9 @@ test.before(async () => {
                   phrase: {
                     type: "string",
                     analyzer: "whole_name_analyzer",
-                    searchAnalyzer: "canonical_query_search_analyzer",
-                  },
-                },
+                    searchAnalyzer: "canonical_query_search_analyzer"
+                  }
+                }
               },
               aliases: {
                 type: "string",
@@ -413,9 +413,9 @@ test.before(async () => {
                   shingle: {
                     type: "string",
                     analyzer: "whole_name_analyzer",
-                    searchAnalyzer: "alias_search_analyzer",
-                  },
-                },
+                    searchAnalyzer: "alias_search_analyzer"
+                  }
+                }
               },
               participants: { type: "token" },
               relation_type: { type: "token" },
@@ -425,13 +425,13 @@ test.before(async () => {
               scope: { type: "token" },
               reinforcement_count: { type: "number" },
               confidence: { type: "number" },
-              subtype: { type: "token" },
-            },
-          },
-        },
+              subtype: { type: "token" }
+            }
+          }
+        }
       }),
     "createBeliefsSearchIndex",
-    60_000,
+    60_000
   );
 
   await retryUntilReady(
@@ -443,11 +443,11 @@ test.before(async () => {
       if (idx?.status !== "READY") throw new Error(`status: ${idx?.status}`);
     },
     "waitForBeliefsSearchIndex",
-    60_000,
+    60_000
   );
 
   const rawBeliefs = JSON.parse(
-    readFileSync(FIXTURE_BELIEFS, "utf8"),
+    readFileSync(FIXTURE_BELIEFS, "utf8")
   ) as Record<string, unknown>[];
 
   const ingestionStart = performance.now();
@@ -462,17 +462,17 @@ test.before(async () => {
           {
             $search: {
               index: "beliefs_search",
-              text: { query: "TypeScript", path: "aliases" },
-            },
+              text: { query: "TypeScript", path: "aliases" }
+            }
           },
-          { $limit: 1 },
+          { $limit: 1 }
         ])
         .toArray();
       if (results.length === 0)
         throw new Error("Beliefs search index not synced");
     },
     "waitForBeliefsSearchSync",
-    READY_TIMEOUT_MS,
+    READY_TIMEOUT_MS
   );
   const syncEnd = performance.now();
 
@@ -480,7 +480,7 @@ test.before(async () => {
     insertMs: Math.round((insertEnd - ingestionStart) * 100) / 100,
     searchSyncMs: Math.round((syncEnd - syncStart) * 100) / 100,
     totalReadyMs: Math.round((syncEnd - ingestionStart) * 100) / 100,
-    beliefCount: rawBeliefs.length,
+    beliefCount: rawBeliefs.length
   };
 
   await turnsCol.drop().catch(() => {});
@@ -499,13 +499,13 @@ test.before(async () => {
               sessionId: { type: "token" },
               scope: { type: "token" },
               userMessage: { type: "string", analyzer: "lucene.standard" },
-              assistantMessage: { type: "string", analyzer: "lucene.standard" },
-            },
-          },
-        },
+              assistantMessage: { type: "string", analyzer: "lucene.standard" }
+            }
+          }
+        }
       }),
     "createTurnsSearchIndex",
-    60_000,
+    60_000
   );
 
   await retryUntilReady(
@@ -517,7 +517,7 @@ test.before(async () => {
       if (idx?.status !== "READY") throw new Error(`status: ${idx?.status}`);
     },
     "waitForTurnsSearchIndex",
-    60_000,
+    60_000
   );
 });
 
@@ -534,17 +534,17 @@ test.after.always(async () => {
         ingestionTimings.beliefCount > 0
           ? Math.round(
               (ingestionTimings.totalReadyMs / ingestionTimings.beliefCount) *
-                100,
+                100
             ) / 100
           : 0,
-      perBelief: [],
-    },
+      perBelief: []
+    }
   };
 
   mkdirSync(REPORT_DIR, { recursive: true });
   writeFileSync(
     REPORT_PATH,
-    JSON.stringify(buildReportPayload(opts, sessionReport), null, 2),
+    JSON.stringify(buildReportPayload(opts, sessionReport), null, 2)
   );
   await client?.close();
   stopContainer();
@@ -571,18 +571,18 @@ function makeTurnDoc(sessionId: string, turn: SessionTurn): Turn {
     beliefCandidateIds: [],
     userRestored: false,
     tokenEstimate: Math.ceil(
-      (turn.userMessage.length + turn.assistantMessage.length) / 3.5,
+      (turn.userMessage.length + turn.assistantMessage.length) / 3.5
     ),
     collapsedBy: null,
     status: "complete",
-    failureReason: null,
+    failureReason: null
   };
 }
 
 async function waitForTurnsSearchSync(
   col: Collection<Turn>,
   sessionId: string,
-  expectedCount: number,
+  expectedCount: number
 ): Promise<void> {
   await retryUntilReady(
     async () => {
@@ -596,30 +596,30 @@ async function waitForTurnsSearchSync(
                   {
                     equals: {
                       path: "sessionId",
-                      value: sessionId,
-                    },
+                      value: sessionId
+                    }
                   },
                   {
                     text: {
                       query: "the",
-                      path: "userMessage",
-                    },
-                  },
-                ],
-              },
-            },
-          },
+                      path: "userMessage"
+                    }
+                  }
+                ]
+              }
+            }
+          }
         ])
         .toArray();
 
       if (results.length < expectedCount) {
         throw new Error(
-          `Turns search index has ${results.length} docs, expected >= ${expectedCount}`,
+          `Turns search index has ${results.length} docs, expected >= ${expectedCount}`
         );
       }
     },
     `waitForTurnsSearchSync(${sessionId}, ${expectedCount})`,
-    30_000,
+    30_000
   );
 }
 
@@ -630,14 +630,14 @@ function loadSessionCases(): SessionEvalCase[] {
   } catch (err) {
     throw new Error(
       `Session eval fixture not found at ${FIXTURE_SESSION_CASES}. ` +
-        `Create the file with at least an empty array [].`,
+        `Create the file with at least an empty array [].`
     );
   }
 
   const parsed: unknown = JSON.parse(raw);
   if (!Array.isArray(parsed)) {
     throw new Error(
-      `Session eval fixture must be a JSON array, got ${typeof parsed}`,
+      `Session eval fixture must be a JSON array, got ${typeof parsed}`
     );
   }
   return parsed as SessionEvalCase[];
@@ -653,7 +653,7 @@ for (const sessionCase of sessionCases) {
 
     const reader = new BeliefsReader(beliefsCol);
     const builder = new ContextBuilder(reader, EVAL_PERSONA, {
-      scoreDetails: true,
+      scoreDetails: true
     });
 
     let casePassedSoFar = true;
@@ -693,26 +693,26 @@ for (const sessionCase of sessionCases) {
           for (const id of relevantIds) {
             check(
               expectedSet.has(id),
-              `turn ${turn.turnIndex}: unexpected relevant belief: ${id}`,
+              `turn ${turn.turnIndex}: unexpected relevant belief: ${id}`
             );
           }
           for (const id of expectedSet) {
             check(
               relevantIds.has(id),
-              `turn ${turn.turnIndex}: missing expected relevant belief: ${id}`,
+              `turn ${turn.turnIndex}: missing expected relevant belief: ${id}`
             );
           }
         }
         for (const id of rb.mustInclude ?? []) {
           check(
             relevantIds.has(id) || pinnedIds.has(id),
-            `turn ${turn.turnIndex}: missing expected belief: ${id}`,
+            `turn ${turn.turnIndex}: missing expected belief: ${id}`
           );
         }
         for (const id of rb.mustExclude ?? []) {
           check(
             !relevantIds.has(id) && !pinnedIds.has(id),
-            `turn ${turn.turnIndex}: forbidden belief surfaced: ${id}`,
+            `turn ${turn.turnIndex}: forbidden belief surfaced: ${id}`
           );
         }
       }
@@ -722,13 +722,13 @@ for (const sessionCase of sessionCases) {
         for (const id of pf.mustInclude ?? []) {
           check(
             pinnedIds.has(id),
-            `turn ${turn.turnIndex}: missing pinned belief: ${id}`,
+            `turn ${turn.turnIndex}: missing pinned belief: ${id}`
           );
         }
         for (const id of pf.mustExclude ?? []) {
           check(
             !pinnedIds.has(id),
-            `turn ${turn.turnIndex}: forbidden pinned belief: ${id}`,
+            `turn ${turn.turnIndex}: forbidden pinned belief: ${id}`
           );
         }
       }
@@ -738,13 +738,13 @@ for (const sessionCase of sessionCases) {
         for (const id of oq.mustInclude ?? []) {
           check(
             questionIds.has(id),
-            `turn ${turn.turnIndex}: missing expected question: ${id}`,
+            `turn ${turn.turnIndex}: missing expected question: ${id}`
           );
         }
         for (const id of oq.mustExclude ?? []) {
           check(
             !questionIds.has(id),
-            `turn ${turn.turnIndex}: forbidden question surfaced: ${id}`,
+            `turn ${turn.turnIndex}: forbidden question surfaced: ${id}`
           );
         }
       }
@@ -756,7 +756,7 @@ for (const sessionCase of sessionCases) {
           if (relevantIds.has(id) || pinnedIds.has(id)) {
             noiseBeliefIds.push(id);
             failures.push(
-              `turn ${turn.turnIndex}: noise belief surfaced: ${id}`,
+              `turn ${turn.turnIndex}: noise belief surfaced: ${id}`
             );
           }
         }
@@ -771,7 +771,7 @@ for (const sessionCase of sessionCases) {
         : new Set(rb?.mustInclude ?? []);
 
       const hits = [...goldSet].filter(
-        (id) => relevantIds.has(id) || pinnedIds.has(id),
+        (id) => relevantIds.has(id) || pinnedIds.has(id)
       ).length;
 
       const retrievalRecall = goldSet.size === 0 ? null : hits / goldSet.size;
@@ -795,11 +795,11 @@ for (const sessionCase of sessionCases) {
           score: Math.round(s.score * 100) / 100,
           clauses: s.scoreDetails
             ? extractClauses(s.scoreDetails as ScoreNode, s.id)
-            : [],
+            : []
         })),
         retrievalPrecision,
         retrievalRecall,
-        retrievalLatencyMs: Math.round((buildEnd - buildStart) * 100) / 100,
+        retrievalLatencyMs: Math.round((buildEnd - buildStart) * 100) / 100
       });
 
       if (failures.length > 0) {
@@ -811,13 +811,13 @@ for (const sessionCase of sessionCases) {
 
       if (turn.createBeliefAtTurn && turn.turnIndex === turn.turnIndex) {
         const beliefDoc = coerceBelief(
-          turn.createBeliefAtTurn as Record<string, unknown>,
+          turn.createBeliefAtTurn as Record<string, unknown>
         );
         await beliefsCol.insertOne(beliefDoc);
 
         await turnsCol.updateOne(
           { _id: turnDoc._id },
-          { $addToSet: { beliefCandidateIds: beliefDoc._id } },
+          { $addToSet: { beliefCandidateIds: beliefDoc._id } }
         );
 
         const probeValue = beliefDoc.aliases[0];
@@ -834,21 +834,21 @@ for (const sessionCase of sessionCases) {
                         {
                           text: {
                             query: probeValue,
-                            path: { value: "aliases", multi: "shingle" },
-                          },
-                        },
-                      ],
-                    },
-                  },
+                            path: { value: "aliases", multi: "shingle" }
+                          }
+                        }
+                      ]
+                    }
+                  }
                 },
-                { $limit: 1 },
+                { $limit: 1 }
               ])
               .toArray();
             if (results.length === 0)
               throw new Error(`Belief ${beliefDoc._id} not yet indexed`);
           },
           `waitForBeliefSync:${beliefDoc._id}`,
-          READY_TIMEOUT_MS,
+          READY_TIMEOUT_MS
         );
       }
 
@@ -869,14 +869,14 @@ for (const sessionCase of sessionCases) {
 
           await beliefsCol.updateOne(
             { _id: beliefId },
-            { $addToSet: { aliases: { $each: normalized } } },
+            { $addToSet: { aliases: { $each: normalized } } }
           );
         }
 
         const probeAlias =
           addAliases && addAliases.length > 0
             ? addAliases[0].trim().toLowerCase()
-            : setCanonicalName ?? beliefId;
+            : (setCanonicalName ?? beliefId);
 
         await retryUntilReady(
           async () => {
@@ -890,23 +890,23 @@ for (const sessionCase of sessionCases) {
                         {
                           text: {
                             query: probeAlias,
-                            path: "aliases",
-                          },
-                        },
-                      ],
-                    },
-                  },
+                            path: "aliases"
+                          }
+                        }
+                      ]
+                    }
+                  }
                 },
-                { $limit: 1 },
+                { $limit: 1 }
               ])
               .toArray();
             if (results.length === 0)
               throw new Error(
-                `Belief ${beliefId} alias "${probeAlias}" not yet indexed`,
+                `Belief ${beliefId} alias "${probeAlias}" not yet indexed`
               );
           },
           `waitForBeliefUpdateSync:${beliefId}`,
-          READY_TIMEOUT_MS,
+          READY_TIMEOUT_MS
         );
       }
     }
