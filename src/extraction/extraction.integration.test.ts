@@ -129,7 +129,9 @@ test.before(async (t) => {
 });
 
 test.after.always(async (t) => {
-  await t.context.env.teardown();
+  if (t.context.env) {
+    await t.context.env.teardown();
+  }
 });
 
 test.beforeEach(async (t) => {

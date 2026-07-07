@@ -299,6 +299,8 @@ export async function setupIntegrationEnv(): Promise<IntegrationEnv> {
 
   await cols.config.deleteMany({});
 
+  await sharedDb.createCollection("beliefs").catch(() => {});
+
   await ensureIndexes(cols);
   if (!searchIndexesReady) {
     await retryUntilReady(
