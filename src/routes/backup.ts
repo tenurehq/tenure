@@ -146,7 +146,6 @@ export function registerBackupRoutes(
           (b) => b.superseded_by === null && b.resolved_at === null
         ).length,
         sessions: payload.sessions.length,
-        compaction_entries: payload.compaction_log.length,
         has_persona: payload.persona_cache !== null,
         has_config: payload.runtime_config !== null
       }

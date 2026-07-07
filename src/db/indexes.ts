@@ -141,39 +141,28 @@ const SEARCH_INDEXES: SearchIndexMeta[] = [
         }
       }
     }
-  },
-  {
-    name: "turns_search",
-    collectionName: "turns",
-    version: 1,
-    definition: {
-      analyzer: "lucene.standard",
-      mappings: {
-        dynamic: false,
-        fields: {
-          userId: { type: "token" },
-          scope: { type: "token" },
-          sessionId: { type: "token" },
-          userMessage: { type: "string", analyzer: "lucene.standard" },
-          assistantMessage: { type: "string", analyzer: "lucene.standard" }
-        }
-      }
-    }
   }
 ];
 
 export async function ensureIndexes(cols: Collections): Promise<void> {
-  await cols.turns.createIndexes([
-    { key: { sessionId: 1, turnIndex: 1 }, unique: true },
-    { key: { userId: 1, createdAt: -1 } },
-    { key: { userId: 1, scope: 1, createdAt: -1 } }
-  ]);
-
   await cols.sessions.createIndexes([{ key: { userId: 1, lastUsedAt: -1 } }]);
+
+  const beliefIndexes = await cols.beliefs.indexes();
+  const existingCanonicalIndex = beliefIndexes.find(
+    (idx) => idx.name === "user_canonical_unique_active"
+  );
+
+  if (
+    existingCanonicalIndex &&
+    JSON.stringify(existingCanonicalIndex.key) !==
+      JSON.stringify({ user_id: 1, canonical_name: 1 })
+  ) {
+    await cols.beliefs.dropIndex("user_canonical_unique_active");
+  }
 
   await cols.beliefs.createIndexes([
     {
-      key: { user_id: 1, team_id: 1, org_id: 1, canonical_name: 1 },
+      key: { user_id: 1, canonical_name: 1 },
       name: "user_canonical_unique_active",
       unique: true,
       partialFilterExpression: {
@@ -199,10 +188,7 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
         resolved_at: null,
         "origin_context.active_file": { $type: "string" }
       }
-    },
-    { key: { org_id: 1, visibility: 1, pinned: -1 } },
-    { key: { team_id: 1, visibility: 1, pinned: -1 } },
-    { key: { user_id: 1, team_id: 1, visibility: 1 } }
+    }
   ]);
 
   await cols.jobs.createIndexes([
@@ -224,32 +210,11 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
     { key: { resolved: 1, occurred_at: -1 } }
   ]);
 
-  await cols.topic_index.createIndexes([
-    { key: { user_id: 1, topic: 1 }, unique: true },
-    { key: { user_id: 1, updated_at: -1 } }
-  ]);
-
   await cols.config.createIndexes([{ key: { key: 1 }, unique: true }]);
 
   await cols.persona_cache.createIndexes([
     { key: { generated_at: -1 } },
     { key: { beliefs_hash: 1 } }
-  ]);
-
-  await cols.compaction_log.createIndex(
-    { user_id: 1, scope: 1, ran_at: -1 },
-    { name: "compaction_log_cooldown" }
-  );
-
-  await cols.contradictions.createIndexes([
-    {
-      key: { user_id: 1, agent_id: 1, scope: 1, status: 1 },
-      name: "contradictions_agent_scope_status"
-    },
-    {
-      key: { user_id: 1, status: 1, detected_at: -1 },
-      name: "contradictions_pending_recent"
-    }
   ]);
 
   await cols.onboarding_drafts.createIndexes([
@@ -260,13 +225,6 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
     { key: { user_id: 1 } }
   ]);
 
-  await cols.db
-    .collection("org_summaries")
-    .createIndexes([
-      { key: { org_id: 1 }, unique: true },
-      { key: { updated_at: -1 } }
-    ]);
-
   await cols.db.collection("belief_suggestions").createIndexes([
     { key: { user_id: 1, status: 1, created_at: -1 } },
     {
@@ -275,26 +233,20 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
     }
   ]);
 
-  await cols.api_tokens.createIndexes([
+  await cols.tokens.createIndexes([
     {
       key: { token_hash: 1 },
       unique: true,
       partialFilterExpression: { revoked_at: null }
     },
+    { key: { user_id: 1, kind: 1, created_at: -1 } },
     { key: { user_id: 1, created_at: -1 } },
-    { key: { token_hash: 1, revoked_at: 1 } }
-  ]);
-
-  await cols.scim_users.createIndexes([
-    { key: { userName: 1 }, unique: true },
-    { key: { externalId: 1 }, sparse: true }
-  ]);
-
-  const scimGroupsCol = cols.db.collection("scim_groups");
-  await scimGroupsCol.createIndexes([
-    { key: { displayName: 1 }, unique: true },
-    { key: { externalId: 1 }, sparse: true },
-    { key: { "members.value": 1 }, name: "scim_groups_member_lookup" }
+    { key: { token_hash: 1, revoked_at: 1 } },
+    {
+      key: { user_id: 1, kind: 1 },
+      unique: true,
+      partialFilterExpression: { kind: "root", revoked_at: null }
+    }
   ]);
 
   await cols.injection_audit.createIndexes([
@@ -327,24 +279,12 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
     }
   ]);
 
-  await cols.db
-    .collection("org_summary_cache")
-    .createIndexes([
-      { key: { generated_at: -1 } },
-      { key: { beliefs_hash: 1 } }
-    ]);
-
   await cols.file_meta.createIndexes([
     {
       key: { user_id: 1, project_scope: 1, last_edited_at: -1 },
       name: "file_meta_project_edits",
       partialFilterExpression: { last_edited_at: { $exists: true } }
     }
-  ]);
-
-  await cols.team_memberships.createIndexes([
-    { key: { user_id: 1 }, unique: true },
-    { key: { team_id: 1, org_id: 1 } }
   ]);
 }
 

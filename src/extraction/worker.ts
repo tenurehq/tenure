@@ -4,13 +4,8 @@ import type { ExtractionJob } from "../types/job.js";
 import { BeliefWriter } from "./beliefWriter.js";
 import { BeliefMerger, MergeAction } from "./merger.js";
 import { safeParse, attemptRepair } from "./validator.js";
-import {
-  type ExtractionResult,
-  type NewBelief,
-  type StyleSignal
-} from "./types.js";
+import { type ExtractionResult, type NewBelief } from "./types.js";
 import { BeliefsReader } from "../context/beliefsReader.js";
-import { randomUUID } from "node:crypto";
 
 export interface ExtractionWorkerDeps {
   db: Db;
@@ -29,7 +24,6 @@ export class ExtractionWorker implements ExtractionWorkerLike {
   private readonly config: Collection;
   private readonly merger: BeliefMerger;
   private readonly writer: BeliefWriter;
-  private readonly styleSignals: Collection;
   private readonly reader: BeliefsReader;
   private readonly personaSummary: {
     regenerate(userId: string): Promise<void>;
@@ -39,7 +33,6 @@ export class ExtractionWorker implements ExtractionWorkerLike {
     this.db = deps.db;
     this.jobs = deps.db.collection<ExtractionJob>("jobs");
     this.config = deps.db.collection("config");
-    this.styleSignals = deps.db.collection("style_signals");
     this.reader = new BeliefsReader(deps.beliefs);
     this.writer = new BeliefWriter(deps.beliefs);
     this.merger = new BeliefMerger(this.writer, this.reader);
@@ -152,6 +145,7 @@ export class ExtractionWorker implements ExtractionWorkerLike {
       }
       return [];
     }
+
     const enforced =
       payload.extraction_mode === "ide" &&
       payload.workspace_context?.project_scope
@@ -163,20 +157,6 @@ export class ExtractionWorker implements ExtractionWorkerLike {
         { _id: job._id },
         { $set: { "payload.skipped_beliefs": skippedBeliefs } }
       );
-    }
-
-    const mode = await this.getMemoryMode();
-
-    if (mode === "inject_only") {
-      return [];
-    }
-
-    if (mode === "curated") {
-      return this.persistSuggestions(job, enforced);
-    }
-
-    if (mode === "reflective") {
-      return [];
     }
 
     if (enforced.orientation_tax && job.turn_id) {
@@ -247,9 +227,7 @@ export class ExtractionWorker implements ExtractionWorkerLike {
       sessionId: job.session_id,
       turnId: job.turn_id ?? "",
       sourceModel: job.payload?.source_model ?? "unknown",
-      agentId: (job as any).agent_id ?? null,
-      teamId: (job as any).team_id ?? undefined,
-      orgId: (job as any).org_id ?? undefined,
+      agentId: job.agent_id ?? null,
       result,
       originContext: wc
         ? {
@@ -260,55 +238,9 @@ export class ExtractionWorker implements ExtractionWorkerLike {
         : null
     });
 
-    if (report.styleSignalsDeferred.length > 0) {
-      await this.persistStyleSignals(
-        job.user_id,
-        job.session_id,
-        report.styleSignalsDeferred
-      );
-    }
-
     return report.decisions
       .filter((d) => d.action === MergeAction.INSERTED && d.beliefId)
       .map((d) => d.beliefId!);
-  }
-
-  /**
-   * Upserts style signals into a dedicated collection using an increment
-   * pattern. Each distinct signal surface is keyed by (user_id, signal) so
-   * that repeated observations accumulate rather than overwrite. The
-   * observation_count can later be used to graduate a style signal into a
-   * proper belief once sufficient evidence has accumulated.
-   */
-  private async persistStyleSignals(
-    userId: string,
-    sessionId: string,
-    signals: StyleSignal[]
-  ): Promise<void> {
-    const now = new Date();
-    await Promise.all(
-      signals.map((ss) =>
-        this.styleSignals.updateOne(
-          { user_id: userId, observation: ss.observation },
-          {
-            $inc: { observation_count: 1 },
-            $set: {
-              last_seen_at: now,
-              last_session_id: sessionId,
-              pattern_type: ss.pattern_type,
-              confidence: ss.confidence,
-              scope: ss.scope ?? []
-            },
-            $setOnInsert: {
-              user_id: userId,
-              observation: ss.observation,
-              created_at: now
-            }
-          },
-          { upsert: true }
-        )
-      )
-    );
   }
 
   private async markOnboardingComplete(): Promise<void> {
@@ -324,47 +256,6 @@ export class ExtractionWorker implements ExtractionWorkerLike {
       },
       { upsert: true }
     );
-  }
-
-  private async getMemoryMode(): Promise<
-    "inject_only" | "curated" | "autonomous" | "reflective"
-  > {
-    const doc = await this.config.findOne({ key: "memory_mode" });
-    const val = doc?.value ?? "autonomous";
-    if (
-      val === "inject_only" ||
-      val === "curated" ||
-      val === "autonomous" ||
-      val === "reflective"
-    ) {
-      return val;
-    }
-    return "autonomous";
-  }
-
-  private async persistSuggestions(
-    job: ExtractionJob,
-    result: ExtractionResult
-  ): Promise<string[]> {
-    const suggestions = this.db.collection("belief_suggestions");
-    const ids: string[] = [];
-    const now = new Date();
-
-    for (const nb of result.new_beliefs) {
-      const id = randomUUID();
-      await suggestions.insertOne({
-        _id: id as any,
-        user_id: job.user_id,
-        session_id: job.session_id,
-        turn_id: job.turn_id ?? "",
-        source_model: job.payload?.source_model ?? "unknown",
-        status: "pending",
-        proposed: nb,
-        created_at: now
-      });
-      ids.push(id);
-    }
-    return ids;
   }
 
   /**
@@ -449,19 +340,6 @@ function checkContradictions(result: ExtractionResult): ExtractionResult {
   };
 }
 
-/**
- * Replaces any project:* scope on extracted beliefs with the authoritative
- * resolved project scope from the workspace context. This runs in code after
- * the model has emitted its sidecar so the model cannot override it.
- *
- * Rules:
- * - user:universal is always preserved as-is
- * - domain:* scopes are preserved as-is
- * - project:* scopes are replaced with the resolved project scope
- * - beliefs with no scope receive the resolved project scope
- * - beliefs with only domain:* scopes also receive the resolved project scope
- * - beliefs with only user:universal keep only user:universal
- */
 function enforceIdeScope(
   result: ExtractionResult,
   resolvedProjectScope: string
@@ -473,23 +351,7 @@ function enforceIdeScope(
         return nb;
       }
 
-      const preserved = nb.scope.filter(
-        (s) => s === "user:universal" || s.startsWith("domain:")
-      );
-
-      const hadProjectScope = nb.scope.some((s) => s.startsWith("project:"));
-      const hadNoScope = nb.scope.length === 0;
-      const hadOnlyDomainScopes =
-        !hadProjectScope &&
-        !hadNoScope &&
-        nb.scope.every((s) => s.startsWith("domain:"));
-
-      if (hadProjectScope || hadNoScope || hadOnlyDomainScopes) {
-        const enforced = [...new Set([...preserved, resolvedProjectScope])];
-        return { ...nb, scope: enforced };
-      }
-
-      return nb;
+      return { ...nb, scope: [resolvedProjectScope] };
     })
   };
 }

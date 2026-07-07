@@ -9,8 +9,6 @@ export type BeliefSubtype = "expertise" | "style" | null;
 
 export type ExpertiseDepth = "learning" | "working" | "deep" | "expert";
 
-export type BeliefVisibility = "org" | "team" | "private";
-
 export type EpistemicStatus =
   | "active"
   | "exploratory"
@@ -60,9 +58,9 @@ export interface BeliefBase {
   origin_context?: OriginContext | null;
   participants?: string[];
   relation_type?: string;
-  team_id?: string | null;
-  visibility?: BeliefVisibility;
-  org_id?: string | null;
+  token_id?: string | null;
+  token_name?: string | null;
+  token_kind?: "client" | "agent" | "root" | null;
 }
 
 export interface Belief extends BeliefBase {
@@ -71,7 +69,6 @@ export interface Belief extends BeliefBase {
   superseded_by: string | null;
   resolved_at: Date | null;
   change_log: ChangeLogEntry[];
-  compaction_note?: string;
 }
 
 export interface BeliefSuggestion extends BeliefBase {

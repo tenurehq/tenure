@@ -2,7 +2,6 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import type { Db } from "mongodb";
 
 import { SessionManager } from "./session/manager.js";
-import { HistoryManager } from "./history/manager.js";
 import { ContextBuilder } from "./context/contextBuilder.js";
 import { ProviderRegistry } from "./providers/registry.js";
 import { ExtractionJobQueue } from "./jobs/queue.js";
@@ -11,7 +10,7 @@ import { registerAdminRoutes, type AdminDeps } from "./routes/admin.js";
 import { registerBeliefsRoutes, type BeliefsDeps } from "./routes/beliefs.js";
 import type { RuntimeConfigStore } from "./config/runtime.js";
 import type { ErrorLogger } from "./errors/logger.js";
-import type { Collections } from "./db/collections.js";
+import type { Collections, TokenDoc } from "./db/collections.js";
 import {
   registerOnboardingRoutes,
   type OnboardingDeps
@@ -19,7 +18,6 @@ import {
 import { registerBeliefsUiRoute } from "./routes/beliefs-ui.js";
 import { registerAdminUiRoute } from "./routes/admin-ui.js";
 import type { PersonaCache } from "./context/personaCache.js";
-import type { BeliefCompactionRunner } from "./jobs/compactionRunner.js";
 import fastifySchedule from "@fastify/schedule";
 import { SimpleIntervalJob, AsyncTask } from "toad-scheduler";
 import type { ExtractionWorker } from "./extraction/worker.js";
@@ -42,46 +40,18 @@ import { startBeliefChangeStream } from "./db/beliefChangeStream.js";
 import { InjectionAuditLogger } from "./audit/injectionAuditLogger.js";
 import { registerAuditRoutes, type AuditDeps } from "./routes/audit.js";
 import { registerAuditUiRoute } from "./routes/audit-ui.js";
-import { createHash, randomBytes } from "node:crypto";
-import {
-  getGroupsForUser,
-  getScimUserIdByUserName,
-  registerScimRoutes,
-  type ScimDeps
-} from "./routes/scim.js";
-import { SpanStatusCode, trace } from "@opentelemetry/api";
-import { registerAdminSetupRoute } from "./routes/admin-setup.js";
+import { randomBytes } from "node:crypto";
 import helmet from "@fastify/helmet";
-import type { TeamResolutionStrategy } from "./config/teamResolution.js";
-import type { OrgSummaryLookup } from "./context/orgSummary.js";
-import { registerTeamAdminUiRoute } from "./routes/team-admin-ui.js";
 import type { ProjectResumeService } from "./context/projectResume.js";
 import { registerResumeRoutes, type ResumeRouteDeps } from "./routes/resume.js";
+import type { TokenService } from "./auth/tokenService.js";
+import { registerTokenRoutes } from "./routes/tokens.js";
+import type { CredentialVault } from "./config/encryption.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const jobsEnabled = process.env.TENURE_DISABLE_JOBS !== "true";
-const proxyAuthHeader = process.env.OIDC_PROXY_HEADER?.toLowerCase() || "";
-
-const defaultTeamId = process.env.TENURE_DEFAULT_TEAM_ID;
-const defaultOrgId = process.env.TENURE_DEFAULT_ORG_ID;
-
-declare module "fastify" {
-  interface FastifyRequest {
-    tenureUserId: string;
-    tenureAuthMethod: "proxy" | "root" | "pat";
-    tenureTeamId?: string;
-    tenureOrgId?: string;
-  }
-}
-
-const patAllowedPaths = new Set([
-  "/v1/chat/completions",
-  "/v1/messages",
-  "/v1/models",
-  "/v1/ws/beliefs"
-]);
 
 const SAFE_ERROR_PATTERNS = [
   "authentication failed",
@@ -97,30 +67,85 @@ function isSafeToForward(message: string): boolean {
   return SAFE_ERROR_PATTERNS.some((p) => lower.includes(p));
 }
 
+export function getProjectScopes(scopes: string[]): string[] {
+  return scopes.filter((s) => s.startsWith("project:"));
+}
+
+export function tokenAllowsProjectScopes(
+  tokenProjectScopes: string[] | null | undefined,
+  scopes: string[]
+): boolean {
+  if (tokenProjectScopes == null) return true;
+  const requestedProjects = getProjectScopes(scopes);
+  if (requestedProjects.length === 0) return true;
+  return requestedProjects.every((scope) => tokenProjectScopes.includes(scope));
+}
+
+export function assertTokenProjectScopes(
+  req: FastifyRequest,
+  scopes: string[]
+): { ok: true } | { ok: false; message: string } {
+  const allowed = req.tenureTokenProjectScopes;
+  if (tokenAllowsProjectScopes(allowed, scopes)) {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    message: "Token is not authorized for one or more requested project scopes"
+  };
+}
+
+function requiresAuth(pathOnly: string): boolean {
+  return (
+    pathOnly.startsWith("/v1/") ||
+    (pathOnly.startsWith("/admin/") && pathOnly !== "/admin/")
+  );
+}
+
+function isChatRoute(pathOnly: string): boolean {
+  return pathOnly === "/v1/chat/completions" || pathOnly === "/v1/messages";
+}
+
+function isBeliefsRoute(pathOnly: string): boolean {
+  return pathOnly.startsWith("/v1/beliefs") || pathOnly === "/v1/ws/beliefs";
+}
+
+function isAdminRoute(pathOnly: string): boolean {
+  return pathOnly.startsWith("/admin/");
+}
+
+function applyTokenRequestContext(req: FastifyRequest, doc: TokenDoc): void {
+  req.tenureUserId = doc.user_id;
+  req.tenureAuthMethod = "token";
+  req.tenureTokenId = doc._id;
+  req.tenureTokenName = doc.name;
+  req.tenureTokenProjectScopes = doc.project_scopes;
+  req.tenureTokenKind = doc.kind;
+  req.tenureTokenCapabilities = doc.capabilities;
+  req.tenureTokenExtractionEnabled = doc.capabilities.includes("extraction");
+  req.tenureTokenInjectionEnabled = doc.capabilities.includes("injection");
+}
+
 export interface ServerDeps {
   db: Db;
   cols: Collections;
   sessions: SessionManager;
-  history: HistoryManager;
   context: ContextBuilder;
   providers: ProviderRegistry;
   jobs: ExtractionJobQueue;
   runtimeStore: RuntimeConfigStore;
   errorLogger: ErrorLogger;
   persona: PersonaCache;
-  apiToken: string;
   userId: string;
-  compactionRunner: BeliefCompactionRunner;
   extractionWorker: ExtractionWorker;
   personaSummary: PersonaSummaryService;
-  orgSummaryService: OrgSummaryLookup;
   projectResume: ProjectResumeService;
   workspaceState: WorkspaceStateCache;
+  tokenService: TokenService;
+  vault: CredentialVault;
 }
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
-  const tracer = trace.getTracer("tenure");
-
   const app = Fastify({ logger: { level: "info" } });
 
   app.addHook("onRequest", async (_req, reply) => {
@@ -144,116 +169,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     crossOriginEmbedderPolicy: false
   });
 
-  let liveToken = deps.apiToken;
-
   app.register(fastifyStatic, { root: path.join(__dirname, "static") });
-
-  async function resolveMembership(
-    req: FastifyRequest,
-    userId: string
-  ): Promise<{ teamId: string; orgId: string } | null> {
-    if (process.env.TENURE_MODE !== "teams") return null;
-
-    const cfg = (await deps.runtimeStore.load()) as any;
-
-    const strategy = (cfg.team_resolution_strategy ??
-      "static") as TeamResolutionStrategy;
-
-    const resolvedDefaultTeam = cfg.default_team_id ?? defaultTeamId;
-    const resolvedDefaultOrg = cfg.default_org_id ?? defaultOrgId;
-
-    switch (strategy) {
-      case "disabled":
-        return null;
-
-      case "static": {
-        if (!resolvedDefaultTeam || !resolvedDefaultOrg) return null;
-        return { teamId: resolvedDefaultTeam, orgId: resolvedDefaultOrg };
-      }
-
-      case "header": {
-        const teamHeader = (cfg.team_header_name ?? "x-team-id").toLowerCase();
-        const orgHeader = (cfg.org_header_name ?? "x-org-id").toLowerCase();
-        const teamId = req.headers[teamHeader] as string | undefined;
-        const orgId = req.headers[orgHeader] as string | undefined;
-        if (teamId && orgId) return { teamId, orgId };
-        if (resolvedDefaultTeam && resolvedDefaultOrg)
-          return { teamId: resolvedDefaultTeam, orgId: resolvedDefaultOrg };
-        return null;
-      }
-
-      case "manual": {
-        const doc = await deps.cols.team_memberships.findOne({
-          user_id: userId
-        });
-        if (doc) return { teamId: doc.team_id, orgId: doc.org_id };
-        if (resolvedDefaultTeam && resolvedDefaultOrg)
-          return { teamId: resolvedDefaultTeam, orgId: resolvedDefaultOrg };
-        return null;
-      }
-
-      case "scim_group": {
-        const mappings: Array<{
-          groupId: string;
-          teamId: string;
-          orgId: string;
-        }> = cfg.scim_group_mappings ?? [];
-        if (!mappings.length) {
-          if (resolvedDefaultTeam && resolvedDefaultOrg)
-            return { teamId: resolvedDefaultTeam, orgId: resolvedDefaultOrg };
-          return null;
-        }
-
-        const scimUserId = await getScimUserIdByUserName(deps.db, userId);
-        if (!scimUserId) {
-          if (resolvedDefaultTeam && resolvedDefaultOrg)
-            return { teamId: resolvedDefaultTeam, orgId: resolvedDefaultOrg };
-          return null;
-        }
-
-        const groupIds = await getGroupsForUser(deps.db, scimUserId);
-        for (const mapping of mappings) {
-          if (groupIds.includes(mapping.groupId)) {
-            return { teamId: mapping.teamId, orgId: mapping.orgId };
-          }
-        }
-
-        if (resolvedDefaultTeam && resolvedDefaultOrg)
-          return { teamId: resolvedDefaultTeam, orgId: resolvedDefaultOrg };
-        return null;
-      }
-    }
-  }
 
   app.addHook("onRequest", async (req, reply) => {
     const pathOnly = req.url.split("?")[0];
 
-    if (proxyAuthHeader) {
-      const userId = req.headers[proxyAuthHeader] as string | undefined;
-      if (userId) {
-        req.tenureUserId = userId;
-        req.tenureAuthMethod = "proxy";
-
-        const span = trace.getActiveSpan();
-        if (span) span.setAttribute("user.id", userId);
-
-        const membership = await resolveMembership(req, userId);
-        if (membership) {
-          req.tenureTeamId = membership.teamId;
-          req.tenureOrgId = membership.orgId;
-        }
-
-        return;
-      }
-    }
-
-    const requiresAuth =
-      pathOnly.startsWith("/v1/") ||
-      (pathOnly.startsWith("/admin/") && pathOnly !== "/admin/");
-
-    if (!requiresAuth) return;
-
-    if (req.tenureAuthMethod === "proxy") return;
+    if (!requiresAuth(pathOnly)) return;
 
     const auth = req.headers.authorization ?? "";
     const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
@@ -261,79 +182,92 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       return reply.code(401).send({ error: { message: "unauthorized" } });
     }
 
-    if (bearer === liveToken) {
-      if (process.env.TENURE_MODE === "teams") {
-        const isBootstrapPath =
-          pathOnly === "/admin/config" ||
-          pathOnly === "/admin/providers" ||
-          pathOnly === "/admin/setup" ||
-          pathOnly.startsWith("/admin/providers/") ||
-          pathOnly === "/v1/models" ||
-          pathOnly === "/v1/onboarding/questions" ||
-          pathOnly === "/v1/onboarding/skip" ||
-          pathOnly === "/v1/onboarding/validate-model" ||
-          pathOnly === "/v1/onboarding/complete" ||
-          pathOnly === "/v1/onboarding/commit" ||
-          pathOnly.startsWith("/v1/onboarding/probe-models/");
+    const tokenResult = await deps.tokenService.validate(bearer);
 
-        if (!isBootstrapPath) {
+    if (!tokenResult) {
+      return reply.code(401).send({ error: { message: "unauthorized" } });
+    }
+
+    applyTokenRequestContext(req, tokenResult.doc as TokenDoc);
+    await deps.tokenService.touch(tokenResult.doc._id);
+  });
+
+  app.addHook("preHandler", async (req, reply) => {
+    const pathOnly = req.url.split("?")[0];
+    const capabilities = req.tenureTokenCapabilities ?? [];
+    const tokenKind = req.tenureTokenKind;
+
+    if (isAdminRoute(pathOnly)) {
+      if (tokenKind !== "root") {
+        return reply.code(403).send({
+          error: {
+            message: "Only the root token can access admin endpoints"
+          }
+        });
+      }
+      return;
+    }
+
+    if (tokenKind === "root") {
+      return;
+    }
+
+    if (isChatRoute(pathOnly)) {
+      if (!capabilities.includes("chat")) {
+        return reply.code(403).send({
+          error: {
+            message: 'This endpoint requires capability "chat"',
+            required_capability: "chat",
+            token_capabilities: capabilities
+          }
+        });
+      }
+      return;
+    }
+
+    if (isBeliefsRoute(pathOnly)) {
+      const isWrite =
+        req.method === "POST" ||
+        req.method === "PUT" ||
+        req.method === "PATCH" ||
+        req.method === "DELETE";
+
+      if (isWrite) {
+        if (tokenKind === "agent") {
           return reply.code(403).send({
             error: {
               message:
-                "Root token cannot access this endpoint in team mode. Use SSO."
+                "Agent tokens cannot modify beliefs. Use a client token for manual belief management.",
+              token_kind: tokenKind,
+              token_capabilities: capabilities
+            }
+          });
+        }
+
+        if (!capabilities.includes("beliefs:write")) {
+          return reply.code(403).send({
+            error: {
+              message: 'This endpoint requires capability "beliefs:write"',
+              required_capability: "beliefs:write",
+              token_capabilities: capabilities
+            }
+          });
+        }
+      } else {
+        if (!capabilities.includes("beliefs:read")) {
+          return reply.code(403).send({
+            error: {
+              message: 'This endpoint requires capability "beliefs:read"',
+              required_capability: "beliefs:read",
+              token_capabilities: capabilities
             }
           });
         }
       }
-
-      req.tenureUserId = deps.userId;
-      req.tenureAuthMethod = "root";
-
-      const span = trace.getActiveSpan();
-      if (span) span.setAttribute("user.id", deps.userId);
-
-      return;
     }
-
-    const hash = createHash("sha256").update(bearer).digest("hex");
-    const pat = await deps.cols.api_tokens.findOne({
-      token_hash: hash,
-      revoked_at: null
-    });
-
-    if (pat) {
-      if (!patAllowedPaths.has(pathOnly)) {
-        return reply.code(403).send({ error: { message: "forbidden" } });
-      }
-      req.tenureUserId = pat.user_id;
-      req.tenureAuthMethod = "pat";
-
-      const span = trace.getActiveSpan();
-      if (span) span.setAttribute("user.id", pat.user_id);
-
-      const membership = await resolveMembership(req, pat.user_id);
-      if (membership) {
-        req.tenureTeamId = membership.teamId;
-        req.tenureOrgId = membership.orgId;
-      }
-
-      await deps.cols.api_tokens
-        .updateOne({ _id: pat._id }, { $set: { last_used_at: new Date() } })
-        .catch(() => {});
-      return;
-    }
-
-    return reply.code(401).send({ error: { message: "unauthorized" } });
   });
 
   app.setErrorHandler((error, req, reply) => {
-    const span = trace.getActiveSpan();
-    if (span) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      span.recordException(err);
-      span.setStatus({ code: SpanStatusCode.ERROR, message: err.message });
-    }
-
     req.log.error({ err: error, method: req.method, url: req.url });
 
     const fastifyError = error as { statusCode?: number; message: string };
@@ -407,11 +341,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     runtimeStore: deps.runtimeStore,
     providers: deps.providers,
     db: deps.db,
-    updateToken: (t: string) => {
-      liveToken = t;
-    },
-    compactionRunner: deps.compactionRunner
-  };
+    vault: deps.vault,
+    tokenService: deps.tokenService
+  } as AdminDeps;
   registerAdminRoutes(app, adminDeps);
 
   const beliefsDeps: BeliefsDeps = {
@@ -436,17 +368,6 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   registerBeliefsUiRoute(app);
   registerAdminUiRoute(app);
-  registerAdminSetupRoute(app, {
-    runtimeStore: deps.runtimeStore,
-    db: deps.db,
-    providers: deps.providers
-  });
-  registerTeamAdminUiRoute(app, {
-    runtimeStore: deps.runtimeStore,
-    providers: deps.providers,
-    db: deps.db,
-    cols: deps.cols
-  });
   registerAuditUiRoute(app);
 
   const backupDeps: BackupDeps = {
@@ -479,15 +400,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   };
   registerResumeRoutes(app, resumeDeps);
 
-  const scimDeps: ScimDeps = {
-    db: deps.db,
-    cols: deps.cols,
-    getToken: async () => {
-      const cfg = await deps.runtimeStore.load();
-      return (cfg as any).scim_token ?? process.env.TENURE_SCIM_TOKEN;
-    }
-  };
-  registerScimRoutes(app, scimDeps);
+  registerTokenRoutes(app, { tokenService: deps.tokenService });
 
   await app.register(fastifyWebsocket);
 
@@ -503,96 +416,6 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   if (jobsEnabled) {
     app.addHook("onReady", async () => {
-      const task = new AsyncTask(
-        "belief-compaction",
-        async () => {
-          await tracer.startActiveSpan("belief-compaction", async (span) => {
-            try {
-              let orgSummary: string | null = null;
-              if (
-                process.env.TENURE_MODE === "teams" &&
-                deps.orgSummaryService
-              ) {
-                const staticOrgId = process.env.TENURE_DEFAULT_ORG_ID;
-                if (staticOrgId) {
-                  orgSummary =
-                    (
-                      await deps.orgSummaryService
-                        .get(staticOrgId)
-                        .catch(() => null)
-                    )?.summary ?? null;
-                }
-              }
-
-              const activeUserIds = await deps.db
-                .collection<{ userId: string }>("sessions")
-                .distinct("userId", {
-                  updated_at: {
-                    $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-                  }
-                });
-
-              const targets = activeUserIds.length
-                ? activeUserIds
-                : [deps.userId];
-
-              for (const uid of targets) {
-                try {
-                  await deps.compactionRunner.run(
-                    uid,
-                    orgSummary ? { orgSummary } : undefined
-                  );
-                } catch (err) {
-                  await deps.errorLogger
-                    .log({
-                      severity: "warning",
-                      stage: "belief_extraction",
-                      message: (err as Error).message,
-                      error: err as Error,
-                      user_id: uid,
-                      actor_id: deps.userId
-                    })
-                    .catch(() => {});
-                }
-              }
-            } catch (err) {
-              const e = err instanceof Error ? err : new Error(String(err));
-              span.recordException(e);
-              span.setStatus({
-                code: SpanStatusCode.ERROR,
-                message: e.message
-              });
-              throw e;
-            } finally {
-              span.end();
-            }
-          });
-        },
-        (err: Error) => {
-          deps.errorLogger
-            .log({
-              severity: "warning",
-              stage: "belief_extraction",
-              message: err.message,
-              error: err,
-              user_id: deps.userId,
-              actor_id: deps.userId
-            })
-            .catch(() => {});
-        }
-      );
-
-      app.scheduler.addSimpleIntervalJob(
-        new SimpleIntervalJob({ minutes: 30, runImmediately: false }, task, {
-          id: "belief-compaction",
-          preventOverrun: true
-        })
-      );
-    });
-  }
-
-  if (jobsEnabled) {
-    app.addHook("onReady", async () => {
       let consecutiveEmpty = 0;
       const BASE_INTERVAL_MS = 60_000;
       const MAX_INTERVAL_MS = 5 * 60_000;
@@ -604,52 +427,42 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         new AsyncTask(
           "extraction-sweep",
           async () => {
-            await tracer.startActiveSpan("extraction-sweep", async (span) => {
-              try {
-                const processed = await deps.extractionWorker.sweep(20);
+            try {
+              const processed = await deps.extractionWorker.sweep(20);
 
-                if (processed === 0) {
-                  consecutiveEmpty++;
-                  if (consecutiveEmpty >= BACKOFF_AFTER) {
-                    const newInterval = Math.min(
-                      BASE_INTERVAL_MS *
-                        Math.pow(2, consecutiveEmpty - BACKOFF_AFTER),
-                      MAX_INTERVAL_MS
-                    );
-                    if (currentJob)
-                      app.scheduler.removeById("extraction-sweep");
-                    currentJob = new SimpleIntervalJob(
-                      { milliseconds: newInterval, runImmediately: false },
-                      createSweepTask(),
-                      { id: "extraction-sweep", preventOverrun: true }
-                    );
-                    app.scheduler.addSimpleIntervalJob(currentJob);
-                  }
-                } else {
-                  if (consecutiveEmpty >= BACKOFF_AFTER) {
-                    if (currentJob)
-                      app.scheduler.removeById("extraction-sweep");
-                    currentJob = new SimpleIntervalJob(
-                      { milliseconds: BASE_INTERVAL_MS, runImmediately: false },
-                      createSweepTask(),
-                      { id: "extraction-sweep", preventOverrun: true }
-                    );
-                    app.scheduler.addSimpleIntervalJob(currentJob);
-                  }
-                  consecutiveEmpty = 0;
+              if (processed === 0) {
+                consecutiveEmpty++;
+                if (consecutiveEmpty >= BACKOFF_AFTER) {
+                  const newInterval = Math.min(
+                    BASE_INTERVAL_MS *
+                      Math.pow(2, consecutiveEmpty - BACKOFF_AFTER),
+                    MAX_INTERVAL_MS
+                  );
+                  if (currentJob) app.scheduler.removeById("extraction-sweep");
+                  currentJob = new SimpleIntervalJob(
+                    { milliseconds: newInterval, runImmediately: false },
+                    createSweepTask(),
+                    { id: "extraction-sweep", preventOverrun: true }
+                  );
+                  app.scheduler.addSimpleIntervalJob(currentJob);
                 }
-              } catch (err) {
-                const e = err instanceof Error ? err : new Error(String(err));
-                span.recordException(e);
-                span.setStatus({
-                  code: SpanStatusCode.ERROR,
-                  message: e.message
-                });
-                throw e;
-              } finally {
-                span.end();
+              } else {
+                if (consecutiveEmpty >= BACKOFF_AFTER) {
+                  if (currentJob) app.scheduler.removeById("extraction-sweep");
+                  currentJob = new SimpleIntervalJob(
+                    { milliseconds: BASE_INTERVAL_MS, runImmediately: false },
+                    createSweepTask(),
+                    { id: "extraction-sweep", preventOverrun: true }
+                  );
+                  app.scheduler.addSimpleIntervalJob(currentJob);
+                }
+                consecutiveEmpty = 0;
               }
-            });
+            } catch (err) {
+              const e = err instanceof Error ? err : new Error(String(err));
+              throw e;
+            } finally {
+            }
           },
           (err: Error) => {
             deps.errorLogger

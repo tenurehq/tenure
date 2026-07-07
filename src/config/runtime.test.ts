@@ -46,7 +46,6 @@ function makeCollections(overrides: Partial<Collections> = {}): Collections {
     errors: null as any,
     topic_index: null as any,
     persona_cache: null as any,
-    compaction_log: null as any,
     ...overrides
   };
 }
@@ -59,7 +58,6 @@ test("load returns defaults when collection is empty", async (t) => {
   t.is(cfg.openai_api_key, null);
   t.is(cfg.anthropic_api_key, null);
   t.is(cfg.always_on_token_target, 400);
-  t.is(cfg.managed_history_token_cap, 120000);
   t.true(cfg.buffered_mode);
   t.is(cfg.error_retention_days, 30);
   t.is(cfg.openai_base_url, null);
@@ -183,7 +181,6 @@ test("load merges multiple stored keys with defaults", async (t) => {
   t.is(cfg.default_provider, "bedrock");
   t.is(cfg.always_on_token_target, 200);
   t.is(cfg.openai_api_key, "sk-key");
-  t.is(cfg.managed_history_token_cap, 120000);
   t.is(cfg.anthropic_api_key, null);
 });
 

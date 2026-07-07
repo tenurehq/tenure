@@ -3,7 +3,7 @@ export interface ImportExtractionOptions {
 }
 
 function buildImportScopeInstruction(
-  declaredScope: string[] | undefined,
+  declaredScope: string[] | undefined
 ): string {
   if (declaredScope?.length) {
     const scopeStr = declaredScope.join(", ");
@@ -14,7 +14,7 @@ function buildImportScopeInstruction(
 }
 
 export function buildImportExtractionSystemPrompt(
-  opts: ImportExtractionOptions = {},
+  opts: ImportExtractionOptions = {}
 ): string {
   const scopeInstruction = buildImportScopeInstruction(opts.declaredScope);
 
@@ -45,7 +45,6 @@ Do not write anything before or after the JSON. Do not use markdown code blocks.
   "possible_alias_candidates": [],
   "resolved_open_questions": [],
   "new_open_questions": [],
-  "style_signals": []
 }
 
 TYPES (use exactly one):
@@ -95,7 +94,7 @@ Extraction rules:
 
 export function buildImportExtractionPrompt(
   text: string,
-  sourceLabel: string,
+  sourceLabel: string
 ): string {
   return (
     `Extract beliefs from this document (source: "${sourceLabel}").\n\n` +
@@ -142,7 +141,6 @@ Do not write anything before or after the JSON. Do not use markdown code blocks.
   "possible_alias_candidates": [],
   "resolved_open_questions": [],
   "new_open_questions": [],
-  "style_signals": []
 }
 
 TYPES (use exactly one):

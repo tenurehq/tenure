@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Collection } from "mongodb";
 import type {
   InjectionAuditRecord,
-  BeliefSnapshot,
+  BeliefSnapshot
 } from "../types/injectionAudit.js";
 import type { Belief } from "../types/belief.js";
 import type { BuiltContext } from "../context/contextBuilder.js";
@@ -18,6 +18,9 @@ export class InjectionAuditLogger {
     expandedQuery: string;
     scope: string[];
     agentId: string | null;
+    tokenId?: string | null;
+    tokenName?: string | null;
+    tokenKind?: "client" | "agent" | "root" | null;
     injected: boolean;
     beliefCtx: BuiltContext;
   }): Promise<void> {
@@ -29,8 +32,11 @@ export class InjectionAuditLogger {
       expandedQuery,
       scope,
       agentId,
+      tokenId,
+      tokenName,
+      tokenKind,
       injected,
-      beliefCtx,
+      beliefCtx
     } = params;
 
     const pinnedSnapshots = beliefCtx.rawPinnedFacts.map(snapshotBelief);
@@ -53,14 +59,17 @@ export class InjectionAuditLogger {
       expanded_query: expandedQuery.trim().slice(0, 2000),
       scope,
       agent_id: agentId,
+      token_id: tokenId ?? null,
+      token_name: tokenName ?? null,
+      token_kind: tokenKind ?? null,
       injected,
       injected_beliefs: {
         pinned_facts: pinnedSnapshots,
         relevant_beliefs: relevantSnapshots,
-        open_questions: questionSnapshots,
+        open_questions: questionSnapshots
       },
       belief_count: totalCount,
-      created_at: new Date(),
+      created_at: new Date()
     };
 
     await this.col.insertOne(record);
@@ -79,6 +88,6 @@ function snapshotBelief(b: Belief): BeliefSnapshot {
     scope: b.scope,
     epistemic_status: b.epistemic_status,
     confidence: b.confidence,
-    pinned: b.pinned,
+    pinned: b.pinned
   };
 }

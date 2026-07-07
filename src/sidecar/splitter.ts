@@ -128,7 +128,6 @@ export interface SidecarPayload {
   entity_updates?: unknown[];
   resolved_open_questions?: unknown[];
   new_open_questions?: unknown[];
-  style_signals?: unknown[];
   [key: string]: unknown;
 }
 

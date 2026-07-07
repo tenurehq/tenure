@@ -35,8 +35,7 @@ test.afterEach(async () => {
   await Promise.all([
     db.collection<ExtractionJob>("jobs").deleteMany({}),
     db.collection("beliefs").deleteMany({}),
-    db.collection("config").deleteMany({}),
-    db.collection("style_signals").deleteMany({}),
+    db.collection("config").deleteMany({})
   ]);
 });
 
@@ -44,7 +43,7 @@ function makeWorker() {
   return new ExtractionWorker({
     db,
     beliefs: db.collection("beliefs"),
-    personaSummary: { regenerate: sinon.stub().resolves() },
+    personaSummary: { regenerate: sinon.stub().resolves() }
   });
 }
 
@@ -54,7 +53,7 @@ function makeSidecar(overrides: Record<string, unknown> = {}): string {
     new_beliefs: [],
     belief_updates: [],
     new_open_questions: [],
-    ...overrides,
+    ...overrides
   });
 }
 
@@ -68,7 +67,7 @@ function makeNewBelief(overrides: Record<string, unknown> = {}) {
     confidence: 0.8,
     aliases: [],
     epistemic_status: "active",
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -93,9 +92,9 @@ function makeJob(overrides: Partial<ExtractionJob> = {}): ExtractionJob {
       scope: ["global"],
       parse_status: "parsed" as const,
       sidecar: makeSidecar(),
-      source_model: "anthropic:claude-haiku",
+      source_model: "anthropic:claude-haiku"
     },
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -114,7 +113,7 @@ function makeSeededBelief(canonicalName: string): Belief {
       session_id: SESSION_ID,
       turn_id: "seed-turn",
       extracted_at: now,
-      source_model: "test",
+      source_model: "test"
     },
     epistemic_status: "active",
     confidence: 0.8,
@@ -127,7 +126,7 @@ function makeSeededBelief(canonicalName: string): Belief {
     created_at: now,
     updated_at: now,
     change_log: [],
-    subtype: null,
+    subtype: null
   };
 }
 
@@ -150,7 +149,7 @@ test("sweep: respects limit — processes N jobs and leaves the rest pending", a
     await db
       .collection<ExtractionJob>("jobs")
       .countDocuments({ status: "pending" }),
-    1,
+    1
   );
 });
 
@@ -167,7 +166,7 @@ test("sweep: skips jobs that are not in pending status", async (t) => {
     .insertMany([
       makeJob({ status: "running" }),
       makeJob({ status: "done" }),
-      makeJob({ status: "failed" }),
+      makeJob({ status: "failed" })
     ]);
   t.is(await makeWorker().sweep(), 0);
 });
@@ -235,8 +234,8 @@ test("extract: completes with empty result_belief_ids when parse_status is missi
       scope: ["global"],
       parse_status: "missing",
       source_model: "anthropic:claude",
-      sidecar: "",
-    },
+      sidecar: ""
+    }
   });
   await db.collection<ExtractionJob>("jobs").insertOne(job);
 
@@ -257,8 +256,8 @@ test("extract: completes with empty result_belief_ids when sidecar field is abse
       scope: ["global"],
       parse_status: "parsed",
       source_model: "anthropic:claude",
-      sidecar: null,
-    },
+      sidecar: null
+    }
   });
   await db.collection<ExtractionJob>("jobs").insertOne(job);
 
@@ -280,8 +279,8 @@ test("extract: repairs sidecar with needs_repair status and inserts beliefs", as
       scope: ["global"],
       parse_status: "needs_repair",
       sidecar: `malformed prefix ${embedded} trailing junk`,
-      source_model: "anthropic:claude",
-    },
+      source_model: "anthropic:claude"
+    }
   });
   await db.collection<ExtractionJob>("jobs").insertOne(job);
 
@@ -302,8 +301,8 @@ test("extract: completes with empty result when needs_repair sidecar has no reco
       scope: ["global"],
       parse_status: "needs_repair",
       sidecar: "no curly brackets here at all",
-      source_model: "anthropic:claude",
-    },
+      source_model: "anthropic:claude"
+    }
   });
   await db.collection<ExtractionJob>("jobs").insertOne(job);
 
@@ -324,8 +323,8 @@ test("extract: inserts new beliefs and stores their IDs on the job", async (t) =
       scope: ["global"],
       parse_status: "parsed",
       sidecar: makeSidecar({ new_beliefs: [makeNewBelief(), makeNewBelief()] }),
-      source_model: "anthropic:claude",
-    },
+      source_model: "anthropic:claude"
+    }
   });
   await db.collection<ExtractionJob>("jobs").insertOne(job);
 
@@ -352,10 +351,10 @@ test("extract: result_belief_ids excludes reinforced beliefs — only INSERTED I
       scope: ["global"],
       parse_status: "parsed",
       sidecar: makeSidecar({
-        new_beliefs: [makeNewBelief({ canonical_name: canonicalName })],
+        new_beliefs: [makeNewBelief({ canonical_name: canonicalName })]
       }),
-      source_model: "anthropic:claude",
-    },
+      source_model: "anthropic:claude"
+    }
   });
   await db.collection<ExtractionJob>("jobs").insertOne(job);
 
@@ -377,8 +376,8 @@ test("extractOnboarding: marks config completed even when sidecar is absent", as
       scope: ["global"],
       parse_status: "parsed",
       source_model: "anthropic:claude",
-      sidecar: null,
-    },
+      sidecar: null
+    }
   });
   await db.collection<ExtractionJob>("jobs").insertOne(job);
 
@@ -399,8 +398,8 @@ test("extractOnboarding: marks config completed when sidecar fails to parse", as
       scope: ["global"],
       parse_status: "parsed",
       sidecar: "not valid json {{{",
-      source_model: "anthropic:claude",
-    },
+      source_model: "anthropic:claude"
+    }
   });
   await db.collection<ExtractionJob>("jobs").insertOne(job);
 
@@ -421,8 +420,8 @@ test("extractOnboarding: sets user_edited true on all inserted beliefs", async (
       scope: ["global"],
       parse_status: "parsed",
       sidecar: makeSidecar({ new_beliefs: [makeNewBelief()] }),
-      source_model: "anthropic:claude",
-    },
+      source_model: "anthropic:claude"
+    }
   });
   await db.collection<ExtractionJob>("jobs").insertOne(job);
 
@@ -445,11 +444,11 @@ test("extractOnboarding: dedupes contradictory beliefs — neither side of the c
       sidecar: makeSidecar({
         new_beliefs: [
           makeNewBelief({ canonical_name: sharedName, content: "Version A" }),
-          makeNewBelief({ canonical_name: sharedName, content: "Version B" }),
-        ],
+          makeNewBelief({ canonical_name: sharedName, content: "Version B" })
+        ]
       }),
-      source_model: "anthropic:claude",
-    },
+      source_model: "anthropic:claude"
+    }
   });
   await db.collection<ExtractionJob>("jobs").insertOne(job);
 
@@ -476,8 +475,8 @@ test("handle: resets job to pending for retry when error occurs and attempts < m
       scope: ["global"],
       parse_status: "parsed",
       sidecar: makeSidecar({ new_beliefs: [makeNewBelief()] }),
-      source_model: "anthropic:claude",
-    },
+      source_model: "anthropic:claude"
+    }
   });
   await db.collection<ExtractionJob>("jobs").insertOne(job);
 
@@ -504,8 +503,8 @@ test("handle: marks job failed when attempts reach max_attempts", async (t) => {
       scope: ["global"],
       parse_status: "parsed",
       sidecar: makeSidecar({ new_beliefs: [makeNewBelief()] }),
-      source_model: "anthropic:claude",
-    },
+      source_model: "anthropic:claude"
+    }
   });
   await db.collection<ExtractionJob>("jobs").insertOne(job);
 
@@ -534,12 +533,12 @@ test("extract: low-confidence signal reinforces an existing belief rather than b
         new_beliefs: [
           makeNewBelief({
             canonical_name: canonicalName,
-            confidence: 0.2,
-          }),
-        ],
+            confidence: 0.2
+          })
+        ]
       }),
-      source_model: "anthropic:claude",
-    },
+      source_model: "anthropic:claude"
+    }
   });
   await db.collection<ExtractionJob>("jobs").insertOne(job);
 
@@ -553,7 +552,7 @@ test("extract: low-confidence signal reinforces an existing belief rather than b
     await db
       .collection("beliefs")
       .countDocuments({ user_id: USER_ID, superseded_by: null }),
-    1,
+    1
   );
 });
 
@@ -567,12 +566,12 @@ test("extract: low-confidence signal for a non-existent belief is still dropped"
       sidecar: makeSidecar({
         new_beliefs: [
           makeNewBelief({
-            confidence: 0.2,
-          }),
-        ],
+            confidence: 0.2
+          })
+        ]
       }),
-      source_model: "anthropic:claude",
-    },
+      source_model: "anthropic:claude"
+    }
   });
   await db.collection<ExtractionJob>("jobs").insertOne(job);
 
@@ -581,113 +580,9 @@ test("extract: low-confidence signal for a non-existent belief is still dropped"
   t.is(await db.collection("beliefs").countDocuments({ user_id: USER_ID }), 0);
 });
 
-test("extract: style signals are persisted to the style_signals collection", async (t) => {
-  const job = makeJob({
-    payload: {
-      user_message: "Hello",
-      assistant_message: "Hi",
-      scope: ["global"],
-      parse_status: "parsed",
-      sidecar: JSON.stringify({
-        turn_signal: "substantive",
-        new_beliefs: [],
-        belief_updates: [],
-        new_open_questions: [],
-        style_signals: [
-          {
-            observation: "Uses terse, imperative phrasing",
-            pattern_type: "communication_style",
-            confidence: "medium",
-            requires_confirmation: false,
-            scope: ["global"],
-          },
-        ],
-      }),
-      source_model: "anthropic:claude",
-    },
-  });
-  await db.collection<ExtractionJob>("jobs").insertOne(job);
-
-  await makeWorker().processById(job._id as string);
-
-  const signal = await db.collection("style_signals").findOne({
-    user_id: USER_ID,
-    observation: "Uses terse, imperative phrasing",
-  });
-  t.truthy(signal);
-  t.is(signal!.observation_count, 1);
-});
-
-test("extract: repeated style signals accumulate observation_count rather than overwriting", async (t) => {
-  const sidecarWithSignal = JSON.stringify({
-    turn_signal: "substantive",
-    new_beliefs: [],
-    belief_updates: [],
-    new_open_questions: [],
-    style_signals: [
-      {
-        observation: "Prefers bullet points over prose",
-        pattern_type: "formatting",
-        confidence: "low",
-        requires_confirmation: true,
-        scope: ["global"],
-      },
-    ],
-  });
-
-  const makeSignalJob = () =>
-    makeJob({
-      payload: {
-        user_message: "Hello",
-        assistant_message: "Hi",
-        scope: ["global"],
-        parse_status: "parsed",
-        sidecar: sidecarWithSignal,
-        source_model: "anthropic:claude",
-      },
-    });
-
-  const worker = makeWorker();
-  const jobA = makeSignalJob();
-  const jobB = makeSignalJob();
-  await db.collection<ExtractionJob>("jobs").insertMany([jobA, jobB]);
-
-  await worker.processById(jobA._id as string);
-  await worker.processById(jobB._id as string);
-
-  const signal = await db.collection("style_signals").findOne({
-    user_id: USER_ID,
-    observation: "Prefers bullet points over prose",
-  });
-  t.truthy(signal);
-  t.is(signal!.observation_count, 2);
-  t.truthy(signal!.created_at);
-});
-
-test("extract: job with no style signals does not write to style_signals collection", async (t) => {
-  const job = makeJob({
-    payload: {
-      user_message: "Hello",
-      assistant_message: "Hi",
-      scope: ["global"],
-      parse_status: "parsed",
-      sidecar: makeSidecar({ new_beliefs: [makeNewBelief()] }),
-      source_model: "anthropic:claude",
-    },
-  });
-  await db.collection<ExtractionJob>("jobs").insertOne(job);
-
-  await makeWorker().processById(job._id as string);
-
-  t.is(
-    await db.collection("style_signals").countDocuments({ user_id: USER_ID }),
-    0,
-  );
-});
-
 function makeInferredBelief(
   canonicalName: string,
-  reinforcementCount = 4,
+  reinforcementCount = 4
 ): Belief {
   const old = new Date(Date.now() - 72 * 60 * 60 * 1000);
   return {
@@ -697,7 +592,7 @@ function makeInferredBelief(
     reinforcement_count: reinforcementCount,
     created_at: old,
     updated_at: old,
-    last_reinforced_at: old,
+    last_reinforced_at: old
   };
 }
 
@@ -717,12 +612,12 @@ test("extract: inferred belief is promoted to active once reinforcement threshol
         new_beliefs: [
           makeNewBelief({
             canonical_name: canonicalName,
-            epistemic_status: "inferred",
-          }),
-        ],
+            epistemic_status: "inferred"
+          })
+        ]
       }),
-      source_model: "anthropic:claude",
-    },
+      source_model: "anthropic:claude"
+    }
   });
   await db.collection<ExtractionJob>("jobs").insertOne(job);
 
@@ -734,8 +629,8 @@ test("extract: inferred belief is promoted to active once reinforcement threshol
   t.is(belief!.epistemic_status, "active");
   t.true(
     belief!.change_log.some((e: { trigger: string }) =>
-      e.trigger.includes("promoted from inferred"),
-    ),
+      e.trigger.includes("promoted from inferred")
+    )
   );
 });
 
@@ -755,12 +650,12 @@ test("extract: inferred belief is not promoted when reinforcement count is below
         new_beliefs: [
           makeNewBelief({
             canonical_name: canonicalName,
-            epistemic_status: "inferred",
-          }),
-        ],
+            epistemic_status: "inferred"
+          })
+        ]
       }),
-      source_model: "anthropic:claude",
-    },
+      source_model: "anthropic:claude"
+    }
   });
   await db.collection<ExtractionJob>("jobs").insertOne(job);
 
@@ -782,7 +677,7 @@ test("extract: inferred belief is not promoted when age floor has not been reach
     reinforcement_count: 4,
     created_at: fresh,
     updated_at: fresh,
-    last_reinforced_at: fresh,
+    last_reinforced_at: fresh
   } as Belief;
   await db.collection<Belief>("beliefs").insertOne(belief);
 
@@ -796,12 +691,12 @@ test("extract: inferred belief is not promoted when age floor has not been reach
         new_beliefs: [
           makeNewBelief({
             canonical_name: canonicalName,
-            epistemic_status: "inferred",
-          }),
-        ],
+            epistemic_status: "inferred"
+          })
+        ]
       }),
-      source_model: "anthropic:claude",
-    },
+      source_model: "anthropic:claude"
+    }
   });
   await db.collection<ExtractionJob>("jobs").insertOne(job);
 
@@ -827,8 +722,8 @@ test("handle: truncates last_error to 500 characters", async (t) => {
       scope: ["global"],
       parse_status: "parsed",
       sidecar: makeSidecar({ new_beliefs: [makeNewBelief()] }),
-      source_model: "anthropic:claude",
-    },
+      source_model: "anthropic:claude"
+    }
   });
   await db.collection<ExtractionJob>("jobs").insertOne(job);
 

@@ -8,12 +8,9 @@ export type ProjectionMode = "rich" | "lean";
 export interface ContextBudget {
   maxBeliefs: number;
   maxPinnedFacts: number;
-  maxTeamBeliefs: number;
-  maxUserBeliefs: number;
   maxQuestions: number;
   maxCharsPerBelief: number;
   maxPersonaChars: number;
-  maxOrgSummaryChars: number;
   maxScopePreludeChars: number;
   projection: ProjectionMode;
   scoreDetails: boolean;
@@ -22,12 +19,9 @@ export interface ContextBudget {
 const DEFAULT_BUDGET: ContextBudget = {
   maxBeliefs: 20,
   maxPinnedFacts: 10,
-  maxTeamBeliefs: 5,
-  maxUserBeliefs: 3,
   maxQuestions: 15,
   maxCharsPerBelief: 400,
   maxPersonaChars: 800,
-  maxOrgSummaryChars: 600,
   maxScopePreludeChars: 400,
   projection: "lean",
   scoreDetails: false
@@ -39,15 +33,9 @@ export interface BeliefScore {
   scoreDetails?: unknown;
 }
 
-export interface OrgSummaryLookup {
-  get(orgId: string): Promise<{ summary: string } | null>;
-}
-
 export interface BuiltContext {
   personaPrelude: string;
   pinnedFactsJson: string;
-  orgSummaryPrelude: string;
-  teamBeliefsJson: string;
   expandedQuery: string;
   queryWasNoisy: boolean;
   relevantBeliefsJson: string;
@@ -59,7 +47,6 @@ export interface BuiltContext {
   rawPinnedFacts: Belief[];
   rawRelevantBeliefs: Belief[];
   rawOpenQuestions: Belief[];
-  rawTeamBeliefs: Belief[];
 }
 
 export interface PersonaLookup {
@@ -71,8 +58,6 @@ export interface PersonaLookup {
 
 export const EMPTY_CONTEXT: BuiltContext = {
   personaPrelude: "",
-  orgSummaryPrelude: "",
-  teamBeliefsJson: "[]",
   pinnedFactsJson: "[]",
   expandedQuery: "",
   queryWasNoisy: false,
@@ -84,8 +69,7 @@ export const EMPTY_CONTEXT: BuiltContext = {
   searchScores: [],
   rawPinnedFacts: [],
   rawRelevantBeliefs: [],
-  rawOpenQuestions: [],
-  rawTeamBeliefs: []
+  rawOpenQuestions: []
 };
 
 export class ContextBuilder {
@@ -94,7 +78,6 @@ export class ContextBuilder {
   constructor(
     private readonly reader: BeliefsReader,
     private readonly persona: PersonaLookup,
-    private readonly orgSummary: OrgSummaryLookup,
     budget: Partial<ContextBudget> = {}
   ) {
     this.budget = { ...DEFAULT_BUDGET, ...budget };
@@ -104,13 +87,8 @@ export class ContextBuilder {
     userId: string,
     scope: string[],
     query: string,
-    agentId: string | null = null,
-    teamId?: string,
-    orgId?: string,
-    ideMode = false
+    agentId: string | null = null
   ): Promise<BuiltContext> {
-    const teamMode = !!(teamId && orgId);
-
     const { query: expandedQuery, wasNoisy: queryWasNoisy } =
       buildSearchQuery(query);
 
@@ -131,32 +109,12 @@ export class ContextBuilder {
       )
     ]);
 
-    let teamBeliefs: Belief[] = [];
-    let orgSummaryDoc: { summary: string } | null = null;
-
-    if (teamMode) {
-      [teamBeliefs, orgSummaryDoc] = await Promise.all([
-        this.reader.listTeamBeliefs(
-          teamId!,
-          scope,
-          this.budget.maxTeamBeliefs,
-          agentId
-        ),
-        this.orgSummary.get(orgId!)
-      ]);
-    }
-
     const pinnedIds = new Set(pinnedFacts.map((b) => b._id));
-    const teamIds = new Set(teamBeliefs.map((b) => b._id));
-    const excludeIds = new Set([...pinnedIds, ...teamIds]);
-
-    const userBeliefCap =
-      teamMode && ideMode ? this.budget.maxUserBeliefs : this.budget.maxBeliefs;
 
     const rawSearchResults =
-      expandedQuery && userBeliefCap > 0
+      expandedQuery && this.budget.maxBeliefs > 0
         ? await this.reader.searchText(userId, expandedQuery, scope, {
-            limit: userBeliefCap,
+            limit: this.budget.maxBeliefs,
             minScore: 3,
             scoreDetails: this.budget.scoreDetails,
             excludeIds: pinnedIds,
@@ -172,7 +130,7 @@ export class ContextBuilder {
             scope,
             {
               excludeIds: new Set([
-                ...excludeIds,
+                ...pinnedIds,
                 ...rawSearchResults.map((b) => b._id)
               ]),
               agentId
@@ -199,13 +157,8 @@ export class ContextBuilder {
       this.budget.maxPersonaChars
     );
 
-    const orgSummaryPrelude = teamMode
-      ? this.clip(orgSummaryDoc?.summary ?? "", this.budget.maxOrgSummaryChars)
-      : "";
-
     const combined = [...pinnedFacts, ...allRelevant];
-    const cap =
-      teamMode && ideMode ? this.budget.maxUserBeliefs : this.budget.maxBeliefs;
+    const cap = this.budget.maxBeliefs;
     const truncated = combined.length > cap;
     const capped = combined.slice(0, cap);
 
@@ -223,8 +176,6 @@ export class ContextBuilder {
       expandedQuery,
       queryWasNoisy,
       personaPrelude,
-      orgSummaryPrelude,
-      teamBeliefsJson: JSON.stringify(teamBeliefs.map((b) => projector(b))),
       pinnedFactsJson: JSON.stringify(
         cappedPinned.map((b) => projector(b, false))
       ),
@@ -238,14 +189,13 @@ export class ContextBuilder {
       openQuestionsJson: JSON.stringify(
         questions.map((q) => this.projectQuestion(q))
       ),
-      beliefCount: capped.length + teamBeliefs.length,
+      beliefCount: capped.length,
       questionCount: questions.length,
       truncated,
       searchScores,
       rawPinnedFacts: cappedPinned,
       rawRelevantBeliefs: cappedRelevant,
-      rawOpenQuestions: questions,
-      rawTeamBeliefs: teamBeliefs
+      rawOpenQuestions: questions
     };
   }
 

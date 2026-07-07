@@ -6,6 +6,48 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.30] - 2026-07-07
+
+### Added
+
+- **Typed access token system for clients and agents** (`src/auth/tokenService.ts`, `src/routes/tokens.ts`, `src/types/token.ts`, `src/db/collections.ts`, `src/db/indexes.ts`, `src/server.ts`): Introduced token kinds for `root`, `client`, and `agent`, with capability-based authorization, per-token metadata, optional project scope restrictions, revocation support, and persisted token hashing. Admin APIs now support generating and managing client and agent tokens, and request handling now attaches token identity and capability context across the app.
+
+- **Token management UI in admin dashboard** (`src/routes/admin-ui.ts`): Added Access Tokens management to the admin UI with separate flows for client and agent tokens, capability selection, optional project scope restriction, optional expiry, one-time token display, copy support, and revocation actions.
+
+- **Project-scope token enforcement helpers** (`src/server.ts`, `src/helpers/scopeAccess.ts`, `src/routes/beliefs.ts`, `src/routes/chat.ts`, `src/routes/messages.ts`, `src/routes/beliefs-ws.ts`): Added helpers that validate requested project scopes against token-authorized scopes and applied them across chat, messages, beliefs APIs, import flows, and belief WebSocket operations.
+
+- **Token attribution in audit and extraction flows** (`src/audit/injectionAuditLogger.ts`, `src/types/injectionAudit.ts`, `src/types/job.ts`, `src/jobs/queue.ts`, `src/routes/shared/sideEffects.ts`, `src/extraction/beliefWriter.ts`): Added token ID, token name, and token kind to injection audit records, extraction jobs, and persisted beliefs so downstream actions can be traced back to the calling integration token.
+
+### Changed
+
+- **Authentication model shifted from bearer/PATs and team auth to access-token governance** (`src/server.ts`, `src/routes/admin.ts`, `src/config/runtime.ts`, `src/config/appConfig.ts`): Replaced the prior root token plus PAT flow with token-service validation and capability checks. Root-token-only admin access is now enforced centrally, while non-root tokens are limited by route type and declared capabilities.
+
+- **Bootstrap token behavior and docs updated** (`docs/quickstart.md`, `docs/clients.md`, `docs/clients/open-webui.md`, `docs/clients/vscode.md`, `docs/settings.md`, `README.md`): Documentation now distinguishes bootstrap tokens from client and agent tokens. External clients and IDEs must use client tokens generated from the Tenure UI, while bootstrap tokens are reserved for setup and admin access.
+
+- **Credential and config storage hardened** (`src/config/encryption.ts`, `src/config/appConfig.ts`, `src/app.ts`): API tokens are now stored encrypted in config, token files are written in encrypted form, and belief encryption keys are derived from `master.key` when no legacy `belief.key` file exists.
+
+- **Context assembly simplified** (`src/context/contextBuilder.ts`, `src/context/systemPromptBuilder.ts`, `src/context/beliefsReader.ts`): Removed org summary and team belief injection paths from context building and system prompt construction, leaving persona, pinned facts, relevant beliefs, and open questions as the primary injected memory surfaces.
+
+- **IDE and sidecar scope behavior tightened** (`src/extraction/worker.ts`, `src/sidecar/idePrompt.ts`, `src/sidecar/prompt.ts`, `src/helpers/scopeDetector.ts`): Scope generation is now more restrictive, project scopes are enforced from resolved workspace context, and sidecar guidance no longer permits inventing new scope labels in these flows.
+
+- **Belief and runtime schemas simplified** (`src/types/belief.ts`, `src/config/runtime.ts`, `src/backup/types.ts`): Removed team/org visibility fields, compaction note persistence, memory mode settings, managed history token cap, and several team-specific runtime fields from active schemas and export/import payloads.
+
+### Removed
+
+- **Team and SCIM administration surfaces** (`src/routes/scim.ts`, `src/routes/team-admin-ui.ts`, `src/routes/admin-setup.ts`, `src/config/teamResolution.ts`): Removed SCIM routes, team admin UI, admin setup wizard, team resolution config, and associated team membership and SCIM collection/index handling.
+
+- **Telemetry dependencies and bootstrap** (`src/telemetry.ts`, `package.json`, `package-lock.json`, `src/index.ts`): Removed OpenTelemetry startup and related dependency tree from the application package set.
+
+- **Enterprise and teams documentation set** (`docs/teams/auth-guide.md`, `docs/teams/backup.md`, `docs/teams/deployment.md`, `docs/teams/idp-integration.md`, `docs/teams/observability.md`, `docs/roadmap.md`): Deleted the dedicated teams, SCIM, backup, IdP integration, observability, and roadmap docs from the repository.
+
+### Fixed
+
+- **Belief encryption verification target** (`src/app.ts`): Updated encryption verification to inspect stored ciphertext in the `beliefs` collection instead of a temporary check collection, making the verification path match real storage behavior.
+
+- **Import and backup compatibility with the new data model** (`src/backup/exporter.ts`, `src/backup/importer.ts`, `src/backup/types.ts`, `src/routes/backup.ts`): Removed compaction-log export/import handling and aligned exported runtime and belief fields with the simplified schema.
+
+---
+
 ## [1.0.29] - 2026-07-01
 
 ### Changed

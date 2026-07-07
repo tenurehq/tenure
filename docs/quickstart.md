@@ -69,11 +69,16 @@ Open `http://localhost:5757/onboarding` in your browser. You will be prompted to
 Onboarding is optional. If you skip it, Tenure builds your world model from chat
 extraction over time.
 
-## 3. Point your client
+## 3. Create access tokens for clients and agents
 
-Set your client's API base URL to `http://localhost:5757/v1` and use your bearer
-token for authentication. The model list is populated from your configured
-providers.
+Open the Tenure UI and generate the token type that matches your integration:
+
+- **Client tokens** for OpenAI-compatible chat clients, IDE clients, and other external tools
+- **Agent tokens** for agent integrations
+
+The first-run bootstrap token is for setup and admin access. It will not work for external clients or agents.
+
+Once you have created the appropriate token, set your client's API base URL to `http://localhost:5757/v1` and use that token for authentication. The model list is populated from your configured providers.
 
 For client-specific instructions, see [clients.md](clients.md).
 

@@ -2,7 +2,6 @@ import type { Db } from "mongodb";
 import type { RuntimeConfigStore } from "../config/runtime.js";
 import type { RuntimeConfig } from "../config/runtime.js";
 import type { Belief } from "../types/belief.js";
-import type { CompactionLogEntry } from "../jobs/compactionRunner.js";
 import type { PersonaDoc } from "../context/personaCache.js";
 import type { TenureExport, ExportedBelief } from "./types.js";
 import { decryptArchive } from "./crypto.js";
@@ -19,7 +18,6 @@ export interface ImportResult {
   beliefs_imported: number;
   beliefs_skipped: number;
   sessions_imported: number;
-  compaction_entries_imported: number;
   persona_restored: boolean;
   config_restored: boolean;
 }
@@ -35,7 +33,7 @@ const DEFAULT_OPTIONS: Required<ImportOptions> = {
   skipExisting: true,
   importConfig: true,
   importSessions: false,
-  remapUserId: true,
+  remapUserId: true
 };
 
 export class BackupImporter {
@@ -44,7 +42,7 @@ export class BackupImporter {
   async importEncrypted(
     archive: Buffer,
     passphrase: string,
-    options: ImportOptions = {},
+    options: ImportOptions = {}
   ): Promise<ImportResult> {
     const decrypted = decryptArchive(archive, passphrase);
     const payload = JSON.parse(decrypted.toString("utf-8")) as TenureExport;
@@ -53,11 +51,11 @@ export class BackupImporter {
 
   async importPayload(
     payload: TenureExport,
-    options: ImportOptions = {},
+    options: ImportOptions = {}
   ): Promise<ImportResult> {
     if (payload.version !== 1) {
       throw new Error(
-        `Unsupported export version: ${payload.version}. This version of Tenure supports version 1.`,
+        `Unsupported export version: ${payload.version}. This version of Tenure supports version 1.`
       );
     }
 
@@ -69,9 +67,8 @@ export class BackupImporter {
       beliefs_imported: 0,
       beliefs_skipped: 0,
       sessions_imported: 0,
-      compaction_entries_imported: 0,
       persona_restored: false,
-      config_restored: false,
+      config_restored: false
     };
 
     const beliefsCol = db.collection<Belief>("beliefs");
@@ -114,11 +111,10 @@ export class BackupImporter {
         "anthropic_base_url",
         "openai_endpoint_flavor",
         "always_on_token_target",
-        "managed_history_token_cap",
         "error_retention_days",
         "strict_model_tiers",
         "extraction_enabled",
-        "ide_extraction_enabled",
+        "ide_extraction_enabled"
       ];
 
       for (const key of configKeys) {
@@ -126,7 +122,7 @@ export class BackupImporter {
         if (value !== null && value !== undefined) {
           await runtimeStore.set(
             key as keyof RuntimeConfig,
-            value as RuntimeConfig[keyof RuntimeConfig],
+            value as RuntimeConfig[keyof RuntimeConfig]
           );
         }
       }
@@ -141,42 +137,23 @@ export class BackupImporter {
         contributing_belief_ids: payload.persona_cache.contributing_belief_ids,
         beliefs_hash: payload.persona_cache.beliefs_hash,
         generated_at: new Date(payload.persona_cache.generated_at),
-        model: payload.persona_cache.model,
+        model: payload.persona_cache.model
       };
       await personaCol.replaceOne({ _id: targetUserId }, doc, { upsert: true });
       result.persona_restored = true;
     }
 
-    if (payload.compaction_log.length > 0) {
-      const logCol = db.collection<CompactionLogEntry>("compaction_log");
-      const entries: CompactionLogEntry[] = payload.compaction_log.map(
-        (entry) => ({
-          _id: entry._id,
-          user_id: targetUserId,
-          scope: entry.scope,
-          belief_type: entry.belief_type,
-          ran_at: new Date(entry.ran_at),
-          merged_count: entry.merged_count,
-        }),
-      );
+    if (payload.injection_audit?.length > 0) {
+      const auditCol = db.collection<InjectionAuditRecord>("injection_audit");
+      const entries = payload.injection_audit.map((r) => ({
+        ...r,
+        user_id: targetUserId,
+        created_at: new Date(r.created_at)
+      }));
 
-      if (payload.injection_audit?.length > 0) {
-        const auditCol = db.collection<InjectionAuditRecord>("injection_audit");
-        const entries = payload.injection_audit.map((r) => ({
-          ...r,
-          user_id: targetUserId,
-          created_at: new Date(r.created_at),
-        }));
-
-        await auditCol.insertMany(entries, { ordered: false }).catch((err) => {
-          if (err.code !== 11000) throw err;
-        });
-      }
-
-      await logCol.insertMany(entries, { ordered: false }).catch((err) => {
+      await auditCol.insertMany(entries, { ordered: false }).catch((err) => {
         if (err.code !== 11000) throw err;
       });
-      result.compaction_entries_imported = entries.length;
     }
 
     if (opts.importSessions && payload.sessions.length > 0) {
@@ -193,9 +170,9 @@ export class BackupImporter {
             agentId: s.agentId ?? null,
             turnCounter: s.turnCounter ?? 0,
             createdAt: new Date(s.createdAt),
-            lastUsedAt: new Date(s.lastUsedAt),
+            lastUsedAt: new Date(s.lastUsedAt)
           },
-          { upsert: true },
+          { upsert: true }
         );
         result.sessions_imported++;
       }
@@ -219,7 +196,7 @@ export class BackupImporter {
         session_id: exported.provenance.session_id,
         turn_id: exported.provenance.turn_id,
         extracted_at: new Date(exported.provenance.extracted_at),
-        source_model: exported.provenance.source_model,
+        source_model: exported.provenance.source_model
       },
       epistemic_status: exported.epistemic_status as Belief["epistemic_status"],
       confidence: exported.confidence,
@@ -233,22 +210,19 @@ export class BackupImporter {
         changed_at: new Date(entry.changed_at),
         trigger: entry.trigger,
         changed_by_session: entry.changed_by_session,
-        changed_by_turn: entry.changed_by_turn,
+        changed_by_turn: entry.changed_by_turn
       })),
       ...(exported.expertise_domain && {
-        expertise_domain: exported.expertise_domain,
+        expertise_domain: exported.expertise_domain
       }),
       ...(exported.expertise_depth && {
-        expertise_depth: exported.expertise_depth as Belief["expertise_depth"],
+        expertise_depth: exported.expertise_depth as Belief["expertise_depth"]
       }),
       ...(exported.expertise_evidence_count != null && {
-        expertise_evidence_count: exported.expertise_evidence_count,
-      }),
-      ...(exported.compaction_note && {
-        compaction_note: exported.compaction_note,
+        expertise_evidence_count: exported.expertise_evidence_count
       }),
       created_at: new Date(exported.created_at),
-      updated_at: new Date(exported.updated_at),
+      updated_at: new Date(exported.updated_at)
     } as Belief;
   }
 }

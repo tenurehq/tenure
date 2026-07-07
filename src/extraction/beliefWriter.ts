@@ -7,8 +7,7 @@ import type {
   ChangeLogEntry,
   EpistemicStatus,
   ExpertiseDepth,
-  OriginContext,
-  BeliefVisibility
+  OriginContext
 } from "../types/belief.js";
 
 export class CanonicalNameConflictError extends Error {
@@ -47,9 +46,9 @@ export interface CreateBeliefInput {
   expertise_depth?: ExpertiseDepth;
   expertise_evidence_count?: number;
   origin_context?: OriginContext | null;
-  visibility?: BeliefVisibility;
-  team_id?: string | null;
-  org_id?: string | null;
+  token_id?: string | null;
+  token_name?: string | null;
+  token_kind?: "client" | "agent" | "root" | null;
 }
 
 export class BeliefWriter {
@@ -63,9 +62,9 @@ export class BeliefWriter {
       _id: id,
       user_id: input.user_id,
       agent_id: input.agent_id ?? null,
-      visibility: input.visibility ?? "private",
-      team_id: input.team_id ?? null,
-      org_id: input.org_id ?? null,
+      token_id: input.token_id ?? null,
+      token_name: input.token_name ?? null,
+      token_kind: input.token_kind ?? null,
       type: input.type,
       subtype: input.subtype,
       canonical_name: input.canonical_name.trim().toLowerCase(),

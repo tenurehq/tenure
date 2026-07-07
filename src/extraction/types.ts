@@ -70,29 +70,27 @@ export interface ExtractionResult {
   possible_alias_candidates: AliasCandidate[];
   new_open_questions: NewOpenQuestion[];
   resolved_open_questions: string[];
-  style_signals: StyleSignal[];
 }
 
 export function parseExtractionResult(
-  raw: Record<string, unknown>,
+  raw: Record<string, unknown>
 ): ExtractionResult {
   return {
     orientation_tax: raw.orientation_tax === true,
     new_beliefs: ((raw.new_beliefs as any[]) ?? []).map(parseNewBelief),
     belief_updates: ((raw.belief_updates as any[]) ?? []).map(
-      parseBeliefUpdate,
+      parseBeliefUpdate
     ),
     entity_updates: ((raw.entity_updates as any[]) ?? []).map(
-      parseEntityUpdate,
+      parseEntityUpdate
     ),
     possible_alias_candidates: (
       (raw.possible_alias_candidates as any[]) ?? []
     ).map(parseAlias),
     new_open_questions: ((raw.new_open_questions as any[]) ?? []).map(
-      parseOpenQuestion,
+      parseOpenQuestion
     ),
-    resolved_open_questions: (raw.resolved_open_questions as string[]) ?? [],
-    style_signals: ((raw.style_signals as any[]) ?? []).map(parseStyleSignal),
+    resolved_open_questions: (raw.resolved_open_questions as string[]) ?? []
   };
 }
 
@@ -110,18 +108,18 @@ function parseNewBelief(d: Record<string, unknown>): NewBelief {
     user_edited: false,
     resolves_open_question: (d.resolves_open_question as string) ?? null,
     ...(d.expertise_domain !== undefined && {
-      expertise_domain: d.expertise_domain as string,
+      expertise_domain: d.expertise_domain as string
     }),
     ...(d.expertise_depth !== undefined && {
       expertise_depth: d.expertise_depth as
         | "learning"
         | "working"
         | "deep"
-        | "expert",
+        | "expert"
     }),
     ...(d.provenance_hint !== undefined && {
-      provenance_hint: d.provenance_hint as "demonstrated" | "config_artifact",
-    }),
+      provenance_hint: d.provenance_hint as "demonstrated" | "config_artifact"
+    })
   };
 }
 
@@ -130,14 +128,14 @@ function parseBeliefUpdate(d: Record<string, unknown>): BeliefUpdateSignal {
     belief_id: d.belief_id as string,
     change: d.change as ChangeKind,
     new_content: (d.new_content as string) ?? null,
-    new_canonical_name: (d.new_canonical_name as string) ?? null,
+    new_canonical_name: (d.new_canonical_name as string) ?? null
   };
 }
 
 function parseEntityUpdate(d: Record<string, unknown>): EntityUpdate {
   return {
     canonical_name: d.canonical_name as string,
-    new_aliases: (d.new_aliases as string[]) ?? [],
+    new_aliases: (d.new_aliases as string[]) ?? []
   };
 }
 
@@ -145,7 +143,7 @@ function parseAlias(d: Record<string, unknown>): AliasCandidate {
   return {
     surface: d.surface as string,
     possible_entities: (d.possible_entities as string[]) ?? [],
-    confidence: d.confidence as StyleConfidence,
+    confidence: d.confidence as StyleConfidence
   };
 }
 
@@ -153,16 +151,6 @@ function parseOpenQuestion(d: Record<string, unknown>): NewOpenQuestion {
   return {
     canonical_name: d.canonical_name as string,
     content: d.content as string,
-    scope: (d.scope as string[]) ?? [],
-  };
-}
-
-function parseStyleSignal(d: Record<string, unknown>): StyleSignal {
-  return {
-    observation: d.observation as string,
-    pattern_type: d.pattern_type as string,
-    confidence: d.confidence as StyleConfidence,
-    requires_confirmation: Boolean(d.requires_confirmation),
-    scope: (d.scope as string[]) ?? [],
+    scope: (d.scope as string[]) ?? []
   };
 }

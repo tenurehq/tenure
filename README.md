@@ -1,10 +1,12 @@
 # Tenure
 
-**Shared memory for AI tools, with scope, provenance, and auditability.**
+**Shared memory and governance for AI clients and agents, with scope, provenance, auditability, and access control.**
 
-Tenure gives your AI tools one governed memory layer across VS Code, Open WebUI, and other AI tools and clients.
+Tenure gives your AI clients and agents one governed memory layer between them and the upstream model.
 
 It remembers durable project decisions like architecture choices, coding conventions, database preferences, and team rules, then injects only the relevant scoped state into each request.
+
+As more clients and agents route through Tenure, it becomes the shared memory system and governance layer for AI across your tools, teams, and environments.
 
 No more re-explaining the same repo decisions.
 No more stale context from another project.
@@ -22,7 +24,7 @@ Claude Code may learn something in one session. VS Code does not know it. Cursor
 
 Tenure fixes that by making memory explicit, scoped, and inspectable.
 
-Use Tenure when AI needs durable context across tools, sessions, and teams:
+Use Tenure when AI needs durable context, enforced boundaries, and a shared control layer across tools, sessions, clients, agents, and teams:
 
 - Decisions: what was chosen, rejected, or replaced
 - Preferences: how a person, team, or organization works

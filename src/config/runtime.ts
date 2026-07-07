@@ -1,6 +1,5 @@
 import type { Collections } from "../db/collections.js";
 import type { CredentialVault } from "./encryption.js";
-import type { TeamResolutionStrategy } from "./teamResolution.js";
 
 export type OnboardingStatus =
   | "pending"
@@ -8,15 +7,6 @@ export type OnboardingStatus =
   | "awaiting_confirmation"
   | "completed";
 
-/**
- * Distinguishes how an OpenAI-compatible endpoint should be treated.
- *
- * - "generic"               → plain OpenAI or unknown compatible endpoint; no caching hints sent
- * - "bedrock-access-gateway"→ sends extra_body: { prompt_caching: { system: true, messages: true } }
- * - "litellm"               → sends cache_control: { type: "ephemeral" } blocks (same as Anthropic adapter)
- *
- * null means the openai provider is not configured or flavor has not been set.
- */
 export type OpenAIEndpointFlavor =
   | "generic"
   | "bedrock-access-gateway"
@@ -29,7 +19,6 @@ export interface RuntimeConfig {
   openai_api_key: string | null;
   anthropic_api_key: string | null;
   always_on_token_target: number;
-  managed_history_token_cap: number;
   buffered_mode: true;
   error_retention_days: number;
   openai_base_url: string | null;
@@ -39,21 +28,10 @@ export interface RuntimeConfig {
   strict_model_tiers: boolean;
   extraction_enabled: boolean;
   injection_enabled: boolean;
-  compaction_mode: "aggressive" | "conservative" | "off";
   scope_auto_detect: boolean;
   ide_extraction_enabled: boolean;
-  memory_mode: "inject_only" | "curated" | "autonomous" | "reflective";
-  team_resolution_strategy: TeamResolutionStrategy;
-  default_team_id: string | null;
-  default_org_id: string | null;
-  team_header_name: string | null;
-  org_header_name: string | null;
-  scim_group_mappings: Array<{
-    groupId: string;
-    teamId: string;
-    orgId: string;
-  }> | null;
-  scim_token: string | null;
+  api_token: string | null;
+  token_hmac_key: string | null;
 }
 
 export const DEFAULTS: RuntimeConfig = {
@@ -62,7 +40,6 @@ export const DEFAULTS: RuntimeConfig = {
   openai_api_key: null,
   anthropic_api_key: null,
   always_on_token_target: 400,
-  managed_history_token_cap: 120000,
   buffered_mode: true,
   error_retention_days: 30,
   openai_base_url: null,
@@ -72,22 +49,17 @@ export const DEFAULTS: RuntimeConfig = {
   strict_model_tiers: true,
   extraction_enabled: true,
   injection_enabled: true,
-  compaction_mode: "aggressive",
   scope_auto_detect: true,
   ide_extraction_enabled: true,
-  memory_mode: "autonomous" as const,
-  team_resolution_strategy: "static",
-  default_team_id: null,
-  default_org_id: null,
-  team_header_name: null,
-  org_header_name: null,
-  scim_group_mappings: null,
-  scim_token: null
+  api_token: null,
+  token_hmac_key: null
 };
 
 const ENCRYPTED_KEYS = new Set<keyof RuntimeConfig>([
   "openai_api_key",
-  "anthropic_api_key"
+  "anthropic_api_key",
+  "api_token",
+  "token_hmac_key"
 ]);
 
 export class RuntimeConfigStore {

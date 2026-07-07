@@ -16,7 +16,7 @@ This is not RAG over your chat history. Tenure extracts structured beliefs from 
 
 ## Setup
 
-**Prerequisites:** Tenure running locally. If you haven't installed it yet, see [quickstart.md](quickstart.md). Your bearer token is in `~/.tenure/token` (Linux/macOS) or `%USERPROFILE%\.tenure\token` (Windows), or printed at the end of installation.
+**Prerequisites:** Tenure running locally. If you haven't installed it yet, see [quickstart.md](quickstart.md). Before connecting Open WebUI, generate a client token from the Tenure UI.
 
 **In Open WebUI:**
 
@@ -25,7 +25,7 @@ This is not RAG over your chat history. Tenure extracts structured beliefs from 
    ```
    http://localhost:5757/v1
    ```
-3. Set the API key to your Tenure bearer token
+3. Set the API key to a Tenure client token generated from the UI
 4. Save and reload the model list
 
 Open WebUI will now show all models from your configured upstream provider, routed through Tenure.

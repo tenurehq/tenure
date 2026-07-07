@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
-import { writeFileSync, chmodSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { Db } from "mongodb";
+import type { CredentialVault } from "./encryption.js";
 import { DEFAULTS } from "./runtime.js";
 
 export interface AppConfig {
@@ -12,23 +13,76 @@ export interface AppConfig {
 export interface AppConfigBootstrap {
   onFirstRun?: (token: string, path: string) => void;
   port?: number;
+  vault: CredentialVault;
 }
 
 export async function loadAppConfig(
   db: Db,
-  bootstrap: AppConfigBootstrap = {}
+  bootstrap: AppConfigBootstrap
 ): Promise<AppConfig> {
-  const col = db.collection<AppConfig & { _id: string }>("config");
-  const existing = await col.findOne({ _id: "app" });
-  if (existing) return existing;
+  const col = db.collection<{
+    key?: string;
+    value?: unknown;
+    encrypted?: boolean;
+    api_token?: string;
+  }>("config");
+
+  const newFormat = await col.findOne({ key: "api_token" });
+  if (newFormat && newFormat.encrypted && typeof newFormat.value === "string") {
+    return { api_token: bootstrap.vault.decrypt(newFormat.value) };
+  }
+
+  const oldFormat = await col.findOne({ api_token: { $exists: true } } as any);
+  if (oldFormat && oldFormat.api_token) {
+    const plaintextToken = oldFormat.api_token;
+
+    const encrypted = bootstrap.vault.encrypt(plaintextToken);
+    await col.updateOne(
+      { key: "api_token" },
+      {
+        $set: {
+          key: "api_token",
+          value: encrypted,
+          encrypted: true,
+          updatedAt: new Date()
+        }
+      },
+      { upsert: true }
+    );
+
+    await col
+      .deleteOne({ api_token: { $exists: true } } as any)
+      .catch(() => {});
+
+    return { api_token: plaintextToken };
+  }
 
   const token =
     process.env.TENURE_API_TOKEN ??
     `mp_${randomBytes(24).toString("base64url")}`;
-  const doc = { _id: "app" as const, api_token: token };
-  await col.insertOne(doc);
 
-  await db.collection("config").insertMany(
+  const encryptedToken = bootstrap.vault.encrypt(token);
+  await col.updateOne(
+    { key: "api_token" },
+    {
+      $set: {
+        key: "api_token",
+        value: encryptedToken,
+        encrypted: true,
+        updatedAt: new Date()
+      }
+    },
+    { upsert: true }
+  );
+
+  const configCol = db.collection<{
+    key: string;
+    value: unknown;
+    encrypted: boolean;
+    updatedAt: Date;
+  }>("config");
+
+  await configCol.insertMany(
     Object.entries(DEFAULTS)
       .filter(
         ([key]) =>
@@ -38,7 +92,10 @@ export async function loadAppConfig(
             "default_model",
             "openai_base_url",
             "anthropic_base_url",
-            "openai_endpoint_flavor"
+            "openai_endpoint_flavor",
+            "api_token",
+            "token_hmac_key",
+            "scim_token"
           ].includes(key)
       )
       .map(([key, value]) => ({
@@ -51,26 +108,42 @@ export async function loadAppConfig(
 
   const tokenDir = process.env.TENURE_HOME ?? resolve(homedir(), ".tenure");
   const tokenPath = resolve(tokenDir, "token");
+  mkdirSync(dirname(tokenPath), { recursive: true, mode: 0o700 });
+  bootstrap.vault.encryptToFile(token, tokenPath);
   bootstrap.onFirstRun?.(token, tokenPath);
 
-  return doc;
+  return { api_token: token };
 }
 
-export async function rotateApiToken(db: Db): Promise<string> {
-  if (process.env.TENURE_MODE === "teams") {
-    throw new Error(
-      "Token rotation is disabled in teams mode. " +
-        "Update the Kubernetes secret and roll the deployment."
-    );
-  }
-
+export async function rotateApiToken(
+  db: Db,
+  vault: CredentialVault
+): Promise<string> {
   const token = `mp_${randomBytes(24).toString("base64url")}`;
-  const col = db.collection<AppConfig & { _id: string }>("config");
+  const col = db.collection<{
+    key: string;
+    value: unknown;
+    encrypted: boolean;
+    updatedAt: Date;
+  }>("config");
+  const encrypted = vault.encrypt(token);
   await col.updateOne(
-    { _id: "app" },
-    { $set: { api_token: token } },
+    { key: "api_token" },
+    {
+      $set: {
+        key: "api_token",
+        value: encrypted,
+        encrypted: true,
+        updatedAt: new Date()
+      }
+    },
     { upsert: true }
   );
+
+  const tokenDir = process.env.TENURE_HOME ?? resolve(homedir(), ".tenure");
+  const tokenPath = resolve(tokenDir, "token");
+  vault.encryptToFile(token, tokenPath);
+
   return token;
 }
 
@@ -79,20 +152,6 @@ export function writeTokenAndPrintBanner(
   tokenPath: string,
   port: number
 ): void {
-  mkdirSync(dirname(tokenPath), { recursive: true });
-  try {
-    writeFileSync(tokenPath, `${token}\n`, { mode: 0o600, flag: "wx" });
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new Error(
-        `Token file already exists at ${tokenPath} but no matching DB config was found. ` +
-          `This usually means the database was reset. Remove the file to generate a fresh token, ` +
-          `or restore the DB from backup.`
-      );
-    }
-    throw err;
-  }
-  chmodSync(tokenPath, 0o600);
   printBanner(token, tokenPath, port);
 }
 

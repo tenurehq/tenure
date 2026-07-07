@@ -8,7 +8,6 @@ import type { ExtractionWorkerLike } from "../extraction/worker.js";
 import { extractJsonBlock } from "../extraction/extractJson.js";
 import type { Collections, OnboardingDraftDoc } from "../db/collections.js";
 import type { Collection } from "mongodb";
-import { requireRootToken } from "./setup-guard.js";
 
 export interface OnboardingDeps {
   providers: ProviderRegistry;
@@ -121,7 +120,6 @@ Do not write anything before or after the JSON. Do not use markdown code blocks.
   "possible_alias_candidates": [],
   "resolved_open_questions": [],
   "new_open_questions": [],
-  "style_signals": []
 }
 
 Field rules:
@@ -322,9 +320,7 @@ export function registerOnboardingRoutes(
     async (req, reply) => {
       reply.header("content-type", "text/html; charset=utf-8");
       const nonce = (reply.raw as any).cspNonce as string | undefined;
-      return reply.send(
-        buildOnboardingHtml(req.query.token ?? "", req.tenureUserId, nonce)
-      );
+      return reply.send(buildOnboardingHtml(req.query.token ?? "", nonce));
     }
   );
 
@@ -337,7 +333,6 @@ export function registerOnboardingRoutes(
 
   app.get<{ Params: { id: string } }>(
     "/v1/onboarding/probe-models/:id",
-    { preHandler: requireRootToken },
     async (req, reply) => {
       const { id } = req.params;
       let adapter;
@@ -363,7 +358,7 @@ export function registerOnboardingRoutes(
             supported: tier.supported,
             family: tier.family,
             tier: tier.tier,
-            reason: tier.supported ? null : tier.reason ?? "unknown family"
+            reason: tier.supported ? null : (tier.reason ?? "unknown family")
           };
         });
         return { models: annotated, supports_listing: true };
@@ -380,7 +375,6 @@ export function registerOnboardingRoutes(
 
   app.post<{ Body: { provider_id: string; model_id: string } }>(
     "/v1/onboarding/validate-model",
-    { preHandler: requireRootToken },
     async (req, reply) => {
       const { provider_id, model_id } = req.body ?? {};
       if (!provider_id || !model_id) {
@@ -578,8 +572,21 @@ export function registerOnboardingRoutes(
         finalSidecarJson = JSON.stringify(parsed);
       }
 
+      const tokenId = req.tenureTokenId;
+      const tokenName = req.tenureTokenName;
+      const tokenKind = req.tenureTokenKind;
+
+      if (!tokenId || !tokenName || !tokenKind) {
+        return reply.code(401).send({
+          error: { message: "missing token attribution for onboarding job" }
+        });
+      }
+
       const jobId = await deps.jobs.enqueueOnboarding({
         userId: userId,
+        tokenId,
+        tokenName,
+        tokenKind,
         sessionId: `onboarding:${randomUUID()}`,
         sidecarRaw: finalSidecarJson,
         sourceModel: `onboarding:${draft.modelId}`
@@ -601,22 +608,13 @@ export function registerOnboardingRoutes(
   );
 }
 
-function buildOnboardingHtml(
-  embeddedToken: string,
-  ssoUserId?: string,
-  nonce?: string
-): string {
+function buildOnboardingHtml(embeddedToken: string, nonce?: string): string {
   const tokenJS = embeddedToken
     ? JSON.stringify(embeddedToken).replace(/</g, "\\u003c")
     : `new URLSearchParams(location.search).get("token") || localStorage.getItem("mp_token") || ""`;
 
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
 
-  const ssoConfig = ssoUserId
-    ? `<script${nonceAttr}>window.__TENURE_SSO_USER__ = ${JSON.stringify(
-        ssoUserId
-      )};</script>`
-    : "";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -668,7 +666,6 @@ function buildOnboardingHtml(
   a:hover { text-decoration: underline; }
   .logo { display: block; margin: 0 auto 2rem; width: 120px; }
 </style>
-${ssoConfig}
 </head>
 <body>
 <div class="card" id="app"><div class="status"><p>Loading…</p></div></div>
@@ -1181,11 +1178,9 @@ document.addEventListener("change", e => {
   }
 });
 
-if (window.__TENURE_SSO_USER__) {
-  init();
-} else {
-  token ? init() : showTokenScreen();
-}
+
+token ? init() : showTokenScreen();
+
 <\/script>
 </body>
 </html>`;

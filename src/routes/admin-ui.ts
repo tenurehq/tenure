@@ -1,34 +1,19 @@
 import type { FastifyInstance } from "fastify";
 
-const isTeams = process.env.TENURE_MODE === "teams";
-
 export function registerAdminUiRoute(app: FastifyInstance): void {
   app.get<{ Querystring: { token?: string } }>("/admin", async (req, reply) => {
     reply.header("content-type", "text/html; charset=utf-8");
     const nonce = (reply.raw as any).cspNonce as string | undefined;
-    return reply.send(
-      buildAdminHtml(req.query.token ?? "", isTeams, req.tenureUserId, nonce)
-    );
+    return reply.send(buildAdminHtml(req.query.token ?? "", nonce));
   });
 }
 
-function buildAdminHtml(
-  embeddedToken: string,
-  isTeams: boolean,
-  ssoUserId?: string,
-  nonce?: string
-): string {
+function buildAdminHtml(embeddedToken: string, nonce?: string): string {
   const tokenJS = embeddedToken
     ? JSON.stringify(embeddedToken).replace(/</g, "\\u003c")
     : `new URLSearchParams(location.search).get("token") || localStorage.getItem("mp_token") || ""`;
 
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
-
-  const ssoConfig = ssoUserId
-    ? `<script${nonceAttr}>window.__TENURE_SSO_USER__ = ${JSON.stringify(
-        ssoUserId
-      )};</script>`
-    : "";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -67,8 +52,8 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 
 .field { margin-bottom: .875rem; }
 .field:last-child { margin-bottom: 0; }
-.field label { display: block; font-size: .75rem; color: var(--muted); margin-bottom: .3rem; }
-.field input, .field select { width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-family: inherit; font-size: .85rem; padding: .55rem .75rem; outline: none; appearance: none; -webkit-appearance: none; }
+.field label { display: flex; font-size: .75rem; color: var(--muted); margin-bottom: .3rem; }
+.field input:not([type=checkbox]), .field select { width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-family: inherit; font-size: .85rem; padding: .55rem .75rem; outline: none; appearance: none; -webkit-appearance: none; }
 .field input:focus, .field select:focus { border-color: var(--accent); }
 .field input[type=password] { font-family: monospace; letter-spacing: .05em; }
 .field input[type=number] { width: 140px; }
@@ -111,8 +96,37 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 .toast-error { background: #2a1212; border: 1px solid var(--danger); color: var(--danger); }
 @keyframes slideup { from { opacity: 0; transform: translateY(.4rem); } to { opacity: 1; transform: none; } }
 .logo { display: block; margin: 0 auto 2rem; width: 120px; }
+.badge { display: inline-block; font-size: .68rem; padding: .15rem .45rem; border-radius: 3px; font-weight: 600; white-space: nowrap; }
+.token-status-active { background: #0d2a1a; color: #4dda8a; }
+.token-status-expired { background: #2a1f0d; color: #d4a84b; }
+.token-status-revoked { background: #2a0d0d; color: #cc5555; }
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.65); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
+.modal { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; width: 100%; max-width: 760px; max-height: 85vh; overflow-y: auto; padding: 1.5rem; }
+.modal h2 { font-size: .95rem; font-weight: 500; margin-bottom: 1.25rem; }
+.modal-footer { display: flex; justify-content: flex-end; gap: .625rem; margin-top: 1.25rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.form-grid-col { min-width: 0; }
+.cap-list { display: flex; flex-direction: column; gap: .5rem; }
+.checkbox-row { display: flex; align-items: flex-start; gap: .6rem; font-size: .85rem; cursor: pointer; margin-bottom: 0; }
+.checkbox-row input[type=checkbox] { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.checkbox-box { display: inline-block; width: 18px; min-width: 18px; max-width: 18px; height: 18px; min-height: 18px; flex: 0 0 18px; margin-top: .15rem; border-radius: 4px; border: 1px solid var(--border); background: var(--surface2); position: relative; vertical-align: top; }
+.checkbox-row input[type=checkbox]:checked + .checkbox-box { background: var(--accent); border-color: var(--accent); }
+.checkbox-row input[type=checkbox]:focus-visible + .checkbox-box { outline: 2px solid rgba(1,80,84,.35); outline-offset: 2px; }
+.checkbox-row input[type=checkbox]:checked + .checkbox-box::after { content: "✓"; position: absolute; left: 3px; top: -1px; font-size: 12px; line-height: 16px; color: #fff; font-weight: 700; }
+.checkbox-content { min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+.field-error { color: var(--danger); font-size: .78rem; margin-top: .35rem; }
+.input-error { border-color: var(--danger) !important; }
+.token-result-list { display: flex; flex-direction: column; gap: .65rem; margin-top: .5rem; }
+.token-result { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: .65rem; }
+.token-result-name { font-size: .8rem; color: var(--muted); margin-bottom: .4rem; }
+.token-result-row { display: flex; gap: .5rem; align-items: center; }
+.token-result-value { display: block; flex: 1; overflow-x: auto; white-space: nowrap; background: #111; padding: .45rem .55rem; border-radius: 4px; font-size: .76rem; color: var(--text); }
+.token-result-warn { font-size: .75rem; color: var(--muted); }
+@media (max-width: 720px) {
+  .form-grid { grid-template-columns: 1fr; }
+  .token-result-row { flex-direction: column; align-items: stretch; }
+}
 </style>
-${ssoConfig}
 </head>
 <body>
 <div id="app"><div class="loading">Loading…</div></div>
@@ -125,6 +139,49 @@ const PROVIDERS = ["openai", "anthropic"];
 let cfg = null;      
 let providers = [];   
 let models = {};      
+let availableProjectScopes = [];
+let tokens = [];
+let agentTokens = [];
+let tokenModalOpen = false;
+let tokenModalMode = "client";
+let tokenModalResults = [];
+let tokenForm = {
+  name: "",
+  caps: [],
+  scopesInput: "",
+  scopes: [],
+  ttlDays: ""
+};
+let tokenFormErrors = {
+  name: "",
+  caps: ""
+};
+
+const CLIENT_CAPS = [
+  "chat",
+  "beliefs:read",
+  "beliefs:write",
+  "extraction",
+  "injection"
+];
+
+const AGENT_CAPS = ["chat", "extraction", "injection"];
+
+const TOKEN_LABELS = {
+  chat: "Chat completions",
+  "beliefs:read": "Read beliefs",
+  "beliefs:write": "Manual belief CRUD",
+  extraction: "Auto-extract beliefs",
+  injection: "Inject beliefs into context"
+};
+
+const TOKEN_HINTS = {
+  chat: "Use /v1/chat/completions and /v1/messages",
+  "beliefs:read": "List, search, and inspect beliefs",
+  "beliefs:write": "Create, update, delete beliefs via API",
+  extraction: "Auto-extract beliefs from chat turns",
+  injection: "Inject beliefs into chat context"
+};
 
 const app = document.getElementById("app");
 
@@ -179,9 +236,9 @@ async function init() {
     if (!provRes.ok) throw new Error(\`Providers load failed (HTTP \${provRes.status})\`);
     cfg = await cfgRes.json();
     providers = (await provRes.json()).providers ?? [];
+    await Promise.all([loadTokens(), loadProjectScopes()]);
     render();
-    ${isTeams ? "loadTokens();" : ""}
-    loadPersona()
+    loadPersona();
     loadErrors();
   } catch (e) {
     if (e.message !== "unauthorized") {
@@ -298,31 +355,6 @@ function render() {
         </div>
         </div>
 
-              ${
-                !isTeams
-                  ? `
-      <div class="section">
-        <div class="section-title">Memory mode</div>
-        <div class="card">
-          <div class="field">
-            <label>Memory mode</label>
-            <select id="memory-mode" class="model-select" style="width:100%">
-              <option value="autonomous"\${(cfg.memory_mode ?? "autonomous") === "autonomous" ? " selected" : ""}>Autonomous - extract and merge automatically</option>
-              <option value="inject_only"\${cfg.memory_mode === "inject_only" ? " selected" : ""}>Document-driven - only import/onboarding</option>
-              <option value="curated"\${cfg.memory_mode === "curated" ? " selected" : ""}>Curated - queue for admin approval</option>
-              <option value="reflective"\${cfg.memory_mode === "reflective" ? " selected" : ""}>Reflective - extract, do not inject</option>
-            </select>
-            <div class="hint">Autonomous runs extraction and compaction automatically. Document-driven only adds beliefs from imports or onboarding. Curated queues new beliefs for your approval. Reflective extracts beliefs but never injects them into sessions.</div>
-          </div>
-          <div style="display:flex;justify-content:flex-end;margin-top:.75rem">
-            <button class="btn btn-primary" data-action="save-memory-mode">Save</button>
-          </div>
-        </div>
-      </div>
-      `
-                  : ""
-              }
-
         <div class="section">
           <div class="section-title">Scope</div>
           <div class="card">
@@ -413,9 +445,7 @@ function render() {
         </div>
       </div>
 
-      ${
-        !isTeams
-          ? `
+
         <div class="section">
           <div class="section-title">API Token</div>
           <div class="card">
@@ -428,44 +458,40 @@ function render() {
             </div>
           </div>
         </div>
-        `
-          : `
+
         <div class="section">
           <div class="section-title">Access Tokens</div>
+
           <div class="card">
             <div class="field">
-              <label>Personal access tokens</label>
-              <div class="hint">Generate tokens for VSCode, OpenWebUI, or CI. Copy the token immediately, it is shown only once.</div>
-            </div>
-            <div id="token-list" style="margin-top:.75rem"></div>
-            <div class="row" style="margin-top:.75rem">
-              <div class="field" style="flex:1;margin:0">
-                <input id="new-token-name" type="text" placeholder="Token name (e.g. VSCode Laptop)" style="width:100%">
+              <label>Client tokens</label>
+              <div class="hint">
+                For VSCode, OpenWebUI, CI, or any client tool. Full belief read/write access.
               </div>
-              <button class="btn btn-primary" data-action="create-token">Generate</button>
             </div>
-            <div id="new-token-result" style="margin-top:.5rem;font-size:.85rem;color:var(--ok);display:none"></div>
+            <div style="margin-top:.75rem">
+              \${renderTokenRows(tokens, "No active client tokens.")}
+            </div>
+            <div style="display:flex;justify-content:flex-end;margin-top:.75rem">
+              <button class="btn btn-primary" data-action="open-token-modal" data-token-mode="client">Generate client token</button>
+            </div>
           </div>
-        </div>
-        `
-      }
 
-      <div class="section">
-        <div class="section-title">Maintenance</div>
-        <div class="card">
-          <div class="field">
-            <label>Belief compaction</label>
-            <div class="hint">Merges overlapping and redundant beliefs. Runs automatically 
-            every 30 minutes — trigger manually after a large import or onboarding run.</div>
+          <div class="card" style="margin-top:.5rem">
+            <div class="field">
+              <label>Agent tokens</label>
+              <div class="hint">
+                For agent tools. Limited to chat, extraction, and injection. Cannot read or write beliefs directly.
+              </div>
+            </div>
+            <div style="margin-top:.75rem">
+              \${renderTokenRows(agentTokens, "No active agent tokens.")}
+            </div>
+            <div style="display:flex;justify-content:flex-end;margin-top:.75rem">
+              <button class="btn btn-primary" data-action="open-token-modal" data-token-mode="agent">Generate agent token</button>
+            </div>
           </div>
-          <div style="display:flex;justify-content:flex-end;margin-top:.75rem">
-            <button class="btn btn-primary" id="compact-btn" data-action="run-compaction">
-              Merge redundant beliefs
-            </button>
-          </div>
-          <div id="compact-status" style="margin-top:.75rem;font-size:.82rem"></div>
         </div>
-      </div>
 
       <div class="section">
         <div class="section-title">Error Log</div>
@@ -728,20 +754,6 @@ async function saveAdvanced() {
   }
 }
 
-async function saveMemoryMode() {
-  const mode = document.getElementById("memory-mode")?.value;
-  if (!mode) return;
-  try {
-    const res = await apiFetch("PUT", "/admin/config/memory_mode", { value: mode });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data?.error?.message ?? \`HTTP \${res.status}\`);
-    cfg.memory_mode = mode;
-    toast("Memory mode saved", "ok");
-  } catch (e) {
-    toast(e.message, "error");
-  }
-}
-
 async function setExtractionEnabled(enabled) {
   try {
     const res = await apiFetch("PUT", "/admin/config/extraction_enabled", {
@@ -773,27 +785,364 @@ async function setExtractionEnabled(enabled) {
 }
 
 async function loadTokens() {
-  const el = document.getElementById("token-list");
-  if (!el) return;
   try {
     const res = await apiFetch("GET", "/admin/tokens");
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error?.message ?? \`HTTP \${res.status}\`);
-    if (!data.tokens?.length) {
-      el.innerHTML = '<span style="color:var(--muted);font-size:.8rem">No active tokens.</span>';
-      return;
+    const all = data.tokens ?? [];
+    tokens = all.filter(t => t.kind === "client");
+    agentTokens = all.filter(t => t.kind === "agent");
+  } catch {
+    tokens = [];
+    agentTokens = [];
+  }
+}
+
+async function loadProjectScopes() {
+  try {
+    const res = await apiFetch("GET", "/v1/scopes/projects");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message ?? \`HTTP \${res.status}\`);
+    availableProjectScopes = data.scopes ?? [];
+  } catch {
+    availableProjectScopes = [];
+  }
+}
+
+function getTokenStatus(t) {
+  if (t.revoked_at) return "revoked";
+  if (t.expires_at && new Date(t.expires_at).getTime() <= Date.now()) {
+    return "expired";
+  }
+  return "active";
+}
+
+function tokenStatusLabel(status) {
+  if (status === "revoked") return "Revoked";
+  if (status === "expired") return "Expired";
+  return "Active";
+}
+
+function openTokenModal(mode) {
+  tokenModalMode = mode;
+  tokenModalOpen = true;
+  tokenForm = {
+    name: "",
+    caps: [],
+    scopesInput: "",
+    scopes: [],
+    ttlDays: ""
+  };
+  tokenFormErrors = {
+    name: "",
+    caps: ""
+  };
+  tokenModalResults = [];
+  renderTokenModal();
+}
+
+function closeTokenModal() {
+  tokenModalOpen = false;
+  const overlay = document.querySelector(".overlay");
+  if (overlay) overlay.remove();
+}
+
+function toggleTokenCap(cap) {
+  if (tokenFormErrors.caps) tokenFormErrors.caps = "";
+  const prev = tokenForm.caps.slice();
+  const has = prev.includes(cap);
+
+  if (has) {
+    if (cap === "chat") {
+      tokenForm.caps = prev.filter(
+        c => c !== "chat" && c !== "extraction" && c !== "injection"
+      );
+    } else {
+      tokenForm.caps = prev.filter(c => c !== cap);
     }
-    el.innerHTML = data.tokens.map(t => \`
+  } else {
+    if (cap === "extraction" || cap === "injection") {
+      const next = new Set(prev);
+      next.add(cap);
+      next.add("chat");
+      tokenForm.caps = [...next];
+    } else {
+      tokenForm.caps = [...prev, cap];
+    }
+  }
+
+  renderTokenModal();
+}
+
+
+
+async function copyTokenValue(t) {
+  try {
+    await navigator.clipboard.writeText(t);
+    toast("Copied to clipboard", "ok");
+  } catch {
+    toast("Couldn't copy to clipboard", "error");
+  }
+}
+
+async function submitTokenCreate() {
+  const trimmedName = tokenForm.name.trim();
+  let hasError = false;
+
+  tokenFormErrors = {
+    name: "",
+    caps: ""
+  };
+
+  if (!trimmedName) {
+    tokenFormErrors.name = "Enter a token name.";
+    hasError = true;
+  }
+  if (tokenForm.caps.length === 0) {
+    tokenFormErrors.caps = "Select at least one capability.";
+    hasError = true;
+  }
+  if (hasError) {
+    renderTokenModal();
+    return;
+  }
+
+  try {
+    const endpoint =
+      tokenModalMode === "client"
+        ? "/admin/tokens/client"
+        : "/admin/tokens/agent";
+
+    const res = await apiFetch("POST", endpoint, {
+      name: trimmedName,
+      capabilities: tokenForm.caps,
+      project_scopes: tokenForm.scopes.length > 0 ? tokenForm.scopes : null,
+      ttl_days: tokenForm.ttlDays ? parseInt(tokenForm.ttlDays, 10) : null
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message ?? \`HTTP \${res.status}\`);
+
+    tokenModalResults = [
+      { name: trimmedName, token: data.token },
+      ...tokenModalResults
+    ];
+
+    tokenForm = {
+      name: "",
+      caps: [],
+      scopesInput: "",
+      scopes: [],
+      ttlDays: ""
+    };
+
+    await loadTokens();
+    render();
+    renderTokenModal();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+
+async function revokeToken(id) {
+  if (!confirm("Revoke this token? Any clients using it will immediately lose access.")) return;
+  try {
+    const res = await apiFetch("DELETE", \`/admin/tokens/\${id}\`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error?.message ?? \`HTTP \${res.status}\`);
+    toast("Token revoked", "ok");
+    await loadTokens();
+    render();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+
+function renderTokenRows(list, emptyText) {
+  if (!list.length) {
+    return \`<span style="color:var(--muted);font-size:.8rem">\${esc(emptyText)}</span>\`;
+  }
+
+  return list.map(t => {
+    const status = getTokenStatus(t);
+    return \`
       <div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface2);border-radius:4px;padding:.5rem .65rem;margin-bottom:.4rem">
         <div>
-          <div style="font-size:.85rem">\${esc(t.name)}</div>
-          <div style="font-size:.72rem;color:var(--muted)">Created \${new Date(t.created_at).toLocaleDateString()}</div>
+          <div style="font-size:.85rem;display:flex;align-items:center;gap:.45rem;flex-wrap:wrap">
+            <span>\${esc(t.name)}</span>
+            <span class="badge token-status-\${status}">\${tokenStatusLabel(status)}</span>
+            \${t.token_prefix ? \`<code style="font-size:.7rem;color:var(--muted)">\${esc(t.token_prefix)}</code>\` : ""}
+          </div>
+          <div style="font-size:.72rem;color:var(--muted)">
+            \${(t.capabilities ?? []).join(", ")} &middot; Created \${new Date(t.created_at).toLocaleDateString()}
+            \${t.expires_at ? \` · Expires \${new Date(t.expires_at).toLocaleDateString()}\` : " · No expiry"}
+          </div>
         </div>
-        <button class="btn btn-danger" data-action="revoke-token" data-token-id="\${esc(t._id)}">Revoke</button>
+        <button class="btn btn-danger" data-action="revoke-token" data-token-id="\${esc(t.id)}" \${status === "revoked" ? "disabled" : ""}>Revoke</button>
       </div>
-    \`).join("");
-  } catch (e) {
-    if (el) el.innerHTML = '<span style="color:var(--danger);font-size:.8rem">Failed to load tokens.</span>';
+    \`;
+  }).join("");
+}
+
+function tokenModalHtml() {
+  const mode = tokenModalMode;
+  const caps = mode === "client" ? CLIENT_CAPS : AGENT_CAPS;
+  const title = \`Generate \${mode === "client" ? "client" : "agent"} token\`;
+
+  return \`
+    <div class="modal">
+      <h2>\${esc(title)}</h2>
+      <div class="form-grid">
+        <div class="form-grid-col">
+          <div class="field">
+            <label>Token name</label>
+            <input
+              id="token-name"
+              type="text"
+              class="\${tokenFormErrors.name ? "input-error" : ""}"
+              placeholder="\${mode === "client" ? "e.g. VSCode Laptop" : "e.g. CI Agent"}"
+              value="\${esc(tokenForm.name)}"
+            >
+            \${tokenFormErrors.name ? \`<div class="field-error">\${esc(tokenFormErrors.name)}</div>\` : ""}
+          </div>
+
+          <div class="field">
+            <label>Capabilities</label>
+            <div class="hint" style="margin-bottom:.6rem">
+              Select which capabilities to grant this token.
+            </div>
+            \${tokenFormErrors.caps ? \`<div class="field-error" style="margin:0 0 .6rem">\${esc(tokenFormErrors.caps)}</div>\` : ""}
+            <div class="cap-list">
+              \${caps.map(cap => \`
+                <label class="checkbox-row">
+                  <input
+                    type="checkbox"
+                    data-action="toggle-token-cap"
+                    data-cap="\${esc(cap)}"
+                    \${tokenForm.caps.includes(cap) ? "checked" : ""}
+                  >
+                  <span class="checkbox-box"></span>
+                  <div class="checkbox-content">
+                    <div style="font-size:.85rem;font-weight:500">\${esc(TOKEN_LABELS[cap] ?? cap)}</div>
+                    <div class="hint" style="margin-top:0">\${esc(TOKEN_HINTS[cap] ?? "")}</div>
+                  </div>
+                </label>
+              \`).join("")}
+            </div>
+          </div>
+        </div>
+
+        <div class="form-grid-col">
+          <div class="field">
+            <label>Project scopes (optional)</label>
+            <div class="hint">
+              Restrict this token to specific projects. Leave empty for all projects.
+            </div>
+            \${availableProjectScopes.length > 0 ? \`
+              <select id="token-project-scopes" multiple size="\${Math.min(Math.max(availableProjectScopes.length, 4), 8)}" style="margin-top:.5rem">
+                \${availableProjectScopes.map(scope => \`
+                  <option value="\${esc(scope)}" \${tokenForm.scopes.includes(scope) ? "selected" : ""}>\${esc(scope)}</option>
+                \`).join("")}
+              </select>
+              <div class="hint">Hold Ctrl or Cmd to select multiple scopes.</div>
+            \` : \`
+              <div class="hint" style="margin-top:.5rem">
+                No project scopes found yet.
+              </div>
+            \`}
+            \${tokenForm.scopes.length > 0 ? \`
+              <div style="display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.5rem">
+                \${tokenForm.scopes.map(scope => \`
+                  <span class="badge token-status-active" style="cursor:default">\${esc(scope)}</span>
+                \`).join("")}
+              </div>
+            \` : ""}
+          </div>
+
+          <div class="field">
+            <label>Token expiry</label>
+            <div class="hint">
+              Optionally set a time limit for this token. Leave blank for no expiry.
+            </div>
+            <select id="token-ttl">
+              <option value="" \${tokenForm.ttlDays === "" ? "selected" : ""}>No expiry</option>
+              <option value="7" \${tokenForm.ttlDays === "7" ? "selected" : ""}>7 days</option>
+              <option value="30" \${tokenForm.ttlDays === "30" ? "selected" : ""}>30 days</option>
+              <option value="90" \${tokenForm.ttlDays === "90" ? "selected" : ""}>90 days</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>
+              Generated tokens
+              \${tokenModalResults.length > 0 ? \`<span style="opacity:.5;font-weight:400">(\${tokenModalResults.length})</span>\` : ""}
+            </label>
+            \${tokenModalResults.length === 0 ? \`
+              <div class="hint">
+                Tokens you generate in this session will appear here. Copy them now, they will not be shown again.
+              </div>
+            \` : \`
+              <div class="token-result-list">
+                \${tokenModalResults.map((r, i) => \`
+                  <div class="token-result">
+                    <div class="token-result-name">\${esc(r.name)}</div>
+                    <div class="token-result-row">
+                      <code class="token-result-value">\${esc(r.token)}</code>
+                      <button class="btn" data-action="copy-token-value" data-token-value="\${esc(r.token)}">Copy</button>
+                    </div>
+                  </div>
+                \`).join("")}
+                <div class="token-result-warn">
+                  These values will not be shown again after you close this dialog.
+                </div>
+              </div>
+            \`}
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn" data-action="close-token-modal">Done</button>
+        <button class="btn btn-primary" data-action="submit-token-create">Generate</button>
+      </div>
+    </div>
+  \`;
+}
+
+function renderTokenModal() {
+  const existing = document.querySelector(".overlay");
+  if (existing) existing.remove();
+  if (!tokenModalOpen) return;
+
+  const el = document.createElement("div");
+  el.className = "overlay";
+  el.innerHTML = tokenModalHtml();
+  document.body.appendChild(el);
+
+  const nameEl = document.getElementById("token-name");
+  const scopeEl = document.getElementById("token-project-scopes");
+  const ttlEl = document.getElementById("token-ttl");
+
+  if (nameEl) {
+    nameEl.addEventListener("input", e => {
+      tokenForm.name = e.target.value;
+      if (tokenFormErrors.name) {
+        tokenFormErrors.name = "";
+        renderTokenModal();
+      }
+    });
+  }
+
+  if (scopeEl) {
+    scopeEl.addEventListener("change", e => {
+      tokenForm.scopes = Array.from(e.target.selectedOptions).map(o => o.value);
+      renderTokenModal();
+    });
+  }
+
+  if (ttlEl) {
+    ttlEl.addEventListener("change", e => {
+      tokenForm.ttlDays = e.target.value;
+    });
   }
 }
 
@@ -1196,8 +1545,11 @@ document.addEventListener("click", e => {
     case "remove-provider": removeProvider(el.dataset.providerId); break;
     case "regenerate-persona": regeneratePersona(); break;
     case "save-advanced": saveAdvanced(); break;
-    case "save-memory-mode": saveMemoryMode(); break;
     case "rotate-token": rotateToken(); break;
+    case "open-token-modal": openTokenModal(el.dataset.tokenMode); break;
+    case "close-token-modal": closeTokenModal(); break;
+    case "submit-token-create": submitTokenCreate(); break;
+    case "copy-token-value": copyTokenValue(el.dataset.tokenValue); break;
   }
 });
 
@@ -1211,14 +1563,24 @@ document.addEventListener("change", e => {
     case "set-scope-auto-detect": setScopeAutoDetect(el.checked); break;
     case "set-strict-model-tiers": setStrictModelTiers(el.checked); break;
     case "on-admin-flavor-change": onAdminFlavorChange(el.dataset.providerId, el.value); break;
+    case "toggle-token-cap": toggleTokenCap(el.dataset.cap); break;
   }
 });
 
-if (window.__TENURE_SSO_USER__) {
-  init(); 
-} else {
-  token ? init() : showTokenScreen();
-}
+document.addEventListener("click", e => {
+  if (e.target.classList?.contains("overlay")) {
+    closeTokenModal();
+  }
+});
+
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && tokenModalOpen) {
+    closeTokenModal();
+  }
+});
+
+token ? init() : showTokenScreen();
+
 <\/script>
 </body>
 </html>`;

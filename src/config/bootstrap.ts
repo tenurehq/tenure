@@ -36,13 +36,6 @@ master_key_path = "${c.master_key_path}"
 function validateConfig(raw: Record<string, unknown>): BootstrapConfig {
   const merged = { ...DEFAULT, ...raw };
 
-  if (DEPLOY_MODE === "teams") {
-    if (!process.env.MONGODB_URI)
-      throw new Error("config: MONGODB_URI is required in teams mode");
-    if (!process.env.TENURE_USER_ID)
-      throw new Error("config: TENURE_USER_ID is required in teams mode");
-  }
-
   if (typeof merged.mongodb_uri !== "string")
     throw new Error("config: mongodb_uri must be a string");
   if (typeof merged.mongodb_db !== "string")
@@ -61,11 +54,10 @@ export function loadBootstrapConfig(path = CONFIG_PATH): BootstrapConfig {
   let config: BootstrapConfig;
 
   if (!existsSync(path)) {
-    if (process.env.TENURE_MODE !== "teams") {
-      console.log(`No config found at ${path}, generating defaults...`);
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, CONFIG_TOML(DEFAULT));
-    }
+    console.log(`No config found at ${path}, generating defaults...`);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, CONFIG_TOML(DEFAULT));
+
     config = DEFAULT;
   } else {
     const raw = parseToml(readFileSync(path, "utf8")) as Record<

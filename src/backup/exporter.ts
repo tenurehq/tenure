@@ -1,12 +1,11 @@
 import type { Db } from "mongodb";
 import type { RuntimeConfigStore } from "../config/runtime.js";
 import type { Belief } from "../types/belief.js";
-import type { CompactionLogEntry } from "../jobs/compactionRunner.js";
 import type { PersonaDoc } from "../context/personaCache.js";
 import type {
   TenureExport,
   ExportedBelief,
-  ExportedPersonaDoc,
+  ExportedPersonaDoc
 } from "./types.js";
 import { encryptArchive } from "./crypto.js";
 import type { InjectionAuditRecord } from "../types/injectionAudit.js";
@@ -33,27 +32,17 @@ export class BackupExporter {
   private async buildPayload(): Promise<TenureExport> {
     const { db, runtimeStore, userId } = this.deps;
 
-    const [
-      beliefs,
-      runtimeConfig,
-      personaDoc,
-      compactionLog,
-      sessions,
-      auditRecords,
-    ] = await Promise.all([
-      db.collection<Belief>("beliefs").find({ user_id: userId }).toArray(),
-      runtimeStore.load(),
-      db.collection<PersonaDoc>("persona_cache").findOne({ _id: userId }),
-      db
-        .collection<CompactionLogEntry>("compaction_log")
-        .find({ user_id: userId })
-        .toArray(),
-      db.collection("sessions").find({ userId }).toArray(),
-      db
-        .collection<InjectionAuditRecord>("injection_audit")
-        .find({ user_id: userId })
-        .toArray(),
-    ]);
+    const [beliefs, runtimeConfig, personaDoc, sessions, auditRecords] =
+      await Promise.all([
+        db.collection<Belief>("beliefs").find({ user_id: userId }).toArray(),
+        runtimeStore.load(),
+        db.collection<PersonaDoc>("persona_cache").findOne({ _id: userId }),
+        db.collection("sessions").find({ userId }).toArray(),
+        db
+          .collection<InjectionAuditRecord>("injection_audit")
+          .find({ user_id: userId })
+          .toArray()
+      ]);
 
     return {
       version: 1,
@@ -69,21 +58,12 @@ export class BackupExporter {
         anthropic_base_url: runtimeConfig.anthropic_base_url,
         openai_endpoint_flavor: runtimeConfig.openai_endpoint_flavor,
         always_on_token_target: runtimeConfig.always_on_token_target,
-        managed_history_token_cap: runtimeConfig.managed_history_token_cap,
         error_retention_days: runtimeConfig.error_retention_days,
         strict_model_tiers: runtimeConfig.strict_model_tiers,
         extraction_enabled: runtimeConfig.extraction_enabled,
-        ide_extraction_enabled: runtimeConfig.ide_extraction_enabled,
+        ide_extraction_enabled: runtimeConfig.ide_extraction_enabled
       },
       persona_cache: personaDoc ? this.serializePersona(personaDoc) : null,
-      compaction_log: compactionLog.map((entry) => ({
-        _id: entry._id,
-        user_id: entry.user_id,
-        scope: entry.scope,
-        belief_type: entry.belief_type,
-        ran_at: entry.ran_at.toISOString(),
-        merged_count: entry.merged_count,
-      })),
       sessions: sessions.map((s) => ({
         _id: s._id.toString(),
         userId: s.userId as string,
@@ -96,12 +76,12 @@ export class BackupExporter {
         createdAt:
           (s.createdAt as Date)?.toISOString() ?? new Date().toISOString(),
         lastUsedAt:
-          (s.lastUsedAt as Date)?.toISOString() ?? new Date().toISOString(),
+          (s.lastUsedAt as Date)?.toISOString() ?? new Date().toISOString()
       })),
       injection_audit: auditRecords.map((r) => ({
         ...r,
-        created_at: r.created_at.toISOString(),
-      })),
+        created_at: r.created_at.toISOString()
+      }))
     };
   }
 
@@ -119,7 +99,7 @@ export class BackupExporter {
         session_id: b.provenance.session_id,
         turn_id: b.provenance.turn_id,
         extracted_at: b.provenance.extracted_at.toISOString(),
-        source_model: b.provenance.source_model,
+        source_model: b.provenance.source_model
       },
       epistemic_status: b.epistemic_status,
       confidence: b.confidence,
@@ -133,16 +113,15 @@ export class BackupExporter {
         changed_at: entry.changed_at.toISOString(),
         trigger: entry.trigger,
         changed_by_session: entry.changed_by_session ?? null,
-        changed_by_turn: entry.changed_by_turn ?? null,
+        changed_by_turn: entry.changed_by_turn ?? null
       })),
       ...(b.expertise_domain && { expertise_domain: b.expertise_domain }),
       ...(b.expertise_depth && { expertise_depth: b.expertise_depth }),
       ...(b.expertise_evidence_count != null && {
-        expertise_evidence_count: b.expertise_evidence_count,
+        expertise_evidence_count: b.expertise_evidence_count
       }),
-      ...(b.compaction_note && { compaction_note: b.compaction_note }),
       created_at: b.created_at.toISOString(),
-      updated_at: b.updated_at.toISOString(),
+      updated_at: b.updated_at.toISOString()
     };
   }
 
@@ -152,7 +131,7 @@ export class BackupExporter {
       contributing_belief_ids: doc.contributing_belief_ids,
       beliefs_hash: doc.beliefs_hash,
       generated_at: doc.generated_at.toISOString(),
-      model: doc.model,
+      model: doc.model
     };
   }
 }

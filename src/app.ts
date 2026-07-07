@@ -1,8 +1,8 @@
 import { Db, MongoClient, type MongoClientOptions } from "mongodb";
+import { existsSync, readFileSync } from "node:fs";
 import { getCollections } from "./db/collections.js";
 import { ensureIndexes, ensureSearchIndexes } from "./db/indexes.js";
 import { SessionManager } from "./session/manager.js";
-import { HistoryManager } from "./history/manager.js";
 import { BeliefsReader } from "./context/beliefsReader.js";
 import { ContextBuilder } from "./context/contextBuilder.js";
 import { ExtractionJobQueue } from "./jobs/queue.js";
@@ -16,20 +16,16 @@ import { OpenAIAdapter } from "./providers/openai.js";
 import { AnthropicAdapter } from "./providers/anthropic.js";
 import { ErrorLogger } from "./errors/logger.js";
 import { PersonaCache } from "./context/personaCache.js";
-import { BeliefCompactionRunner } from "./jobs/compactionRunner.js";
 import { ExtractionWorker } from "./extraction/worker.js";
 import { PersonaSummaryService } from "./context/personaSummary.js";
-import {
-  buildAutoEncryptionOptions,
-  loadOrCreateLocalMasterKey
-} from "./config/beliefEncryption.js";
+import { buildAutoEncryptionOptions } from "./config/beliefEncryption.js";
 import { getBeliefMasterKeyPath } from "./config/beliefEncryptionMasterKey.js";
 import { initBeliefEncryption } from "./config/beliefEncryption.js";
 import { randomBytes } from "node:crypto";
 import { WorkspaceStateCache } from "./workspace/stateCache.js";
 import type { InternalLLMCaller } from "./providers/types.js";
-import { OrgSummaryDirect } from "./context/orgSummary.js";
 import { ProjectResumeService } from "./context/projectResume.js";
+import { TokenService } from "./auth/tokenService.js";
 
 const mongoTlsOptions: MongoClientOptions = {};
 if (process.env.MONGODB_TLS_CA_FILE) {
@@ -56,7 +52,7 @@ async function verifyEncryptionActive(
     });
 
     const decrypted = await testCol.findOne({ _id: testId as unknown as any });
-    if (decrypted?.content !== testContent) {
+    if (decrypted?.content != testContent) {
       throw new Error("Encrypted read did not return expected plaintext");
     }
 
@@ -65,7 +61,7 @@ async function verifyEncryptionActive(
     try {
       const rawDoc = await rawClient
         .db(mongoDbName)
-        .collection("__encryption_check")
+        .collection("beliefs")
         .findOne({ _id: testId as unknown as any });
 
       if (rawDoc?.content === testContent) {
@@ -85,8 +81,17 @@ async function verifyEncryptionActive(
 }
 
 export async function buildApp(config: BootstrapConfig) {
+  const vault = new CredentialVault(config.master_key_path);
+
   const beliefKeyPath = getBeliefMasterKeyPath(process.env.TENURE_HOME);
-  const beliefMasterKey = loadOrCreateLocalMasterKey(beliefKeyPath);
+  let beliefMasterKey: Buffer;
+  if (existsSync(beliefKeyPath)) {
+    console.log("Using existing belief.key (legacy file)");
+    beliefMasterKey = readFileSync(beliefKeyPath);
+  } else {
+    console.log("Deriving belief encryption key from master.key...");
+    beliefMasterKey = vault.hkdfExpand("tenure:belief:csfle", 96);
+  }
 
   console.log("Initializing belief encryption key...");
   const bootstrapClient = new MongoClient(config.mongodb_uri);
@@ -133,32 +138,36 @@ export async function buildApp(config: BootstrapConfig) {
 
   console.log("Loading app config...");
   const appConfig = await loadAppConfig(db, {
+    vault,
     onFirstRun: (token, path) => {
-      if (process.env.TENURE_MODE === "teams") {
-        console.log(
-          "Teams mode: TENURE_API_TOKEN loaded from secret; skipping local token file write"
-        );
-        return;
-      }
       writeTokenAndPrintBanner(token, path, config.port);
     }
   });
   console.log("App config loaded");
 
   const sessions = new SessionManager(db);
-  const history = new HistoryManager(db);
   const beliefs = new BeliefsReader(cols.beliefs);
   const persona = new PersonaCache(cols.persona_cache);
-  const orgSummaryService = new OrgSummaryDirect(
-    cols.db.collection("org_summaries")
-  );
-  const context = new ContextBuilder(beliefs, persona, orgSummaryService);
+  const context = new ContextBuilder(beliefs, persona);
   const jobs = new ExtractionJobQueue(db);
-  const vault = new CredentialVault(config.master_key_path);
   const runtimeStore = new RuntimeConfigStore(cols, vault);
   const runtimeConfig = await runtimeStore.load();
   const errorLogger = new ErrorLogger(cols);
   const workspaceState = new WorkspaceStateCache(db);
+
+  let hmacKey: Buffer;
+  if (runtimeConfig.token_hmac_key) {
+    hmacKey = Buffer.from(runtimeConfig.token_hmac_key, "base64");
+  } else {
+    hmacKey = randomBytes(32);
+    await runtimeStore.set(
+      "token_hmac_key" as any,
+      hmacKey.toString("base64") as any
+    );
+  }
+
+  const tokenService = new TokenService(cols.tokens, hmacKey);
+  await tokenService.ensureRootToken(config.user_id, appConfig.api_token);
 
   const providers = new ProviderRegistry();
   if (runtimeConfig.openai_api_key) {
@@ -193,16 +202,6 @@ export async function buildApp(config: BootstrapConfig) {
     modelId: runtimeConfig.default_model ?? ""
   });
 
-  const compactionRunner = new BeliefCompactionRunner(
-    cols.beliefs,
-    cols.compaction_log,
-    cols.contradictions,
-    resolveAdapter,
-    runtimeConfig.default_model,
-    persona,
-    personaSummary
-  );
-
   const extractionWorker = new ExtractionWorker({
     db,
     beliefs: cols.beliefs,
@@ -222,21 +221,19 @@ export async function buildApp(config: BootstrapConfig) {
     db,
     cols,
     sessions,
-    history,
     context,
     providers,
     jobs,
     runtimeStore,
     errorLogger,
     persona,
-    apiToken: appConfig.api_token,
     userId: config.user_id,
-    compactionRunner,
     extractionWorker,
     personaSummary,
     projectResume,
-    orgSummaryService,
-    workspaceState
+    workspaceState,
+    tokenService,
+    vault
   });
 
   return {

@@ -1,47 +1,22 @@
 import type { FastifyInstance } from "fastify";
 
-const isTeams = process.env.TENURE_MODE === "teams";
-
 export function registerBeliefsUiRoute(app: FastifyInstance): void {
   app.get<{ Querystring: { token?: string } }>(
     "/beliefs",
     async (req, reply) => {
-      if (isTeams && !req.tenureUserId) {
-        return reply
-          .code(401)
-          .send({ error: { message: "SSO authentication required" } });
-      }
       reply.header("content-type", "text/html; charset=utf-8");
       const nonce = (reply.raw as any).cspNonce as string | undefined;
-      return reply.send(
-        buildBeliefsHtml(
-          req.query.token ?? "",
-          req.tenureUserId,
-          nonce,
-          isTeams
-        )
-      );
+      return reply.send(buildBeliefsHtml(req.query.token ?? "", nonce));
     }
   );
 }
 
-function buildBeliefsHtml(
-  embeddedToken: string,
-  ssoUserId?: string,
-  nonce?: string,
-  isTeams = false
-): string {
+function buildBeliefsHtml(embeddedToken: string, nonce?: string): string {
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
 
   const tokenJS = embeddedToken
     ? JSON.stringify(embeddedToken).replace(/</g, "\\u003c")
     : `new URLSearchParams(location.search).get("token") || localStorage.getItem("mp_token") || ""`;
-
-  const ssoConfig = ssoUserId
-    ? `<script${nonceAttr}>window.__TENURE_SSO_USER__ = ${JSON.stringify(
-        ssoUserId
-      )};</script>`
-    : "";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -153,7 +128,6 @@ select.input-sm option { background: #1a1a1a; }
 @keyframes slideup { from { opacity: 0; transform: translateY(.4rem); } to { opacity: 1; transform: none; } }
 .logo { display: block; margin: 0 auto 2rem; width: 120px; }
 </style>
-${ssoConfig}
 </head>
 <body>
 <div id="app"><div class="loading">Loading…</div></div>
@@ -248,29 +222,13 @@ function render() {
     return;
   }
   const filtered = getFiltered();
-  const teamBeliefs = isTeams ? filtered.filter(b => b.visibility === "team") : [];
-  const personalBeliefs = isTeams ? filtered.filter(b => b.visibility !== "team") : filtered;
-
-  const teamByType = Object.fromEntries(TYPE_ORDER.map(t => [t, []]));
-  for (const b of teamBeliefs) (teamByType[b.type] ?? (teamByType[b.type] = [])).push(b);
+  const personalBeliefs = filtered;
 
   const byType   = Object.fromEntries(TYPE_ORDER.map(t => [t, []]));
   for (const b of personalBeliefs) (byType[b.type] ?? (byType[b.type] = [])).push(b);
 
-  const teamSection = isTeams && teamBeliefs.length
-    ? \`<div class="section">
-        <div class="section-title">Team Working Agreements</div>
-        \${TYPE_ORDER.filter(t => teamByType[t]?.length).map(t => \`
-          <div style="margin-bottom:1rem">
-            <div style="font-size:.75rem;color:var(--muted);margin-bottom:.375rem;font-weight:600">\${TYPE_LABELS[t]}</div>
-            \${(teamByType[t] ?? []).map(b => beliefCard(b, true)).join("")}
-          </div>
-        \`).join("")}
-      </div>\`
-    : "";
-
   const types = filterType === "all" ? TYPE_ORDER.filter(t => byType[t]?.length) : [filterType];
-  const sections = teamSection + types.map(t => \`
+  const sections = types.map(t => \`
     <div class="section">
       <div class="section-title">\${TYPE_LABELS[t] ?? t} <span style="opacity:.4;font-weight:400">(\${byType[t]?.length ?? 0})</span></div>
       \${(byType[t] ?? []).map(beliefCard).join("") || '<div class="empty">None</div>'}
@@ -331,12 +289,11 @@ function render() {
   renderModal();
 }
 
-function beliefCard(b, readOnly = false) {
+function beliefCard(b) {
   return \`
-    <div class="belief-card\${b.pinned ? " pinned" : ""}\${readOnly ? " team-readonly" : ""}" data-id="\${esc(b.id)}">
+    <div class="belief-card\${b.pinned ? " pinned" : ""} data-id="\${esc(b.id)}">
       <div class="bh">
         <span class="bname">\${esc(b.canonical_name ?? "")}</span>
-        \${readOnly ? \`<span class="badge" style="background:#0d2a1a;color:#4dda8a">Team</span>\` : ""}
         <span class="badge s-\${b.epistemic_status}">\${b.epistemic_status}</span>
         \${b.confidence != null ? \`<span class="conf">\${Math.round(b.confidence * 100)}%</span>\` : ""}
       </div>
@@ -364,16 +321,12 @@ function beliefCard(b, readOnly = false) {
           : ""
       }
       <div class="bactions">
-        \${!readOnly ? \`
         <button class="btn btn-pin\${b.pinned ? " active" : ""}" data-action="toggle-pin" data-id="\${esc(b.id)}">\${b.pinned ? "📌 Pinned" : "📌 Pin"}</button>
         <button class="btn" data-action="open-edit" data-id="\${esc(b.id)}">Edit</button>
-        \` : ""}
         <button class="btn" data-action="open-history" data-id="\${esc(b.id)}">History</button>
-        \${!readOnly ? \`
         <button class="btn" data-action="open-injections" data-id="\${esc(b.id)}">Injections</button>
         <span class="spacer"></span>
         <button class="btn btn-danger" data-action="open-delete" data-id="\${esc(b.id)}">Remove</button>
-        \` : \`<span class="spacer"></span><span style="font-size:.7rem;color:var(--muted)">Read-only</span>\`}
       </div>
     </div>\`;
 }
@@ -850,8 +803,7 @@ function renderImportPanel() {
           <p style="font-size:.82rem;color:var(--muted);margin-bottom:1.25rem;line-height:1.5">
             Paste anything — a skills file, a bio, bullet points, freeform notes.
             Tenure will extract beliefs exactly as it would from a conversation.
-            Importing the same document twice may create duplicates; the compaction
-            worker will merge them over time.
+            Importing the same document twice may create duplicates.
           </p>
           <div class="field">
             <label>Source label <span style="opacity:.5">(optional)</span></label>
@@ -1004,13 +956,8 @@ function clearImport() {
   if (st) st.innerHTML = "";
 }
 
+token ? init() : showTokenScreen();
 
-const isTeams = ${JSON.stringify(isTeams)};
-if (isTeams) {
-  init();
-} else {
-  token ? init() : showTokenScreen();
-}
 <\/script>
 </body>
 </html>`;

@@ -9,13 +9,11 @@ export interface BuildSystemPromptArgs {
   extractionEnabled: boolean;
   injectionEnabled: boolean;
   activeScope: string | undefined;
-  scopeAutoDetect: boolean;
   extractionMode?: "standard" | "ide";
   ideScope?: {
     projectScope: string | null;
     languageScope: string | null;
   } | null;
-  teamMode?: boolean;
 }
 
 export function buildSystemPrompt(args: BuildSystemPromptArgs): SystemPrompt {
@@ -35,7 +33,6 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): SystemPrompt {
       staticParts.push(
         buildIdeSidecarInstructions({
           activeScope: args.activeScope,
-          scopeAutoDetect: args.scopeAutoDetect,
           projectScope: args.ideScope.projectScope,
           languageScope: args.ideScope.languageScope
         })
@@ -43,23 +40,13 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): SystemPrompt {
     } else {
       staticParts.push(
         buildSidecarInstructions({
-          activeScope: args.activeScope,
-          scopeAutoDetect: args.scopeAutoDetect
+          activeScope: args.activeScope
         })
       );
     }
   }
 
   if (args.injectionEnabled) {
-    if (args.teamMode && args.beliefCtx.orgSummaryPrelude) {
-      staticParts.push(
-        "<org_summary>",
-        args.beliefCtx.orgSummaryPrelude,
-        "</org_summary>",
-        "The <org_summary> block above describes organization standards and governance. Treat these as durable constraints."
-      );
-    }
-
     if (args.beliefCtx.personaPrelude) {
       staticParts.push(
         "<persona>",
@@ -68,37 +55,24 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): SystemPrompt {
       );
     }
 
-    if (
-      args.teamMode &&
-      args.beliefCtx.teamBeliefsJson &&
-      args.beliefCtx.teamBeliefsJson !== "[]"
-    ) {
-      staticParts.push(
-        "<team_beliefs>",
-        args.beliefCtx.teamBeliefsJson,
-        "</team_beliefs>",
-        "The <team_beliefs> block above describes working agreements for your team. Treat these as active constraints that shape implementation choices."
-      );
-    }
-
     staticParts.push(
       [
         "You have persistent memory of this user.",
-        "The <persona> block above describes who they are and how they want to be engaged — standing context, not facts to quote.",
+        "The <persona> block above describes who they are and how they want to be engaged.",
         "",
-        "<pinned_facts> are standing constraints — treat them as hard requirements that shape every answer.",
-        "<relevant_beliefs> are query-surfaced context — use them to disambiguate and inform, not as hard constraints.",
+        "<pinned_facts> are standing constraints. Treat them as hard requirements.",
+        "<relevant_beliefs> are query-surfaced context. Use them to disambiguate and inform.",
         "",
-        "For each belief, the why_it_matters field is the primary action directive: it tells you what to change in your response.",
-        "Beliefs with epistemic_status 'inferred' are system hypotheses — hold them loosely.",
-        "Beliefs with epistemic_status 'exploratory' are unresolved — do not treat them as settled.",
-        "Beliefs with confidence below 0.65 are low-certainty — weight them accordingly.",
-        "Treat open questions as unresolved; do not invent closure."
+        "For each belief, the why_it_matters field is the primary action directive.",
+        "Beliefs with epistemic_status 'inferred' are system hypotheses. Hold them loosely.",
+        "Beliefs with epistemic_status 'exploratory' are unresolved. Do not treat them as settled.",
+        "Beliefs with confidence below 0.65 are low-certainty. Weight them accordingly.",
+        "Treat open questions as unresolved. Do not invent closure."
       ].join("\n")
     );
   }
 
-  const staticSection = staticParts.join("\n\n");
+  const staticSection = staticParts.join("");
 
   const beliefsSection = args.injectionEnabled
     ? [

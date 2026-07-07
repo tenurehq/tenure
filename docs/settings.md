@@ -152,11 +152,17 @@ These settings are hidden by default. Most users won't need to change them.
 
 **Strict model tiers**: when enabled, only verified models can be selected as the default. Disable this if you are running a self-hosted or custom model that isn't in the supported list.
 
-## API Token
+## Access Tokens
 
-Your bearer token for authenticating requests to Tenure. This is the token you paste into your client's API settings.
+Tenure uses different token types for different integration paths.
 
-**Rotate token**: generates a new token immediately and invalidates the current one. Your active session will end. Copy the new token before dismissing the confirmation dialog: it is also saved to `~/.tenure/token` (Linux/macOS) or `%USERPROFILE%\.tenure\token` (Windows).
+- **Bootstrap token**: created on first install and used for setup and admin access
+- **Client tokens**: used by chat clients, IDE clients, and other external tools
+- **Agent tokens**: used by agent integrations
+
+Create and revoke client and agent tokens from the Tenure UI. Use the token type that matches the integration you are connecting.
+
+The bootstrap token is not intended for external clients or agents.
 
 ## Maintenance
 

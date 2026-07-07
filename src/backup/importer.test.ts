@@ -3,7 +3,7 @@ import sinon from "sinon";
 import {
   BackupImporter,
   type ImporterDeps,
-  type ImportOptions,
+  type ImportOptions
 } from "./importer.js";
 import { encryptArchive } from "./crypto.js";
 import type { TenureExport } from "./types.js";
@@ -17,9 +17,6 @@ interface Context {
   };
   personaCol: {
     replaceOne: sinon.SinonStub;
-  };
-  compactionCol: {
-    insertMany: sinon.SinonStub;
   };
   sessionsCol: {
     replaceOne: sinon.SinonStub;
@@ -35,7 +32,7 @@ const test = anyTest as TestFn<Context>;
 const USER_ID = "user-import-test";
 
 function makeExportPayload(
-  overrides: Partial<TenureExport> = {},
+  overrides: Partial<TenureExport> = {}
 ): TenureExport {
   return {
     version: 1,
@@ -55,7 +52,7 @@ function makeExportPayload(
           session_id: "session-orig",
           turn_id: "turn-orig",
           extracted_at: "2025-01-01T00:00:00.000Z",
-          source_model: "anthropic:claude-haiku-4-5-20251001",
+          source_model: "anthropic:claude-haiku-4-5-20251001"
         },
         epistemic_status: "active",
         confidence: 0.9,
@@ -70,12 +67,12 @@ function makeExportPayload(
             changed_at: "2025-01-01T00:00:00.000Z",
             trigger: "extraction",
             changed_by_session: "session-orig",
-            changed_by_turn: "turn-orig",
-          },
+            changed_by_turn: "turn-orig"
+          }
         ],
         created_at: "2025-01-01T00:00:00.000Z",
-        updated_at: "2025-01-10T00:00:00.000Z",
-      },
+        updated_at: "2025-01-10T00:00:00.000Z"
+      }
     ],
     runtime_config: {
       default_provider: "anthropic",
@@ -86,10 +83,9 @@ function makeExportPayload(
       anthropic_base_url: null,
       openai_endpoint_flavor: "generic",
       always_on_token_target: 500,
-      managed_history_token_cap: 100000,
       error_retention_days: 14,
       strict_model_tiers: true,
-      extraction_enabled: true,
+      extraction_enabled: true
     },
     persona_cache: {
       universal: "A concise developer",
@@ -97,18 +93,8 @@ function makeExportPayload(
       contributing_belief_ids: ["belief-1"],
       beliefs_hash: "hash123",
       generated_at: "2025-01-12T00:00:00.000Z",
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-haiku-4-5-20251001"
     },
-    compaction_log: [
-      {
-        _id: "comp-1",
-        user_id: "original-user",
-        scope: "user:universal",
-        belief_type: "preference",
-        ran_at: "2025-01-14T00:00:00.000Z",
-        merged_count: 2,
-      },
-    ],
     sessions: [
       {
         _id: "session-orig",
@@ -117,47 +103,43 @@ function makeExportPayload(
         model: "claude-haiku-4-5-20251001",
         activeScope: ["user:universal"],
         createdAt: "2025-01-01T00:00:00.000Z",
-        lastUsedAt: "2025-01-15T00:00:00.000Z",
-      },
+        lastUsedAt: "2025-01-15T00:00:00.000Z"
+      }
     ],
-    ...overrides,
+    ...overrides
   };
 }
 
 function makeDeps(): Context {
   const beliefsCol = {
     findOne: sinon.stub().resolves(null),
-    insertMany: sinon.stub().resolves({ insertedCount: 1 }),
+    insertMany: sinon.stub().resolves({ insertedCount: 1 })
   };
   const personaCol = {
-    replaceOne: sinon.stub().resolves(),
-  };
-  const compactionCol = {
-    insertMany: sinon.stub().resolves(),
+    replaceOne: sinon.stub().resolves()
   };
   const sessionsCol = {
-    replaceOne: sinon.stub().resolves(),
+    replaceOne: sinon.stub().resolves()
   };
 
   const db = {
     collection: sinon.stub().callsFake((name: string) => {
       if (name === "beliefs") return beliefsCol;
       if (name === "persona_cache") return personaCol;
-      if (name === "compaction_log") return compactionCol;
       if (name === "sessions") return sessionsCol;
       return {};
-    }),
+    })
   } as unknown as ImporterDeps["db"];
 
   const runtimeStore = {
     load: sinon.stub().resolves({}),
-    set: sinon.stub().resolves(),
+    set: sinon.stub().resolves()
   };
 
   const deps: ImporterDeps = {
     db,
     runtimeStore: runtimeStore as unknown as ImporterDeps["runtimeStore"],
-    userId: USER_ID,
+    userId: USER_ID
   };
 
   const importer = new BackupImporter(deps);
@@ -167,9 +149,8 @@ function makeDeps(): Context {
     importer,
     beliefsCol,
     personaCol,
-    compactionCol,
     sessionsCol,
-    runtimeStore,
+    runtimeStore
   };
 }
 
@@ -207,7 +188,7 @@ test("importPayload skips existing beliefs when skipExisting is true", async (t)
 
   const payload = makeExportPayload();
   const result = await t.context.importer.importPayload(payload, {
-    skipExisting: true,
+    skipExisting: true
   });
 
   t.is(result.beliefs_imported, 0);
@@ -231,34 +212,34 @@ test("importPayload converts ISO date strings back to Date objects", async (t) =
 test("importPayload restores runtime config", async (t) => {
   const payload = makeExportPayload();
   const result = await t.context.importer.importPayload(payload, {
-    importConfig: true,
+    importConfig: true
   });
 
   t.true(result.config_restored);
   t.true(t.context.runtimeStore.set.called);
 
   const setCalls = t.context.runtimeStore.set.args.map(
-    (call) => [call[0], call[1]] as [string, unknown],
+    (call) => [call[0], call[1]] as [string, unknown]
   );
   t.true(
     setCalls.some(
-      ([k, v]) => k === "default_model" && v === "claude-haiku-4-5-20251001",
-    ),
+      ([k, v]) => k === "default_model" && v === "claude-haiku-4-5-20251001"
+    )
   );
   t.true(
     setCalls.some(
-      ([k, v]) => k === "anthropic_api_key" && v === "sk-ant-imported",
-    ),
+      ([k, v]) => k === "anthropic_api_key" && v === "sk-ant-imported"
+    )
   );
   t.true(
-    setCalls.some(([k, v]) => k === "always_on_token_target" && v === 500),
+    setCalls.some(([k, v]) => k === "always_on_token_target" && v === 500)
   );
 });
 
 test("importPayload skips runtime config when importConfig is false", async (t) => {
   const payload = makeExportPayload();
   const result = await t.context.importer.importPayload(payload, {
-    importConfig: false,
+    importConfig: false
   });
 
   t.false(result.config_restored);
@@ -287,18 +268,6 @@ test("importPayload handles null persona cache", async (t) => {
   t.false(t.context.personaCol.replaceOne.called);
 });
 
-test("importPayload imports compaction log", async (t) => {
-  const payload = makeExportPayload();
-  const result = await t.context.importer.importPayload(payload);
-
-  t.is(result.compaction_entries_imported, 1);
-  t.true(t.context.compactionCol.insertMany.calledOnce);
-
-  const inserted = t.context.compactionCol.insertMany.firstCall.args[0];
-  t.is(inserted[0].user_id, USER_ID);
-  t.true(inserted[0].ran_at instanceof Date);
-});
-
 test("importPayload does not import sessions by default", async (t) => {
   const payload = makeExportPayload();
   const result = await t.context.importer.importPayload(payload);
@@ -310,7 +279,7 @@ test("importPayload does not import sessions by default", async (t) => {
 test("importPayload imports sessions when importSessions is true", async (t) => {
   const payload = makeExportPayload();
   const result = await t.context.importer.importPayload(payload, {
-    importSessions: true,
+    importSessions: true
   });
 
   t.is(result.sessions_imported, 1);
@@ -327,7 +296,7 @@ test("importPayload rejects unsupported version", async (t) => {
   const payload = makeExportPayload({ version: 99 as any });
 
   const err = await t.throwsAsync(() =>
-    t.context.importer.importPayload(payload),
+    t.context.importer.importPayload(payload)
   );
   t.regex(err!.message, /Unsupported export version/);
 });
@@ -341,14 +310,6 @@ test("importPayload handles empty beliefs array", async (t) => {
   t.false(t.context.beliefsCol.insertMany.called);
 });
 
-test("importPayload handles empty compaction_log", async (t) => {
-  const payload = makeExportPayload({ compaction_log: [] });
-  const result = await t.context.importer.importPayload(payload);
-
-  t.is(result.compaction_entries_imported, 0);
-  t.false(t.context.compactionCol.insertMany.called);
-});
-
 test("importPayload handles duplicate key errors gracefully", async (t) => {
   const dupError = new Error("duplicate key") as Error & { code: number };
   dupError.code = 11000;
@@ -356,7 +317,7 @@ test("importPayload handles duplicate key errors gracefully", async (t) => {
 
   const payload = makeExportPayload();
   const result = await t.context.importer.importPayload(payload, {
-    skipExisting: false,
+    skipExisting: false
   });
 
   t.is(result.beliefs_skipped, 1);
@@ -371,20 +332,9 @@ test("importPayload re-throws non-duplicate errors", async (t) => {
   await t.throwsAsync(
     () => t.context.importer.importPayload(payload, { skipExisting: false }),
     {
-      message: /connection failed/,
-    },
+      message: /connection failed/
+    }
   );
-});
-
-test("importPayload handles compaction log duplicate key errors gracefully", async (t) => {
-  const dupError = new Error("duplicate key") as Error & { code: number };
-  dupError.code = 11000;
-  t.context.compactionCol.insertMany.rejects(dupError);
-
-  const payload = makeExportPayload();
-  const result = await t.context.importer.importPayload(payload);
-
-  t.is(result.compaction_entries_imported, 1);
 });
 
 test("importPayload converts resolved_at back to Date when present", async (t) => {
@@ -410,12 +360,12 @@ test("importEncrypted decrypts and imports", async (t) => {
   const passphrase = "import-test-pass";
   const encrypted = encryptArchive(
     Buffer.from(JSON.stringify(payload), "utf-8"),
-    passphrase,
+    passphrase
   );
 
   const result = await t.context.importer.importEncrypted(
     encrypted,
-    passphrase,
+    passphrase
   );
 
   t.is(result.beliefs_imported, 1);
@@ -426,11 +376,11 @@ test("importEncrypted throws on wrong passphrase", async (t) => {
   const payload = makeExportPayload();
   const encrypted = encryptArchive(
     Buffer.from(JSON.stringify(payload), "utf-8"),
-    "correct-pass",
+    "correct-pass"
   );
 
   const err = await t.throwsAsync(() =>
-    t.context.importer.importEncrypted(encrypted, "wrong-pass"),
+    t.context.importer.importEncrypted(encrypted, "wrong-pass")
   );
   t.regex(err!.message, /Decryption failed|Wrong passphrase/);
 });
@@ -449,21 +399,11 @@ test("importPayload preserves expertise fields", async (t) => {
   t.is(inserted[0].expertise_evidence_count, 5);
 });
 
-test("importPayload preserves compaction_note", async (t) => {
-  const payload = makeExportPayload();
-  payload.beliefs[0].compaction_note = "Merged from 3 beliefs";
-
-  await t.context.importer.importPayload(payload);
-
-  const inserted = t.context.beliefsCol.insertMany.firstCall.args[0];
-  t.is(inserted[0].compaction_note, "Merged from 3 beliefs");
-});
-
 test("importPayload batches large belief inserts", async (t) => {
   const beliefs = Array.from({ length: 1200 }, (_, i) => ({
     ...makeExportPayload().beliefs[0],
     _id: `belief-${i}`,
-    canonical_name: `belief_${i}`,
+    canonical_name: `belief_${i}`
   }));
   const payload = makeExportPayload({ beliefs });
 

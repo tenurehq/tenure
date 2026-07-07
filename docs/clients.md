@@ -1,6 +1,6 @@
 # Client Setup
 
-Tenure works with any OpenAI-compatible client. Point it at `http://localhost:5757/v1` with your bearer token and it routes through Tenure automatically.
+Tenure works with any OpenAI-compatible or Anthorpic client. Point it at `http://localhost:5757/v1` with the appropriate Tenure access token and it routes through Tenure automatically.
 
 > **Docker networking note:** If your client runs in Docker, `localhost` won't resolve to your host machine. Use `http://host.docker.internal:5757/v1` instead (Docker Desktop on Mac/Windows) or your host's LAN IP on Linux.
 
@@ -14,7 +14,7 @@ Chat interfaces are where Tenure does its best work. Brainstorming, deciding, re
 | [LibreChat](clients/librechat.md)   | Point and shoot | Coming soon |
 | [Onyx](clients/onyx.md)             | Point and shoot | Coming soon |
 
-**Point and shoot setup:** In your client's API settings, set the base URL to `http://localhost:5757/v1` and paste your bearer token. Select any model and start chatting.
+**Point and shoot setup:** In your client's API settings, set the base URL to `http://localhost:5757/v1` and paste a **client token** generated from the Tenure UI. Select any model and start chatting.
 
 ## IDE
 
@@ -31,11 +31,15 @@ The [VS Code extension](clients/vscode.md) adds real-time workspace scope resolu
 | [Continue](clients/continue.md)       | Native extension | Supported   |
 | [Claude Code](clients/claude-code.md) | Point and shoot  | Coming soon |
 
-**Point and shoot setup:** In your IDE's AI settings, replace the base URL with `http://localhost:5757/v1` and add your bearer token.
+**Point and shoot setup:** In your IDE's AI settings, replace the base URL with `http://localhost:5757/v1` and add a **client token** generated from the Tenure UI.
+
+> The bootstrap token created on first install is for setup and admin access. External clients and IDEs need to use a client token created from the Tenure UI.
 
 ## Agents
 
-Agent integrations run Tenure as a plugin inside the agent framework itself, with automatic per-agent memory isolation. Memory written in one agent never surfaces in another.
+Agent integrations run through Tenure with automatic per-agent memory isolation. Memory written in one agent never surfaces in another unless you explicitly design for shared scope.
+
+This model applies to any agent framework that routes through Tenure. Some integrations are native plugins, while others can connect over Tenure's supported API surfaces.
 
 | Client                          | Integration   | Status    |
 | ------------------------------- | ------------- | --------- |

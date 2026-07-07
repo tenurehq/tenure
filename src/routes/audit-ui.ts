@@ -4,24 +4,15 @@ export function registerAuditUiRoute(app: FastifyInstance): void {
   app.get<{ Querystring: { token?: string } }>("/audit", async (req, reply) => {
     reply.header("content-type", "text/html; charset=utf-8");
     const nonce = (reply.raw as any).cspNonce as string;
-    return reply.send(
-      buildAuditHtml(req.query.token ?? "", req.tenureUserId, nonce)
-    );
+    return reply.send(buildAuditHtml(req.query.token ?? "", nonce));
   });
 }
 
-function buildAuditHtml(
-  embeddedToken: string,
-  ssoUserId?: string,
-  nonce?: string
-): string {
+function buildAuditHtml(embeddedToken: string, nonce?: string): string {
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
-  const isTeams = process.env.TENURE_MODE === "teams";
 
   const tokenJS = embeddedToken
     ? JSON.stringify(embeddedToken).replace(/</g, "\\u003c")
-    : isTeams
-    ? `new URLSearchParams(location.search).get("token") || ""`
     : `new URLSearchParams(location.search).get("token") || localStorage.getItem(STORAGE_KEY) || ""`;
 
   return `<!DOCTYPE html>
@@ -92,13 +83,6 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 .toast-error { background: #2a1212; border: 1px solid var(--danger); color: var(--danger); }
 @keyframes slideup { from { opacity: 0; transform: translateY(.4rem); } to { opacity: 1; transform: none; } }
 </style>
-${
-  ssoUserId
-    ? `<script${nonceAttr}>window.__TENURE_SSO_USER__ = ${JSON.stringify(
-        ssoUserId
-      )};</script>`
-    : ""
-}
 </head>
 <body>
 <div id="app"><div class="loading">Loading...</div></div>
@@ -423,11 +407,8 @@ document.addEventListener("keydown", e => {
   if (e.key === "Enter" && document.getElementById("tok")) handleToken();
 });
 
-if (window.__TENURE_SSO_USER__) {
-  init();
-} else {
-  token ? init() : showTokenScreen();
-}
+
+token ? init() : showTokenScreen();
 
 async function loadTaxDashboard() {
   try {

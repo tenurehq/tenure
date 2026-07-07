@@ -7,6 +7,7 @@ import type { FileMetaDoc } from "../db/collections.js";
 import { BeliefWriter } from "../extraction/beliefWriter.js";
 import type { WorkspaceStateCache } from "../workspace/stateCache.js";
 import type { RuntimeConfigStore } from "../config/runtime.js";
+import { assertTokenProjectScopes } from "../server.js";
 
 export type ClientMessage =
   | { type: "subscribe"; scope: string }
@@ -266,6 +267,18 @@ export function registerBeliefsWsRoute(
         }
 
         case "record_belief": {
+          const scopeCheck = assertTokenProjectScopes(req, msg.scope);
+          if (!scopeCheck.ok) {
+            socket.send(
+              JSON.stringify({
+                type: "error",
+                request_type: "record_belief",
+                message: scopeCheck.message
+              } satisfies ServerMessage)
+            );
+            break;
+          }
+
           try {
             const now = new Date();
             const beliefId = await beliefWriter.create({

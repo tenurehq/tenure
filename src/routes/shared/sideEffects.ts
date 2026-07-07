@@ -7,9 +7,10 @@ import type { ParsedClient } from "../../helpers/clientDetector.js";
 export interface SideEffectInput {
   deps: SideEffectDeps;
   userId: string;
-  teamId: string | null;
-  orgId: string | null;
   agentId: string | null;
+  tokenId: string;
+  tokenName: string;
+  tokenKind: "client" | "agent" | "root";
   sessionId: string;
   requestId: string;
   latestUserMessage: string;
@@ -37,8 +38,10 @@ export interface SideEffectDeps {
   jobs: {
     enqueue: (args: {
       userId: string;
-      teamId: string | null;
-      orgId: string | null;
+      agentId: string | null;
+      tokenId: string;
+      tokenName: string;
+      tokenKind: "client" | "agent" | "root";
       sessionId: string;
       requestId: string;
       userMessage: string;
@@ -48,7 +51,6 @@ export interface SideEffectDeps {
       scope: string[];
       sourceModel: string;
       clientCategory: string;
-      agentId: string | null;
       extractionMode: "standard" | "ide";
       workspaceContext?: {
         project_scope: string | null;
@@ -76,8 +78,10 @@ export async function runSideEffects(input: SideEffectInput): Promise<void> {
 
       const jobId = await input.deps.jobs.enqueue({
         userId: input.userId,
-        teamId: input.teamId,
-        orgId: input.orgId,
+        agentId: input.agentId,
+        tokenId: input.tokenId,
+        tokenName: input.tokenName,
+        tokenKind: input.tokenKind,
         sessionId: input.sessionId,
         requestId: input.requestId,
         userMessage: input.latestUserMessage,
@@ -87,7 +91,6 @@ export async function runSideEffects(input: SideEffectInput): Promise<void> {
         scope: input.scope,
         sourceModel: `${input.adapter.id}:${input.model}`,
         clientCategory: input.client.category,
-        agentId: input.agentId,
         extractionMode: input.extractionMode,
         ...(workspaceContext !== undefined && { workspaceContext })
       });

@@ -1,16 +1,8 @@
 import type { BeliefType, EpistemicStatus } from "./belief.js";
 import type { TurnSignal } from "./conversation.js";
 
-export type StyleConfidence = "low" | "medium" | "high";
 export type ExpertiseDepth = "learning" | "working" | "deep" | "expert";
 export type BeliefSubtype = "expertise" | "style" | null;
-
-export interface SidecarStyleSignal {
-  observation: string;
-  pattern_type: string;
-  confidence: StyleConfidence;
-  requires_confirmation?: boolean;
-}
 
 export interface SidecarBeliefCandidate {
   type: BeliefType;
@@ -39,7 +31,6 @@ export interface SidecarPayload {
   possible_alias_candidates: Array<{
     surface: string;
     possible_entities: string[];
-    confidence: StyleConfidence;
   }>;
   resolved_open_questions: string[];
   new_open_questions: Array<{
@@ -47,5 +38,4 @@ export interface SidecarPayload {
     content: string;
     scope: string[];
   }>;
-  style_signals?: SidecarStyleSignal[];
 }
