@@ -24,7 +24,6 @@ function makeRuntimeConfig() {
     anthropic_base_url: null,
     openai_endpoint_flavor: "generic",
     always_on_token_target: 400,
-    managed_history_token_cap: 120000,
     error_retention_days: 30,
     strict_model_tiers: true,
     extraction_enabled: true
@@ -93,12 +92,6 @@ function makeDeps(): BackupDeps {
         return {
           findOne: sinon.stub().resolves(null),
           replaceOne: sinon.stub().resolves()
-        };
-      }
-      if (name === "compaction_log") {
-        return {
-          find: sinon.stub().returns(toArrayStub([])),
-          insertMany: sinon.stub().resolves()
         };
       }
       if (name === "sessions") {
@@ -202,7 +195,6 @@ test("GET /v1/backup/preview returns export summary", async (t) => {
   t.is(typeof body.counts.beliefs, "number");
   t.is(typeof body.counts.beliefs_active, "number");
   t.is(typeof body.counts.sessions, "number");
-  t.is(typeof body.counts.compaction_entries, "number");
   t.is(typeof body.counts.has_persona, "boolean");
   t.is(typeof body.counts.has_config, "boolean");
 });
@@ -402,13 +394,11 @@ function makeExportPayload(): TenureExport {
       anthropic_base_url: null,
       openai_endpoint_flavor: "generic",
       always_on_token_target: 400,
-      managed_history_token_cap: 120000,
       error_retention_days: 30,
       strict_model_tiers: true,
       extraction_enabled: true
     },
     persona_cache: null,
-    compaction_log: [],
     sessions: [],
     injection_audit: []
   };

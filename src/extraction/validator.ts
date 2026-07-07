@@ -8,14 +8,14 @@ const VALID_BELIEF_TYPES = new Set([
   "relation",
   "preference",
   "open_question",
-  "decision",
+  "decision"
 ]);
 
 const VALID_CHANGE_KINDS = new Set([
   "reinforced",
   "contradicted",
   "superseded",
-  "enriched",
+  "enriched"
 ]);
 
 export interface ParseResult {
@@ -30,7 +30,7 @@ export function safeParse(llmOutput: string): ParseResult {
     return {
       result,
       error: null,
-      skippedBeliefs: result._skippedBeliefs ?? [],
+      skippedBeliefs: result._skippedBeliefs ?? []
     };
   } catch (e) {
     return { result: null, error: (e as Error).message, skippedBeliefs: [] };
@@ -67,7 +67,7 @@ export function parseAndValidate(llmOutput: string): ExtractionResult & {
 }
 
 function validateSchema(
-  data: Record<string, unknown>,
+  data: Record<string, unknown>
 ): Array<{ index: number; error: string }> {
   const skipped: Array<{ index: number; error: string }> = [];
 
@@ -113,11 +113,6 @@ function validateSchema(
   if (data.resolved_open_questions !== undefined) {
     if (!Array.isArray(data.resolved_open_questions))
       throw new Error("resolved_open_questions must be an array");
-  }
-
-  if (data.style_signals !== undefined) {
-    if (!Array.isArray(data.style_signals))
-      throw new Error("style_signals must be an array");
   }
 
   return skipped;

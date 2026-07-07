@@ -5,6 +5,8 @@ export type JobType =
   | "onboarding_extraction"
   | "import_extraction";
 
+export type JobTokenKind = "client" | "agent" | "root";
+
 export interface ExtractionJobPayload {
   user_message: string;
   assistant_message: string;
@@ -26,9 +28,10 @@ export interface ExtractionJob {
   _id: string;
   type: JobType;
   user_id: string;
-  team_id: string | null;
-  org_id: string | null;
   agent_id?: string | null;
+  token_id: string;
+  token_name: string;
+  token_kind: JobTokenKind;
   session_id: string;
   turn_id: string;
   status: JobStatus;

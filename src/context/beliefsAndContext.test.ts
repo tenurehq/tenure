@@ -33,8 +33,6 @@ const NULL_PERSONA: PersonaLookup = {
   get: async () => null
 };
 
-const NULL_ORG_SUMMARY = { get: async (_orgId: string) => null }; // <--- ADD
-
 let idSeq = 0;
 function makeBelief(overrides: Partial<Belief> = {}): Belief {
   idSeq++;
@@ -230,11 +228,7 @@ function makePersonaStub(
 test.serial("ContextBuilder.build returns valid JSON strings", async (t) => {
   const belief = makeBelief();
   const reader = makeReader([belief], [], []);
-  const builder = new ContextBuilder(
-    reader,
-    makePersonaStub(),
-    NULL_ORG_SUMMARY
-  );
+  const builder = new ContextBuilder(reader, makePersonaStub());
   const ctx = await builder.build("user-1", ["global"], "");
   t.notThrows(() => JSON.parse(ctx.relevantBeliefsJson));
   t.notThrows(() => JSON.parse(ctx.pinnedFactsJson));
@@ -246,11 +240,7 @@ test.serial(
   async (t) => {
     const shared = makeBelief({ pinned: true, type: "decision" });
     const reader = makeReader([shared], [shared], []);
-    const builder = new ContextBuilder(
-      reader,
-      makePersonaStub(),
-      NULL_ORG_SUMMARY
-    );
+    const builder = new ContextBuilder(reader, makePersonaStub());
     const ctx = await builder.build("user-1", ["global"], "test");
     const pinned = JSON.parse(ctx.pinnedFactsJson);
     const relevant = JSON.parse(ctx.relevantBeliefsJson);
@@ -262,11 +252,7 @@ test.serial(
 test.serial("ContextBuilder.build reports correct beliefCount", async (t) => {
   const beliefs = [makeBelief(), makeBelief()];
   const reader = makeReader(beliefs, [], []);
-  const builder = new ContextBuilder(
-    reader,
-    makePersonaStub(),
-    NULL_ORG_SUMMARY
-  );
+  const builder = new ContextBuilder(reader, makePersonaStub());
   const ctx = await builder.build("user-1", [], "");
   t.is(ctx.beliefCount, 2);
 });
@@ -277,11 +263,7 @@ test.serial("ContextBuilder.build reports correct questionCount", async (t) => {
     makeBelief({ type: "open_question", pinned: true })
   ];
   const reader = makeReader([], [], questions);
-  const builder = new ContextBuilder(
-    reader,
-    makePersonaStub(),
-    NULL_ORG_SUMMARY
-  );
+  const builder = new ContextBuilder(reader, makePersonaStub());
   const ctx = await builder.build("user-1", [], "");
   t.is(ctx.questionCount, 2);
 });
@@ -292,14 +274,9 @@ test.serial(
     const longContent = "x".repeat(500);
     const belief = makeBelief({ content: longContent });
     const reader = makeReader([], [belief], []);
-    const builder = new ContextBuilder(
-      reader,
-      makePersonaStub(),
-      NULL_ORG_SUMMARY,
-      {
-        maxCharsPerBelief: 400
-      }
-    );
+    const builder = new ContextBuilder(reader, makePersonaStub(), {
+      maxCharsPerBelief: 400
+    });
     const ctx = await builder.build("user-1", [], "anything matches");
     const beliefs = JSON.parse(ctx.relevantBeliefsJson);
     t.true(beliefs[0].content.length <= 400);
@@ -309,12 +286,14 @@ test.serial(
 test.serial(
   "ContextBuilder.build sets truncated=true when maxBeliefs is exceeded",
   async (t) => {
-    const many = Array.from({ length: 5 }, () => makeBelief());
-    const reader = makeReader(many, [], []);
-    const builder = new ContextBuilder(reader, NULL_PERSONA, NULL_ORG_SUMMARY, {
+    const pinned = [makeBelief({ pinned: true }), makeBelief({ pinned: true })];
+    const relevant = [makeBelief(), makeBelief(), makeBelief()];
+    const reader = makeReader(pinned, relevant, []);
+    const builder = new ContextBuilder(reader, NULL_PERSONA, {
       maxBeliefs: 3
     });
-    const ctx = await builder.build("user-1", [], "");
+    const ctx = await builder.build("user-1", [], "react");
+
     t.true(ctx.truncated);
     t.is(ctx.beliefCount, 3);
   }
@@ -324,11 +303,7 @@ test.serial(
   "ContextBuilder.build sets truncated=false when under budget",
   async (t) => {
     const reader = makeReader([makeBelief()], [], []);
-    const builder = new ContextBuilder(
-      reader,
-      makePersonaStub(),
-      NULL_ORG_SUMMARY
-    );
+    const builder = new ContextBuilder(reader, makePersonaStub());
     const ctx = await builder.build("user-1", [], "");
     t.false(ctx.truncated);
   }
@@ -348,11 +323,7 @@ test.serial(
       type: "decision"
     });
     const reader = makeReader([belief], [], []);
-    const builder = new ContextBuilder(
-      reader,
-      makePersonaStub(),
-      NULL_ORG_SUMMARY
-    );
+    const builder = new ContextBuilder(reader, makePersonaStub());
     const ctx = await builder.build("user-1", [], "");
     const pinned = JSON.parse(ctx.pinnedFactsJson);
     const projected = pinned[0];

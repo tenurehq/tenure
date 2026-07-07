@@ -9,7 +9,6 @@ import {
   type PersonaLookup
 } from "../context/contextBuilder.js";
 import type { Belief } from "../types/belief.js";
-import type { Turn, TurnSignal } from "../history/manager.js";
 import {
   buildReportPayload,
   ReportSummaryOptions
@@ -56,7 +55,6 @@ interface SessionTurn {
     setCanonicalName?: string;
     _note?: string;
   };
-  turnSignal: TurnSignal;
   topics: string[];
   expect: SessionTurnExpect;
 }
@@ -276,7 +274,6 @@ function coerceBelief(raw: Record<string, unknown>): Belief {
 let client: MongoClient;
 let db: Db;
 let beliefsCol: Collection<Belief>;
-let turnsCol: Collection<Turn>;
 const sessionReport: SessionReportEntry[] = [];
 let ingestionTimings = {
   insertMs: 0,
@@ -294,7 +291,6 @@ test.before(async () => {
 
   db = client.db("session_eval_isolated");
   beliefsCol = db.collection<Belief>("beliefs");
-  turnsCol = db.collection<Turn>("turns");
 
   await beliefsCol.drop().catch(() => {});
   await db.createCollection("beliefs");
@@ -482,43 +478,6 @@ test.before(async () => {
     totalReadyMs: Math.round((syncEnd - ingestionStart) * 100) / 100,
     beliefCount: rawBeliefs.length
   };
-
-  await turnsCol.drop().catch(() => {});
-  await db.createCollection("turns");
-
-  await retryUntilReady(
-    () =>
-      turnsCol.createSearchIndex({
-        name: "turns_search",
-        definition: {
-          analyzer: "lucene.standard",
-          mappings: {
-            dynamic: false,
-            fields: {
-              userId: { type: "token" },
-              sessionId: { type: "token" },
-              scope: { type: "token" },
-              userMessage: { type: "string", analyzer: "lucene.standard" },
-              assistantMessage: { type: "string", analyzer: "lucene.standard" }
-            }
-          }
-        }
-      }),
-    "createTurnsSearchIndex",
-    60_000
-  );
-
-  await retryUntilReady(
-    async () => {
-      const indexes = await turnsCol.listSearchIndexes().toArray();
-      const idx = indexes.find((i) => i.name === "turns_search") as
-        | Record<string, unknown>
-        | undefined;
-      if (idx?.status !== "READY") throw new Error(`status: ${idx?.status}`);
-    },
-    "waitForTurnsSearchIndex",
-    60_000
-  );
 });
 
 test.after.always(async () => {
@@ -550,79 +509,6 @@ test.after.always(async () => {
   stopContainer();
 });
 
-function makeTurnDoc(sessionId: string, turn: SessionTurn): Turn {
-  return {
-    _id: `${sessionId}-turn-${turn.turnIndex}`,
-    sessionId,
-    userId: USER_ID,
-    turnIndex: turn.turnIndex,
-    userMessage: turn.userMessage,
-    assistantMessage: turn.assistantMessage,
-    turnSignal: turn.turnSignal,
-    hasOpenQuestion: false,
-    hasNewBeliefs: false,
-    hasBinaryContent: false,
-    hasCodeBlock: turn.assistantMessage.includes("```"),
-    scope: turn.scope,
-    createdAt: new Date(Date.now() + turn.turnIndex * 60_000),
-    state: "kept",
-    topicId: turn.topics[0] ?? "default",
-    topics: turn.topics,
-    beliefCandidateIds: [],
-    userRestored: false,
-    tokenEstimate: Math.ceil(
-      (turn.userMessage.length + turn.assistantMessage.length) / 3.5
-    ),
-    collapsedBy: null,
-    status: "complete",
-    failureReason: null
-  };
-}
-
-async function waitForTurnsSearchSync(
-  col: Collection<Turn>,
-  sessionId: string,
-  expectedCount: number
-): Promise<void> {
-  await retryUntilReady(
-    async () => {
-      const results = await col
-        .aggregate([
-          {
-            $search: {
-              index: "turns_search",
-              compound: {
-                must: [
-                  {
-                    equals: {
-                      path: "sessionId",
-                      value: sessionId
-                    }
-                  },
-                  {
-                    text: {
-                      query: "the",
-                      path: "userMessage"
-                    }
-                  }
-                ]
-              }
-            }
-          }
-        ])
-        .toArray();
-
-      if (results.length < expectedCount) {
-        throw new Error(
-          `Turns search index has ${results.length} docs, expected >= ${expectedCount}`
-        );
-      }
-    },
-    `waitForTurnsSearchSync(${sessionId}, ${expectedCount})`,
-    30_000
-  );
-}
-
 function loadSessionCases(): SessionEvalCase[] {
   let raw: string;
   try {
@@ -649,8 +535,6 @@ for (const sessionCase of sessionCases) {
   test.serial(`session: ${sessionCase.caseId}`, async (t) => {
     const sessionId = `eval-session-${sessionCase.caseId}-${Date.now()}`;
 
-    await turnsCol.deleteMany({ sessionId });
-
     const reader = new BeliefsReader(beliefsCol);
     const builder = new ContextBuilder(reader, EVAL_PERSONA, {
       scoreDetails: true
@@ -659,10 +543,6 @@ for (const sessionCase of sessionCases) {
     let casePassedSoFar = true;
 
     for (const turn of sessionCase.turns) {
-      if (turn.turnIndex > 0) {
-        await waitForTurnsSearchSync(turnsCol, sessionId, turn.turnIndex);
-      }
-
       const buildStart = performance.now();
       const ctx = await builder.build(USER_ID, turn.scope, turn.userMessage);
       const buildEnd = performance.now();
@@ -806,19 +686,11 @@ for (const sessionCase of sessionCases) {
         casePassedSoFar = false;
       }
 
-      const turnDoc = makeTurnDoc(sessionId, turn);
-      await turnsCol.insertOne(turnDoc);
-
       if (turn.createBeliefAtTurn && turn.turnIndex === turn.turnIndex) {
         const beliefDoc = coerceBelief(
           turn.createBeliefAtTurn as Record<string, unknown>
         );
         await beliefsCol.insertOne(beliefDoc);
-
-        await turnsCol.updateOne(
-          { _id: turnDoc._id },
-          { $addToSet: { beliefCandidateIds: beliefDoc._id } }
-        );
 
         const probeValue = beliefDoc.aliases[0];
 

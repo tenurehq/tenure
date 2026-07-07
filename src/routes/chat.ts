@@ -18,9 +18,6 @@ import type { ExtractionWorkerLike } from "../extraction/worker.js";
 import type { RuntimeConfigStore } from "../config/runtime.js";
 import {
   tryInterceptScopeCommand,
-  detectScopeFromMessage,
-  fetchExistingUserScopes,
-  type ScopeDetectorDeps,
   tryInterceptExtractCommand,
   tryInterceptInjectCommand,
   tryInterceptSessionCommand
@@ -31,6 +28,7 @@ import type { WorkspaceStateCache } from "../workspace/stateCache.js";
 import { buildSystemPrompt } from "../context/systemPromptBuilder.js";
 import { runSideEffects } from "./shared/sideEffects.js";
 import type { InjectionAuditLogger } from "../audit/injectionAuditLogger.js";
+import { assertTokenProjectScopes } from "../server.js";
 
 export interface ChatDeps {
   sessions: SessionManager;
@@ -39,7 +37,6 @@ export interface ChatDeps {
   jobs: ExtractionJobQueue;
   extractionWorker: ExtractionWorkerLike;
   runtimeStore: RuntimeConfigStore;
-  scopeDetector?: ScopeDetectorDeps;
   errorLogger: ErrorLogger;
   workspaceState?: WorkspaceStateCache;
   injectionAudit?: InjectionAuditLogger;
@@ -51,10 +48,6 @@ interface ResolveScopeArgs {
   session: (Session & { providerId: string; model: string }) | null;
   sessionId: string;
   userId: string;
-  teamId: string | null;
-  orgId: string | null;
-  latestUserMessage: string;
-  cfg: { scope_auto_detect?: boolean };
   deps: ChatDeps;
   logger: FastifyBaseLogger;
 }
@@ -87,8 +80,6 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
     }
 
     const userId = req.tenureUserId;
-    const teamId = (req as any).tenureTeamId ?? null;
-    const orgId = (req as any).tenureOrgId ?? null;
 
     const requestedModel = body.model;
     if (!requestedModel) {
@@ -195,8 +186,6 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
     const cfg = await deps.runtimeStore.load().catch(() => ({
       extraction_enabled: true,
       injection_enabled: true,
-      managed_history_token_cap: 120000,
-      compaction_mode: "aggressive" as const,
       scope_auto_detect: true
     }));
 
@@ -349,13 +338,20 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       session,
       sessionId,
       userId,
-      teamId,
-      orgId,
-      latestUserMessage,
-      cfg,
       deps,
       logger: req.log
     });
+
+    const scopeCheck = assertTokenProjectScopes(req, scope);
+    if (!scopeCheck.ok) {
+      return reply.code(403).send({
+        error: {
+          message: scopeCheck.message,
+          token_project_scopes: req.tenureTokenProjectScopes ?? null,
+          requested_scope: scope
+        }
+      });
+    }
 
     const noExtractHeader =
       req.headers["x-tenure-no-extract"] === "true" ||
@@ -370,10 +366,8 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       req.headers["x-tenure-ide"] === "true";
 
     const ideExtractionEnabled = (cfg as any).ide_extraction_enabled !== false;
-    const memoryMode = (cfg as any).memory_mode ?? "autonomous";
 
     const extractionEnabled =
-      memoryMode !== "inject_only" &&
       cfg.extraction_enabled !== false &&
       session?.extractionPaused !== true &&
       !noExtractHeader &&
@@ -381,7 +375,6 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       (isIdeTurn ? ideExtractionEnabled : true);
 
     const injectionEnabled =
-      memoryMode !== "reflective" &&
       cfg.injection_enabled !== false &&
       session?.injectionPaused !== true &&
       !bootstrapInProgress;
@@ -391,7 +384,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
     const agentId = ocAgentId && ocAgentId !== "main" ? ocAgentId : null;
 
     const beliefCtx = await deps.context
-      .build(userId, scope, latestUserMessage, agentId, teamId, orgId)
+      .build(userId, scope, latestUserMessage, agentId)
       .catch((err) => {
         req.log.warn({ err }, "context assembly failed");
         return EMPTY_CONTEXT;
@@ -447,7 +440,6 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
         extractionEnabled,
         injectionEnabled,
         activeScope: scope[0],
-        scopeAutoDetect: cfg.scope_auto_detect !== false,
         extractionMode,
         ideScope
       });
@@ -461,21 +453,20 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
     }
 
     if (deps.injectionAudit && beliefCtx.beliefCount > 0) {
-      deps.injectionAudit
-        .log({
-          userId,
-          sessionId,
-          requestId,
-          userQuery: latestUserMessage,
-          expandedQuery: beliefCtx.expandedQuery,
-          scope,
-          agentId,
-          injected: injectionEnabled,
-          beliefCtx
-        })
-        .catch((err) =>
-          req.log.warn({ err, requestId }, "injection audit write failed")
-        );
+      deps.injectionAudit.log({
+        userId,
+        sessionId,
+        requestId,
+        userQuery: latestUserMessage,
+        expandedQuery: beliefCtx.expandedQuery,
+        scope,
+        agentId,
+        tokenId: req.tenureTokenId ?? null,
+        tokenName: req.tenureTokenName ?? null,
+        tokenKind: req.tenureTokenKind ?? null,
+        injected: injectionEnabled,
+        beliefCtx
+      });
     }
 
     const passMessages = messages.filter(
@@ -497,8 +488,9 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
           requestId,
           sessionId,
           userId,
-          teamId,
-          orgId,
+          tokenId: req.tenureTokenId ?? "root",
+          tokenName: req.tenureTokenName ?? "",
+          tokenKind: req.tenureTokenKind ?? "root",
           requestedModel,
           latestUserMessage,
           rawContent,
@@ -587,11 +579,13 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
     });
 
     try {
+      if (!req.tenureTokenId || !req.tenureTokenKind) {
+        throw new Error("missing token attribution for side effects");
+      }
+
       runSideEffects({
         deps,
         userId,
-        teamId,
-        orgId,
         sessionId,
         requestId,
         latestUserMessage,
@@ -607,6 +601,9 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
         extractionEnabled,
         client,
         agentId,
+        tokenId: req.tenureTokenId,
+        tokenName: req.tenureTokenName ?? "",
+        tokenKind: req.tenureTokenKind,
         extractionMode,
         ideProjectScope: ideScope?.projectScope ?? null,
         ideLanguageScope: ideScope?.languageScope ?? null,
@@ -625,8 +622,9 @@ interface StreamingCtx {
   requestId: string;
   sessionId: string;
   userId: string;
-  teamId: string | null;
-  orgId: string | null;
+  tokenId: string;
+  tokenName: string;
+  tokenKind: "client" | "agent" | "root";
   requestedModel: string;
   latestUserMessage: string;
   rawContent: string | ContentPart[];
@@ -848,8 +846,10 @@ async function handleStreamingResponse(
   runSideEffects({
     deps: ctx.deps,
     userId: ctx.userId,
-    teamId: ctx.teamId,
-    orgId: ctx.orgId,
+    agentId: ctx.agentId,
+    tokenId: ctx.tokenId,
+    tokenName: ctx.tokenName,
+    tokenKind: ctx.tokenKind,
     sessionId: ctx.sessionId,
     requestId: ctx.requestId,
     latestUserMessage: ctx.latestUserMessage,
@@ -864,7 +864,6 @@ async function handleStreamingResponse(
     logger: ctx.logger,
     extractionEnabled: ctx.extractionEnabled,
     client: ctx.client,
-    agentId: ctx.agentId,
     extractionMode: ctx.extractionMode,
     ideProjectScope: ctx.ideProjectScope,
     ideLanguageScope: ctx.ideLanguageScope,
@@ -886,19 +885,8 @@ function ts(): number {
 }
 
 async function resolveScope(args: ResolveScopeArgs): Promise<string[]> {
-  const {
-    ocAgentId,
-    sessionScope,
-    session,
-    sessionId,
-    userId,
-    teamId,
-    orgId,
-    latestUserMessage,
-    cfg,
-    deps,
-    logger
-  } = args;
+  const { ocAgentId, sessionScope, session, sessionId, userId, deps, logger } =
+    args;
 
   if (ocAgentId && ocAgentId !== "main") {
     const currentAgentId = (session as any)?.agentId;
@@ -909,49 +897,6 @@ async function resolveScope(args: ResolveScopeArgs): Promise<string[]> {
           logger.warn({ err, sessionId }, "agent id persist failed")
         );
     }
-  }
-
-  if (sessionScope.length > 0) {
-    return sessionScope;
-  }
-
-  const isFirstTurn =
-    (session?.turnCounter ?? 0) === 0 &&
-    deps.scopeDetector != null &&
-    cfg.scope_auto_detect !== false;
-
-  if (!isFirstTurn || !deps.scopeDetector) {
-    return sessionScope;
-  }
-
-  try {
-    const existingScopes = await fetchExistingUserScopes(
-      userId,
-      deps.scopeDetector.db,
-      teamId,
-      orgId
-    );
-
-    const detected = await detectScopeFromMessage(
-      latestUserMessage,
-      existingScopes,
-      deps.scopeDetector,
-      logger
-    );
-
-    if (detected.length > 0) {
-      await deps.sessions
-        .update(sessionId, userId, { activeScope: detected })
-        .catch((err) =>
-          logger.warn({ err, sessionId }, "first-turn scope persist failed")
-        );
-      return detected;
-    }
-  } catch (err) {
-    logger.warn(
-      { err, sessionId },
-      "first-turn scope detection failed — proceeding without scope"
-    );
   }
 
   return sessionScope;

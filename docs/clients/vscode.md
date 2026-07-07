@@ -9,7 +9,7 @@ The extension also synchronizes workspace state with your Tenure server on every
 ## Requirements
 
 - **Local mode:** Docker Desktop (the extension can install Tenure automatically)
-- **Enterprise mode:** A running Tenure server and a valid API token
+- **Enterprise mode:** A running Tenure server and a valid client token generated from the Tenure UI
 - VS Code 1.80 or later
 - A workspace folder open. The extension does not activate in single-file mode.
 
@@ -17,10 +17,10 @@ The extension also synchronizes workspace state with your Tenure server on every
 
 The first time you activate the extension, it checks the server configured in `tenure.baseUrl`. If nothing is reachable and you have not yet configured a deployment, a **Configure Tenure** picker appears automatically:
 
-| Option                       | What it does                                                                                                                                             |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Local (Docker)**           | Installs and starts Tenure in a local Docker container. The extension handles the entire setup.                                                          |
-| **Enterprise / Self-hosted** | Prompts for your Tenure server base URL (e.g. `https://tenure.company.com:5757`) and API token, then stores them in VS Code settings and secret storage. |
+| Option                       | What it does                                                                                                                                                  |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Local (Docker)**           | Installs and starts Tenure in a local Docker container. The extension handles the entire setup.                                                               |
+| **Enterprise / Self-hosted** | Prompts for your Tenure server base URL (e.g. `https://tenure.company.com:5757`) and a client token, then stores them in VS Code settings and secret storage. |
 
 If you dismissed the picker, you can reopen it at any time via **Tenure: Configure Deployment** in the command palette.
 
@@ -44,13 +44,13 @@ The extension continuously synchronizes workspace state with your Tenure server,
 
 ## Adding your token
 
-If you are connecting to an enterprise server, you are prompted for a token during setup. You can also set or update it manually at any time:
+If you are connecting to an enterprise server, you are prompted for a client token during setup. You can also set or update it manually at any time:
 
 1. Open the command palette (`Ctrl+Shift+P` / `Cmd+Shift+P`)
 2. Run **Tenure: Set API Token**
 3. Paste your token
 
-The token is stored in VS Code's secret storage. You only need to do this once.
+The client token is stored in VS Code's secret storage. You only need to do this once.
 
 If no token is configured, the extension shows a warning on startup and the status bar displays **Tenure: Token Missing**. Clicking it opens the token prompt.
 
@@ -110,7 +110,7 @@ Clicking the status bar item when synced opens your Beliefs Dashboard at your co
 | Command                                | Description                                       |
 | -------------------------------------- | ------------------------------------------------- |
 | `Tenure: Configure Deployment`         | Choose local Docker install or enterprise server  |
-| `Tenure: Set API Token`                | Store your Tenure bearer token                    |
+| `Tenure: Set API Token`                | Store your Tenure client token                    |
 | `Tenure: Sync Workspace State`         | Trigger a manual sync                             |
 | `Tenure: Open Beliefs Dashboard`       | Open your Tenure dashboard in a browser           |
 | `Tenure: Record Project Belief`        | Record a belief directly from the command palette |

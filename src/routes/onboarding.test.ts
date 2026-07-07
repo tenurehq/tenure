@@ -1,17 +1,14 @@
 import anyTest, { type TestFn } from "ava";
 import { MongoMemoryServer } from "mongodb-memory-server";
-import { MongoClient, type Db } from "mongodb";
+import { MongoClient } from "mongodb";
 import Fastify, { type FastifyInstance } from "fastify";
 import sinon from "sinon";
 import {
   registerOnboardingRoutes,
   type OnboardingDeps,
-  ONBOARDING_QUESTIONS,
+  ONBOARDING_QUESTIONS
 } from "./onboarding.js";
-import type {
-  ProviderAdapter,
-  NormalizedResponse,
-} from "../providers/types.js";
+import type { ProviderAdapter, InternalLLMCaller } from "../providers/types.js";
 import { ProviderRegistry } from "../providers/registry.js";
 import type { Collections } from "../db/collections.js";
 import { getCollections } from "../db/collections.js";
@@ -21,6 +18,9 @@ interface Context {
   deps: OnboardingDeps;
   adapter: ProviderAdapter;
 }
+
+type StubbedCallResponse = Awaited<ReturnType<InternalLLMCaller["call"]>>;
+type TestAdapter = ProviderAdapter & InternalLLMCaller;
 
 const test = anyTest.serial as TestFn<Context>;
 
@@ -48,24 +48,31 @@ test.beforeEach(async () => {
   await cols.onboarding_drafts.deleteMany({});
 });
 
-function makeAdapter(
-  response: Partial<NormalizedResponse> = {},
-): ProviderAdapter {
+function makeAdapter(response: Partial<StubbedCallResponse> = {}): TestAdapter {
   return {
     id: PROVIDER_ID,
     call: sinon.stub().resolves({
       content:
         '{"turn_signal":"substantive","new_beliefs":[],"belief_updates":[]}',
       model: MODEL,
-      provider: PROVIDER_ID,
       finish_reason: "stop",
       usage: { input_tokens: 100, output_tokens: 200 },
-      ...response,
+      ...response
     }),
     listModels: sinon.stub().resolves([
-      { id: "claude-haiku-4-5-20251001", owned_by: "anthropic" },
-      { id: "claude-sonnet-4-20250514", owned_by: "anthropic" },
-    ]),
+      {
+        id: "claude-haiku-4-5-20251001",
+        object: "model",
+        created: 0,
+        owned_by: "anthropic"
+      },
+      {
+        id: "claude-sonnet-4-20250514",
+        object: "model",
+        created: 0,
+        owned_by: "anthropic"
+      }
+    ])
   };
 }
 
@@ -79,20 +86,19 @@ function makeRuntimeStore(overrides: Record<string, unknown> = {}) {
     anthropic_api_key: "sk-ant-test",
     anthropic_base_url: null,
     always_on_token_target: 400,
-    managed_history_token_cap: 120000,
     error_retention_days: 7,
-    ...overrides,
+    ...overrides
   };
   return {
     load: sinon.stub().resolves(config),
-    set: sinon.stub().resolves(),
+    set: sinon.stub().resolves()
   };
 }
 
 function makeDeps(
-  adapterOverride?: ProviderAdapter,
-  storeOverrides?: Record<string, unknown>,
-): { deps: OnboardingDeps; adapter: ProviderAdapter } {
+  adapterOverride?: TestAdapter,
+  storeOverrides?: Record<string, unknown>
+): { deps: OnboardingDeps; adapter: TestAdapter } {
   const adapter = adapterOverride ?? makeAdapter();
   const registry = new ProviderRegistry();
   registry.register(adapter);
@@ -103,10 +109,9 @@ function makeDeps(
     runtimeStore: makeRuntimeStore(storeOverrides) as any,
     extractionWorker: {
       processById: sinon.stub().resolves(),
-      sweep: sinon.stub().resolves(0),
+      sweep: sinon.stub().resolves(0)
     },
-    personaSummary: { ensureFresh: sinon.stub().resolves("regenerated") },
-    userId: USER_ID,
+    personaSummary: { ensureFresh: sinon.stub().resolves("regenerated") }
   };
 
   return { deps, adapter };
@@ -114,6 +119,15 @@ function makeDeps(
 
 function buildApp(deps: OnboardingDeps): FastifyInstance {
   const app = Fastify();
+
+  app.addHook("onRequest", async (req) => {
+    req.tenureUserId = USER_ID;
+    req.tenureAuthMethod = "token";
+    req.tenureTokenId = "test-token-id";
+    req.tenureTokenName = "Test Token";
+    req.tenureTokenKind = "root";
+  });
+
   registerOnboardingRoutes(app, deps, cols);
   return app;
 }
@@ -141,7 +155,7 @@ test("GET /onboarding includes HTML document structure", async (t) => {
 test("GET /onboarding embeds token from query param", async (t) => {
   const res = await t.context.app.inject({
     method: "GET",
-    url: "/onboarding?token=onboard-token",
+    url: "/onboarding?token=onboard-token"
   });
 
   t.true(res.body.includes('"onboard-token"'));
@@ -158,7 +172,7 @@ test("GET /onboarding includes question and commit URLs", async (t) => {
 test("GET /v1/onboarding/questions returns all questions", async (t) => {
   const res = await t.context.app.inject({
     method: "GET",
-    url: "/v1/onboarding/questions",
+    url: "/v1/onboarding/questions"
   });
 
   t.is(res.statusCode, 200);
@@ -170,7 +184,7 @@ test("GET /v1/onboarding/questions returns all questions", async (t) => {
 test("GET /v1/onboarding/questions returns questions with id, category, text", async (t) => {
   const res = await t.context.app.inject({
     method: "GET",
-    url: "/v1/onboarding/questions",
+    url: "/v1/onboarding/questions"
   });
 
   const body = JSON.parse(res.body);
@@ -183,7 +197,7 @@ test("GET /v1/onboarding/questions returns questions with id, category, text", a
 test("POST /v1/onboarding/skip returns ok", async (t) => {
   const res = await t.context.app.inject({
     method: "POST",
-    url: "/v1/onboarding/skip",
+    url: "/v1/onboarding/skip"
   });
 
   t.is(res.statusCode, 200);
@@ -197,7 +211,7 @@ test("POST /v1/onboarding/complete rejects missing answers", async (t) => {
     method: "POST",
     url: "/v1/onboarding/complete",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({}),
+    body: JSON.stringify({})
   });
 
   t.is(res.statusCode, 400);
@@ -210,7 +224,7 @@ test("POST /v1/onboarding/complete rejects empty answers array", async (t) => {
     method: "POST",
     url: "/v1/onboarding/complete",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ answers: [] }),
+    body: JSON.stringify({ answers: [] })
   });
 
   t.is(res.statusCode, 400);
@@ -221,14 +235,14 @@ test("POST /v1/onboarding/complete rejects empty answers array", async (t) => {
 test("POST /v1/onboarding/complete returns 0 beliefs when all answers are blank", async (t) => {
   const answers = [
     { question_id: "response_length", question: "Q1", answer: "" },
-    { question_id: "ai_corrections", question: "Q2", answer: "   " },
+    { question_id: "ai_corrections", question: "Q2", answer: "   " }
   ];
 
   const res = await t.context.app.inject({
     method: "POST",
     url: "/v1/onboarding/complete",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify({ answers })
   });
 
   t.is(res.statusCode, 200);
@@ -250,10 +264,10 @@ test("POST /v1/onboarding/complete calls LLM and returns extracted beliefs", asy
         scope: ["user:universal"],
         confidence: 0.9,
         epistemic_status: "active",
-        aliases: [],
-      },
+        aliases: []
+      }
     ],
-    belief_updates: [],
+    belief_updates: []
   });
 
   const adapter = makeAdapter({ content: extractionResponse });
@@ -264,15 +278,15 @@ test("POST /v1/onboarding/complete calls LLM and returns extracted beliefs", asy
     {
       question_id: "response_length",
       question: "When you get a long response, do you read or skim?",
-      answer: "I skim — keep it short please",
-    },
+      answer: "I skim — keep it short please"
+    }
   ];
 
   const res = await app.inject({
     method: "POST",
     url: "/v1/onboarding/complete",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify({ answers })
   });
 
   t.is(res.statusCode, 200);
@@ -289,14 +303,14 @@ test("POST /v1/onboarding/complete returns parse_failed when LLM returns garbage
   const app = buildApp(deps);
 
   const answers = [
-    { question_id: "response_length", question: "Q", answer: "I skim" },
+    { question_id: "response_length", question: "Q", answer: "I skim" }
   ];
 
   const res = await app.inject({
     method: "POST",
     url: "/v1/onboarding/complete",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify({ answers })
   });
 
   t.is(res.statusCode, 200);
@@ -307,22 +321,22 @@ test("POST /v1/onboarding/complete returns parse_failed when LLM returns garbage
 });
 
 test("POST /v1/onboarding/complete returns 502 when LLM call throws", async (t) => {
-  const adapter: ProviderAdapter = {
+  const adapter: TestAdapter = {
     id: PROVIDER_ID,
-    call: sinon.stub().rejects(new Error("rate limited")),
+    call: sinon.stub().rejects(new Error("rate limited"))
   };
   const { deps } = makeDeps(adapter);
   const app = buildApp(deps);
 
   const answers = [
-    { question_id: "response_length", question: "Q", answer: "Keep it short" },
+    { question_id: "response_length", question: "Q", answer: "Keep it short" }
   ];
 
   const res = await app.inject({
     method: "POST",
     url: "/v1/onboarding/complete",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify({ answers })
   });
 
   t.is(res.statusCode, 502);
@@ -335,14 +349,14 @@ test("POST /v1/onboarding/complete returns 400 when no default model configured"
   const app = buildApp(deps);
 
   const answers = [
-    { question_id: "response_length", question: "Q", answer: "I skim" },
+    { question_id: "response_length", question: "Q", answer: "I skim" }
   ];
 
   const res = await app.inject({
     method: "POST",
     url: "/v1/onboarding/complete",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify({ answers })
   });
 
   t.is(res.statusCode, 400);
@@ -362,10 +376,10 @@ test("POST /v1/onboarding/complete detects project scope from current_project an
         scope: ["user:universal", "project:react-analytics-dashboard"],
         confidence: 0.85,
         epistemic_status: "active",
-        aliases: [],
-      },
+        aliases: []
+      }
     ],
-    belief_updates: [],
+    belief_updates: []
   });
 
   const adapter = makeAdapter({ content: extractionResponse });
@@ -376,15 +390,15 @@ test("POST /v1/onboarding/complete detects project scope from current_project an
     {
       question_id: "current_project",
       question: "What are you working on?",
-      answer: "A React analytics dashboard for internal metrics",
-    },
+      answer: "A React analytics dashboard for internal metrics"
+    }
   ];
 
   const res = await app.inject({
     method: "POST",
     url: "/v1/onboarding/complete",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify({ answers })
   });
 
   t.is(res.statusCode, 200);
@@ -398,7 +412,7 @@ test("POST /v1/onboarding/commit rejects missing draft_id", async (t) => {
     method: "POST",
     url: "/v1/onboarding/commit",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({}),
+    body: JSON.stringify({})
   });
 
   t.is(res.statusCode, 400);
@@ -411,7 +425,7 @@ test("POST /v1/onboarding/commit returns 404 for unknown draft_id", async (t) =>
     method: "POST",
     url: "/v1/onboarding/commit",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ draft_id: "nonexistent-id" }),
+    body: JSON.stringify({ draft_id: "nonexistent-id" })
   });
 
   t.is(res.statusCode, 404);
@@ -431,10 +445,10 @@ test("POST /v1/onboarding/commit enqueues job for valid draft", async (t) => {
         scope: ["user:universal"],
         confidence: 0.9,
         epistemic_status: "active",
-        aliases: [],
-      },
+        aliases: []
+      }
     ],
-    belief_updates: [],
+    belief_updates: []
   });
 
   const adapter = makeAdapter({ content: extractionResponse });
@@ -442,14 +456,14 @@ test("POST /v1/onboarding/commit enqueues job for valid draft", async (t) => {
   const app = buildApp(deps);
 
   const answers = [
-    { question_id: "response_length", question: "Q", answer: "Keep it terse" },
+    { question_id: "response_length", question: "Q", answer: "Keep it terse" }
   ];
 
   const completeRes = await app.inject({
     method: "POST",
     url: "/v1/onboarding/complete",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify({ answers })
   });
   const { draft_id } = JSON.parse(completeRes.body);
 
@@ -457,7 +471,7 @@ test("POST /v1/onboarding/commit enqueues job for valid draft", async (t) => {
     method: "POST",
     url: "/v1/onboarding/commit",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ draft_id }),
+    body: JSON.stringify({ draft_id })
   });
 
   t.is(commitRes.statusCode, 200);
@@ -479,7 +493,7 @@ test("POST /v1/onboarding/commit accepts edited_beliefs to override draft", asyn
         scope: ["user:universal"],
         confidence: 0.9,
         epistemic_status: "active",
-        aliases: [],
+        aliases: []
       },
       {
         type: "preference",
@@ -489,10 +503,10 @@ test("POST /v1/onboarding/commit accepts edited_beliefs to override draft", asyn
         scope: ["user:universal"],
         confidence: 0.7,
         epistemic_status: "active",
-        aliases: [],
-      },
+        aliases: []
+      }
     ],
-    belief_updates: [],
+    belief_updates: []
   });
 
   const adapter = makeAdapter({ content: extractionResponse });
@@ -500,14 +514,14 @@ test("POST /v1/onboarding/commit accepts edited_beliefs to override draft", asyn
   const app = buildApp(deps);
 
   const answers = [
-    { question_id: "response_length", question: "Q", answer: "Something" },
+    { question_id: "response_length", question: "Q", answer: "Something" }
   ];
 
   const completeRes = await app.inject({
     method: "POST",
     url: "/v1/onboarding/complete",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify({ answers })
   });
   const { draft_id } = JSON.parse(completeRes.body);
 
@@ -518,15 +532,15 @@ test("POST /v1/onboarding/commit accepts edited_beliefs to override draft", asyn
       content: "original content",
       why_it_matters: "matters",
       scope: ["user:universal"],
-      confidence: 0.9,
-    },
+      confidence: 0.9
+    }
   ];
 
   const commitRes = await app.inject({
     method: "POST",
     url: "/v1/onboarding/commit",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ draft_id, edited_beliefs: kept }),
+    body: JSON.stringify({ draft_id, edited_beliefs: kept })
   });
 
   t.is(commitRes.statusCode, 200);
@@ -550,10 +564,10 @@ test("POST /v1/onboarding/commit triggers inline extraction", async (t) => {
         scope: ["user:universal"],
         confidence: 0.9,
         epistemic_status: "active",
-        aliases: [],
-      },
+        aliases: []
+      }
     ],
-    belief_updates: [],
+    belief_updates: []
   });
 
   const adapter = makeAdapter({ content: extractionResponse });
@@ -561,14 +575,14 @@ test("POST /v1/onboarding/commit triggers inline extraction", async (t) => {
   const app = buildApp(deps);
 
   const answers = [
-    { question_id: "response_length", question: "Q", answer: "Quick" },
+    { question_id: "response_length", question: "Q", answer: "Quick" }
   ];
 
   const completeRes = await app.inject({
     method: "POST",
     url: "/v1/onboarding/complete",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify({ answers })
   });
   const { draft_id } = JSON.parse(completeRes.body);
 
@@ -576,13 +590,13 @@ test("POST /v1/onboarding/commit triggers inline extraction", async (t) => {
     method: "POST",
     url: "/v1/onboarding/commit",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ draft_id }),
+    body: JSON.stringify({ draft_id })
   });
 
   t.true(
     (deps.extractionWorker.processById as sinon.SinonStub).calledOnceWith(
-      "job-123",
-    ),
+      "job-123"
+    )
   );
 });
 
@@ -598,10 +612,10 @@ test("POST /v1/onboarding/commit draft can only be used once", async (t) => {
         scope: ["user:universal"],
         confidence: 0.9,
         epistemic_status: "active",
-        aliases: [],
-      },
+        aliases: []
+      }
     ],
-    belief_updates: [],
+    belief_updates: []
   });
 
   const adapter = makeAdapter({ content: extractionResponse });
@@ -609,14 +623,14 @@ test("POST /v1/onboarding/commit draft can only be used once", async (t) => {
   const app = buildApp(deps);
 
   const answers = [
-    { question_id: "response_length", question: "Q", answer: "Short" },
+    { question_id: "response_length", question: "Q", answer: "Short" }
   ];
 
   const completeRes = await app.inject({
     method: "POST",
     url: "/v1/onboarding/complete",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify({ answers })
   });
   const { draft_id } = JSON.parse(completeRes.body);
 
@@ -624,7 +638,7 @@ test("POST /v1/onboarding/commit draft can only be used once", async (t) => {
     method: "POST",
     url: "/v1/onboarding/commit",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ draft_id }),
+    body: JSON.stringify({ draft_id })
   });
   t.is(first.statusCode, 200);
 
@@ -632,7 +646,7 @@ test("POST /v1/onboarding/commit draft can only be used once", async (t) => {
     method: "POST",
     url: "/v1/onboarding/commit",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ draft_id }),
+    body: JSON.stringify({ draft_id })
   });
   t.is(second.statusCode, 404);
 });
@@ -640,7 +654,7 @@ test("POST /v1/onboarding/commit draft can only be used once", async (t) => {
 test("GET /v1/onboarding/probe-models/:id returns models for configured provider", async (t) => {
   const res = await t.context.app.inject({
     method: "GET",
-    url: `/v1/onboarding/probe-models/${PROVIDER_ID}`,
+    url: `/v1/onboarding/probe-models/${PROVIDER_ID}`
   });
 
   t.is(res.statusCode, 200);
@@ -653,7 +667,7 @@ test("GET /v1/onboarding/probe-models/:id returns models for configured provider
 test("GET /v1/onboarding/probe-models/:id returns 404 for unknown provider", async (t) => {
   const res = await t.context.app.inject({
     method: "GET",
-    url: "/v1/onboarding/probe-models/nonexistent",
+    url: "/v1/onboarding/probe-models/nonexistent"
   });
 
   t.is(res.statusCode, 404);
@@ -664,7 +678,7 @@ test("GET /v1/onboarding/probe-models/:id returns 404 for unknown provider", asy
 test("GET /v1/onboarding/probe-models/:id annotates tier info on each model", async (t) => {
   const res = await t.context.app.inject({
     method: "GET",
-    url: `/v1/onboarding/probe-models/${PROVIDER_ID}`,
+    url: `/v1/onboarding/probe-models/${PROVIDER_ID}`
   });
 
   const body = JSON.parse(res.body);
@@ -679,7 +693,7 @@ test("POST /v1/onboarding/validate-model returns 400 for missing fields", async 
     method: "POST",
     url: "/v1/onboarding/validate-model",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ provider_id: PROVIDER_ID }),
+    body: JSON.stringify({ provider_id: PROVIDER_ID })
   });
 
   t.is(res.statusCode, 400);
@@ -690,7 +704,7 @@ test("POST /v1/onboarding/validate-model pings model and saves default", async (
     method: "POST",
     url: "/v1/onboarding/validate-model",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ provider_id: PROVIDER_ID, model_id: MODEL }),
+    body: JSON.stringify({ provider_id: PROVIDER_ID, model_id: MODEL })
   });
 
   t.is(res.statusCode, 200);
@@ -699,15 +713,15 @@ test("POST /v1/onboarding/validate-model pings model and saves default", async (
   t.true(
     (t.context.deps.runtimeStore.set as sinon.SinonStub).calledWith(
       "default_model",
-      MODEL,
-    ),
+      MODEL
+    )
   );
 });
 
 test("POST /v1/onboarding/validate-model returns 502 when ping fails", async (t) => {
-  const adapter: ProviderAdapter = {
+  const adapter: TestAdapter = {
     id: PROVIDER_ID,
-    call: sinon.stub().rejects(new Error("model not found")),
+    call: sinon.stub().rejects(new Error("rate limited"))
   };
   const { deps } = makeDeps(adapter);
   const app = buildApp(deps);
@@ -716,7 +730,7 @@ test("POST /v1/onboarding/validate-model returns 502 when ping fails", async (t)
     method: "POST",
     url: "/v1/onboarding/validate-model",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ provider_id: PROVIDER_ID, model_id: "bad-model" }),
+    body: JSON.stringify({ provider_id: PROVIDER_ID, model_id: "bad-model" })
   });
 
   t.is(res.statusCode, 502);

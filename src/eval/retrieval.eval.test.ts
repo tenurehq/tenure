@@ -151,8 +151,6 @@ const EVAL_PERSONA: PersonaLookup = {
       : null
 };
 
-const NULL_ORG_SUMMARY = { get: async (_orgId: string) => null };
-
 function containerExists(): boolean {
   const result = spawnSync("docker", [
     "ps",
@@ -514,7 +512,7 @@ const cases = JSON.parse(
 for (const tc of cases) {
   test.serial(`${tc.caseId}: ${tc.description}`, async (t) => {
     const reader = new BeliefsReader(col);
-    const builder = new ContextBuilder(reader, EVAL_PERSONA, NULL_ORG_SUMMARY, {
+    const builder = new ContextBuilder(reader, EVAL_PERSONA, {
       ...tc.budget,
       scoreDetails: true
     });
@@ -638,8 +636,8 @@ for (const tc of cases) {
       relevantIds.size === 0 && expectedRelevant.size === 0
         ? null
         : relevantIds.size === 0
-        ? 0.0 //
-        : retrievalHits / relevantIds.size;
+          ? 0.0 //
+          : retrievalHits / relevantIds.size;
 
     const retrievalRecall =
       expectedRelevant.size === 0

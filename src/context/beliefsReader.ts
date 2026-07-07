@@ -19,11 +19,6 @@ export interface SearchTextOptions {
 export class BeliefsReader {
   constructor(private readonly col: Collection<Belief>) {}
 
-  /**
-   * Merges an agent filter with an existing $or clause without clobbering.
-   * MongoDB does not allow multiple $or at the top level of a single filter
-   * object, so when the base query already uses $or we wrap both in $and.
-   */
   private mergeFilter(
     base: Record<string, unknown>,
     agentId: string | null | undefined
@@ -270,11 +265,6 @@ export class BeliefsReader {
     return this.runSearchPipeline(searchStage, minScore, limit, scoreDetails);
   }
 
-  /**
-   * Atlas Search fallback for ingestion-time deduplication.
-   * Unlike searchText(), this does NOT exclude expertise or open_question,
-   * and it scopes tightly to the incoming belief's type/scope/agent.
-   */
   async searchMergeCandidates(
     userId: string,
     query: string,
@@ -393,72 +383,5 @@ export class BeliefsReader {
     const filter = this.mergeFilter(base, agentId);
 
     return this.col.countDocuments(filter);
-  }
-
-  async listTeamBeliefs(
-    teamId: string,
-    scope?: string[],
-    limit = 5,
-    agentId?: string | null
-  ): Promise<Belief[]> {
-    const base: Record<string, unknown> = {
-      team_id: teamId,
-      visibility: "team",
-      ...ACTIVE_FILTER
-    };
-    if (scope?.length) base.scope = { $in: scope };
-
-    const filter = this.mergeFilter(base, agentId);
-
-    return this.col
-      .find(filter)
-      .sort({ pinned: -1, last_reinforced_at: -1 })
-      .limit(limit)
-      .toArray();
-  }
-
-  async listOrgBeliefs(orgId: string, limit = 10): Promise<Belief[]> {
-    return this.col
-      .find({
-        org_id: orgId,
-        visibility: "org",
-        ...ACTIVE_FILTER
-      })
-      .sort({ pinned: -1, created_at: -1 })
-      .limit(limit)
-      .toArray();
-  }
-
-  async findTeamOrgByCanonical(
-    teamId: string | undefined,
-    orgId: string | undefined,
-    canonicalName: string,
-    scope?: string[]
-  ): Promise<Belief | null> {
-    const normalized = canonicalName.trim().toLowerCase();
-    const scopes: Record<string, unknown>[] = [];
-
-    if (teamId) {
-      const q: Record<string, unknown> = {
-        team_id: teamId,
-        visibility: "team",
-        $or: [{ canonical_name: normalized }, { aliases: normalized }],
-        ...ACTIVE_FILTER
-      };
-      if (scope?.length) q.scope = { $in: scope };
-      scopes.push(q);
-    }
-    if (orgId) {
-      const q: Record<string, unknown> = {
-        org_id: orgId,
-        visibility: "org",
-        $or: [{ canonical_name: normalized }, { aliases: normalized }],
-        ...ACTIVE_FILTER
-      };
-      if (scope?.length) q.scope = { $in: scope };
-      scopes.push(q);
-    }
-    if (scopes.length === 0) return null;
-    return this.col.findOne({ $or: scopes });
   }
 }

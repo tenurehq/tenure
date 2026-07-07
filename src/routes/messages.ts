@@ -11,9 +11,7 @@ import {
   tryInterceptScopeCommand,
   tryInterceptExtractCommand,
   tryInterceptInjectCommand,
-  tryInterceptSessionCommand,
-  detectScopeFromMessage,
-  fetchExistingUserScopes
+  tryInterceptSessionCommand
 } from "../helpers/scopeDetector.js";
 import type { Session } from "../session/manager.js";
 import { EMPTY_CONTEXT } from "../context/contextBuilder.js";
@@ -25,6 +23,7 @@ import {
 } from "../providers/anthropic.js";
 import { runSideEffects } from "./shared/sideEffects.js";
 import { extractLatestUserText } from "../helpers/content.js";
+import { assertTokenProjectScopes } from "../server.js";
 
 interface AnthropicSystemBlock {
   type: "text";
@@ -205,8 +204,6 @@ export function registerMessagesRoute(
       }
 
       const userId = req.tenureUserId;
-      const teamId = (req as any).tenureTeamId ?? null;
-      const orgId = (req as any).tenureOrgId ?? null;
 
       const requestId = randomUUID();
 
@@ -259,8 +256,6 @@ export function registerMessagesRoute(
       const cfg = await deps.runtimeStore.load().catch(() => ({
         extraction_enabled: true,
         injection_enabled: true,
-        managed_history_token_cap: 120000,
-        compaction_mode: "aggressive" as const,
         scope_auto_detect: true
       }));
 
@@ -347,38 +342,17 @@ export function registerMessagesRoute(
         }
       }
 
-      if (scope.length === 0) {
-        const isFirstTurn =
-          (session?.turnCounter ?? 0) === 0 &&
-          deps.scopeDetector != null &&
-          cfg.scope_auto_detect !== false;
-
-        if (isFirstTurn && deps.scopeDetector) {
-          try {
-            const existingScopes = await fetchExistingUserScopes(
-              userId,
-              deps.scopeDetector.db,
-              teamId,
-              orgId
-            );
-            const detected = await detectScopeFromMessage(
-              latestUserMessage,
-              existingScopes,
-              deps.scopeDetector,
-              req.log
-            );
-            if (detected.length > 0) {
-              await deps.sessions
-                .update(sessionId, userId, { activeScope: detected })
-                .catch((err) =>
-                  req.log.warn({ err, sessionId }, "scope persist failed")
-                );
-              scope = detected;
-            }
-          } catch (err) {
-            req.log.warn({ err, sessionId }, "scope detection failed");
+      const scopeCheck = assertTokenProjectScopes(req, scope);
+      if (!scopeCheck.ok) {
+        return reply.code(403).send({
+          type: "error",
+          error: {
+            type: "permission_error",
+            message: scopeCheck.message,
+            token_project_scopes: req.tenureTokenProjectScopes ?? null,
+            requested_scope: scope
           }
-        }
+        });
       }
 
       const noExtractHeader = req.headers["x-tenure-no-extract"] === "true";
@@ -386,10 +360,8 @@ export function registerMessagesRoute(
       const isIdeTurn = req.headers["x-tenure-ide"] === "1";
       const ideExtractionEnabled =
         (cfg as any).ide_extraction_enabled !== false;
-      const memoryMode = (cfg as any).memory_mode ?? "autonomous";
 
       const extractionEnabled =
-        memoryMode !== "inject_only" &&
         cfg.extraction_enabled !== false &&
         session?.extractionPaused !== true &&
         !noExtractHeader &&
@@ -397,7 +369,6 @@ export function registerMessagesRoute(
         (isIdeTurn ? ideExtractionEnabled : true);
 
       const injectionEnabled =
-        memoryMode !== "reflective" &&
         cfg.injection_enabled !== false &&
         session?.injectionPaused !== true &&
         !bootstrapInProgress;
@@ -406,7 +377,7 @@ export function registerMessagesRoute(
       const agentId = ocAgentId && ocAgentId !== "main" ? ocAgentId : null;
 
       const beliefCtx = await deps.context
-        .build(userId, scope, latestUserMessage, agentId, teamId, orgId)
+        .build(userId, scope, latestUserMessage, agentId)
         .catch((err) => {
           req.log.warn({ err }, "context assembly failed");
           return EMPTY_CONTEXT;
@@ -453,7 +424,6 @@ export function registerMessagesRoute(
           extractionEnabled,
           injectionEnabled,
           activeScope: scope[0],
-          scopeAutoDetect: cfg.scope_auto_detect !== false,
           extractionMode,
           ideScope
         });
@@ -475,6 +445,9 @@ export function registerMessagesRoute(
             expandedQuery: beliefCtx.expandedQuery,
             scope,
             agentId,
+            tokenId: req.tenureTokenId ?? null,
+            tokenName: req.tenureTokenName ?? null,
+            tokenKind: req.tenureTokenKind ?? null,
             injected: injectionEnabled,
             beliefCtx
           })
@@ -518,8 +491,9 @@ export function registerMessagesRoute(
             requestId,
             sessionId,
             userId,
-            teamId,
-            orgId,
+            tokenId: req.tenureTokenId ?? "root",
+            tokenName: req.tenureTokenName ?? "",
+            tokenKind: req.tenureTokenKind ?? "root",
             requestedModel,
             latestUserMessage,
             rawContent,
@@ -588,12 +562,17 @@ export function registerMessagesRoute(
         )
       );
 
+      if (!req.tenureTokenId || !req.tenureTokenKind) {
+        throw new Error("missing token attribution for side effects");
+      }
+
       runSideEffects({
         deps,
         userId,
         agentId,
-        teamId,
-        orgId,
+        tokenId: req.tenureTokenId,
+        tokenName: req.tenureTokenName ?? "",
+        tokenKind: req.tenureTokenKind,
         sessionId,
         requestId,
         latestUserMessage,
@@ -621,8 +600,9 @@ interface StreamingCtx {
   requestId: string;
   sessionId: string;
   userId: string;
-  teamId: string | null;
-  orgId: string | null;
+  tokenId: string;
+  tokenName: string;
+  tokenKind: "client" | "agent" | "root";
   requestedModel: string;
   latestUserMessage: string;
   rawContent: string | ContentPart[];
@@ -884,8 +864,9 @@ async function handleAnthropicStream(
     deps: ctx.deps,
     userId: ctx.userId,
     agentId: ctx.agentId,
-    teamId: ctx.teamId,
-    orgId: ctx.orgId,
+    tokenId: ctx.tokenId,
+    tokenName: ctx.tokenName,
+    tokenKind: ctx.tokenKind,
     sessionId: ctx.sessionId,
     requestId: ctx.requestId,
     latestUserMessage: ctx.latestUserMessage,

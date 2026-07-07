@@ -10,7 +10,6 @@ import type {
   NewBelief,
   BeliefUpdateSignal,
   EntityUpdate,
-  StyleSignal,
   AliasCandidate
 } from "./types.js";
 
@@ -27,14 +26,8 @@ export enum MergeAction {
 
 export interface MergePolicy {
   minInsertConfidence: number;
-  conflictConfidenceMargin: number;
   maxAliasesPerBelief: number;
   inferredPromotionCount: number;
-  /**
-   * Minimum milliseconds between created_at and now before promotion is
-   * allowed. Guards against a single long session driving a belief to active
-   * through repeated reinforcement of the same causal chain.
-   */
   inferredPromotionAgeMs: number;
   demonstratedPromotionCount: number;
   demonstratedPromotionAgeMs: number;
@@ -42,7 +35,6 @@ export interface MergePolicy {
 
 const DEFAULT_POLICY: MergePolicy = {
   minInsertConfidence: 0.35,
-  conflictConfidenceMargin: 0.15,
   maxAliasesPerBelief: 25,
   inferredPromotionCount: 5,
   inferredPromotionAgeMs: 48 * 60 * 60 * 1000,
@@ -59,7 +51,6 @@ export interface MergeDecision {
 export interface MergeReport {
   decisions: MergeDecision[];
   aliasCandidatesDeferred: AliasCandidate[];
-  styleSignalsDeferred: StyleSignal[];
   openQuestionsClosed: string[];
   newOpenQuestionIds: string[];
   errors: string[];
@@ -73,8 +64,6 @@ export interface MergeInput {
   agentId: string | null;
   result: ExtractionResult;
   originContext?: OriginContext | null;
-  teamId?: string;
-  orgId?: string;
 }
 
 export class BeliefMerger {
@@ -102,7 +91,6 @@ export class BeliefMerger {
     const report: MergeReport = {
       decisions: [],
       aliasCandidatesDeferred: [],
-      styleSignalsDeferred: [],
       openQuestionsClosed: [],
       newOpenQuestionIds: [],
       errors: []
@@ -159,8 +147,9 @@ export class BeliefMerger {
               userId,
               nb.resolves_open_question
             );
-            if (closed)
+            if (closed) {
               report.openQuestionsClosed.push(nb.resolves_open_question);
+            }
           } catch (e) {
             report.errors.push(
               `auto_resolve[${nb.resolves_open_question}]: ${
@@ -201,10 +190,6 @@ export class BeliefMerger {
       report.aliasCandidatesDeferred.push(candidate);
     }
 
-    for (const ss of result.style_signals) {
-      report.styleSignalsDeferred.push(ss);
-    }
-
     for (const qid of result.resolved_open_questions) {
       try {
         const closed = await this.writer.closeOpenQuestion(userId, qid);
@@ -232,6 +217,7 @@ export class BeliefMerger {
       true,
       nb.scope
     );
+
     let existing =
       matches.find(
         (m) => m.canonical_name === nb.canonical_name.trim().toLowerCase()
@@ -249,23 +235,7 @@ export class BeliefMerger {
           nb.subtype ?? null,
           { agentId, limit: 5, minScore: 1.0 }
         );
-
-        const fuzzy = candidates.find((c) => {
-          // Mirror the file-context guard used later in this function:
-          // only reject if BOTH beliefs specify active_file and they differ.
-          if (
-            originContext?.active_file &&
-            c.origin_context?.active_file &&
-            originContext.active_file !== c.origin_context.active_file
-          ) {
-            return false;
-          }
-          return true;
-        });
-
-        if (fuzzy) {
-          existing = fuzzy;
-        }
+        existing = candidates[0] ?? null;
       } catch {}
     }
 
@@ -311,6 +281,7 @@ export class BeliefMerger {
                 "canonical name conflict but no active belief found on re-read"
             };
           }
+
           await this.writer.reinforce(
             userId,
             conflictMatch._id,
@@ -323,6 +294,7 @@ export class BeliefMerger {
             sessionId,
             turnId
           );
+
           return {
             action: MergeAction.REINFORCED,
             beliefId: conflictMatch._id,
@@ -333,57 +305,11 @@ export class BeliefMerger {
       }
     }
 
-    if (
-      originContext?.active_file &&
-      existing.origin_context?.active_file &&
-      originContext.active_file !== existing.origin_context.active_file
-    ) {
-      const beliefId = await this.insertBelief(
-        userId,
-        sessionId,
-        turnId,
-        sourceModel,
-        nb,
-        agentId,
-        originContext
-      );
-      return {
-        action: MergeAction.INSERTED,
-        beliefId,
-        reason:
-          "same canonical name but distinct file context — inserted as separate belief"
-      };
-    }
-
     if (existing.content !== nb.content) {
-      const margin = nb.confidence - existing.confidence;
-      const decisive = Math.abs(margin) >= this.policy.conflictConfidenceMargin;
-
-      if (decisive && margin > 0) {
-        return {
-          action: MergeAction.FLAGGED_CONFLICT,
-          beliefId: existing._id,
-          reason:
-            "content differs with higher-confidence incoming; queued for user review"
-        };
-      }
-
-      if (decisive && margin <= 0) {
-        return {
-          action: MergeAction.SKIPPED_LOW_CONFIDENCE,
-          beliefId: existing._id,
-          reason: `content differs; incoming confidence significantly lower (margin ${margin.toFixed(
-            2
-          )})`
-        };
-      }
-
       return {
         action: MergeAction.SKIPPED_LOW_CONFIDENCE,
         beliefId: existing._id,
-        reason: `content differs within confidence margin (${Math.abs(
-          margin
-        ).toFixed(2)}); no explicit supersede signal`
+        reason: "content differs; leaving existing belief unchanged"
       };
     }
 
@@ -410,6 +336,7 @@ export class BeliefMerger {
 
     await this.writer.reinforce(userId, existing._id, sessionId, turnId);
     await this.maybePromoteInferred(userId, existing._id, sessionId, turnId);
+
     return {
       action: MergeAction.REINFORCED,
       beliefId: existing._id,
@@ -417,13 +344,6 @@ export class BeliefMerger {
     };
   }
 
-  /**
-   * Promotes an inferred belief to active once it has accumulated enough
-   * reinforcement across a sufficient span of time. Both conditions must be
-   * met: the raw count guards against sparse signals, the age floor guards
-   * against a single session driving a belief to active through repeated
-   * reinforcement of the same causal chain.
-   */
   private async maybePromoteInferred(
     userId: string,
     beliefId: string,
@@ -497,6 +417,7 @@ export class BeliefMerger {
         ].filter((a) => a !== newCanonical);
 
         let replacementId: string;
+
         try {
           replacementId = await this.writer.create({
             user_id: userId,
@@ -555,6 +476,7 @@ export class BeliefMerger {
         }
 
         await this.writer.setSupersededBy(userId, target._id, replacementId);
+
         return {
           action: MergeAction.SUPERSEDED,
           beliefId: replacementId,
@@ -570,6 +492,7 @@ export class BeliefMerger {
             reason: "enriched signal without new_content"
           };
         }
+
         const success = await this.writer.enrichContent(
           userId,
           target._id,
@@ -577,12 +500,13 @@ export class BeliefMerger {
           sessionId,
           turnId
         );
+
         return {
           action: success ? MergeAction.CONTENT_EDITED : MergeAction.NOOP,
           beliefId: target._id,
           reason: success
             ? `appended attribute: "${signal.new_content}"`
-            : "enrich failed — belief not found"
+            : "enrich failed, belief not found"
         };
       }
 

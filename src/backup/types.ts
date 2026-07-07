@@ -7,7 +7,6 @@ export interface TenureExport {
   beliefs: ExportedBelief[];
   runtime_config: ExportedRuntimeConfig;
   persona_cache: ExportedPersonaDoc | null;
-  compaction_log: ExportedCompactionEntry[];
   sessions: ExportedSession[];
   injection_audit: ExportedAuditRecord[];
 }
@@ -44,7 +43,6 @@ export interface ExportedBelief {
   expertise_domain?: string;
   expertise_depth?: string;
   expertise_evidence_count?: number;
-  compaction_note?: string;
   created_at: string;
   updated_at: string;
 }
@@ -62,7 +60,6 @@ export interface ExportedRuntimeConfig {
   anthropic_base_url: string | null;
   openai_endpoint_flavor: string | null;
   always_on_token_target: number;
-  managed_history_token_cap: number;
   error_retention_days: number;
   strict_model_tiers: boolean;
   extraction_enabled: boolean;
@@ -75,15 +72,6 @@ export interface ExportedPersonaDoc {
   beliefs_hash: string;
   generated_at: string;
   model: string;
-}
-
-export interface ExportedCompactionEntry {
-  _id: string;
-  user_id: string;
-  scope: string;
-  belief_type: string;
-  ran_at: string;
-  merged_count: number;
 }
 
 export interface ExportedSession {

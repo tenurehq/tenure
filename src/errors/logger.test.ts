@@ -40,8 +40,7 @@ function makeCollections(overrides: Partial<Collections> = {}): Collections {
     config: null as any,
     topic_index: null as any,
     persona_cache: null as any,
-    compaction_log: null as any,
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -51,7 +50,7 @@ function makeInput(overrides: Partial<ErrorInput> = {}): ErrorInput {
     stage: "provider_call",
     message: "Something went wrong",
     user_id: "user-1",
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -68,8 +67,8 @@ test("log persists severity, stage, and message verbatim", async (t) => {
     makeInput({
       severity: "critical",
       stage: "belief_write",
-      message: "disk full",
-    }),
+      message: "disk full"
+    })
   );
   const doc = await errorCol.findOne({});
   t.is(doc!.severity, "critical");
@@ -232,7 +231,7 @@ test("log defaults stack_trace to null when no error provided", async (t) => {
 
 test("log does not throw when insertOne rejects", async (t) => {
   const failingCol = {
-    insertOne: sinon.stub().rejects(new Error("mongo down")),
+    insertOne: sinon.stub().rejects(new Error("mongo down"))
   } as unknown as Collection<ErrorLog>;
 
   const logger = new ErrorLogger(makeCollections({ errors: failingCol }));
@@ -244,7 +243,7 @@ test("log writes to console.error when insertOne rejects", async (t) => {
   const consoleSpy = sinon.stub(console, "error");
 
   const failingCol = {
-    insertOne: sinon.stub().rejects(new Error("mongo down")),
+    insertOne: sinon.stub().rejects(new Error("mongo down"))
   } as unknown as Collection<ErrorLog>;
 
   const logger = new ErrorLogger(makeCollections({ errors: failingCol }));

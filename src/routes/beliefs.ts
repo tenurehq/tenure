@@ -13,6 +13,8 @@ import {
 import { extractJsonBlock } from "../extraction/extractJson.js";
 import type { BeliefWriter } from "../extraction/beliefWriter.js";
 import type { InternalLLMCaller } from "../providers/types.js";
+import { assertTokenProjectScopes } from "../server.js";
+import { buildBeliefProjectScopeFilter } from "../helpers/scopeAccess.js";
 
 export interface BeliefsDeps {
   beliefs: Collection<Belief>;
@@ -37,23 +39,32 @@ export function registerBeliefsRoutes(
       status?: string;
       limit?: string;
     };
-  }>("/v1/beliefs", async (req) => {
+  }>("/v1/beliefs", async (req, reply) => {
     const userId = req.tenureUserId;
     const q = req.query;
-    const teamId = req.tenureTeamId;
-    const notOrg = {
-      $or: [{ visibility: { $ne: "org" } }, { visibility: { $exists: false } }]
-    };
-    const filter: Record<string, unknown> = teamId
-      ? {
-          $or: [
-            { user_id: userId, ...notOrg },
-            { team_id: teamId, visibility: "team" }
-          ]
-        }
-      : { user_id: userId, ...notOrg };
+    const projectScopeFilter = buildBeliefProjectScopeFilter(
+      req.tenureTokenProjectScopes
+    );
 
-    if (q.scope) filter.scope = { $in: q.scope.split(",") };
+    const filter: Record<string, unknown> = {
+      user_id: userId,
+      ...projectScopeFilter
+    };
+
+    if (q.scope) {
+      const requestedScopes = q.scope.split(",");
+      const scopeCheck = assertTokenProjectScopes(req, requestedScopes);
+      if (!scopeCheck.ok) {
+        return reply.code(403).send({
+          error: {
+            message: scopeCheck.message,
+            token_project_scopes: req.tenureTokenProjectScopes ?? null,
+            requested_scope: requestedScopes
+          }
+        });
+      }
+      filter.scope = { $in: requestedScopes };
+    }
     if (q.type) filter.type = { $in: q.type.split(",") };
     if (q.status) {
       filter.epistemic_status = { $in: q.status.split(",") };
@@ -71,7 +82,11 @@ export function registerBeliefsRoutes(
 
   app.get<{ Params: { id: string } }>("/v1/beliefs/:id", async (req, reply) => {
     const userId = req.tenureUserId;
-    const doc = await col.findOne({ _id: req.params.id, user_id: userId });
+    const doc = await col.findOne({
+      _id: req.params.id,
+      user_id: userId,
+      ...buildBeliefProjectScopeFilter(req.tenureTokenProjectScopes)
+    });
     if (!doc) {
       return reply.code(404).send({ error: { message: "belief not found" } });
     }
@@ -93,7 +108,11 @@ export function registerBeliefsRoutes(
     const { id } = req.params;
     const patch = req.body ?? {};
 
-    const current = await col.findOne({ _id: id, user_id: userId });
+    const current = await col.findOne({
+      _id: id,
+      user_id: userId,
+      ...buildBeliefProjectScopeFilter(req.tenureTokenProjectScopes)
+    });
     if (!current) {
       return reply.code(404).send({ error: { message: "belief not found" } });
     }
@@ -158,7 +177,11 @@ export function registerBeliefsRoutes(
     async (req, reply) => {
       const userId = req.tenureUserId;
       const { id } = req.params;
-      const current = await col.findOne({ _id: id, user_id: userId });
+      const current = await col.findOne({
+        _id: id,
+        user_id: userId,
+        ...buildBeliefProjectScopeFilter(req.tenureTokenProjectScopes)
+      });
       if (!current) {
         return reply.code(404).send({ error: { message: "belief not found" } });
       }
@@ -202,6 +225,14 @@ export function registerBeliefsRoutes(
     const userId = req.tenureUserId;
     const body = req.body ?? {};
 
+    if (req.tenureTokenKind === "agent") {
+      return reply.code(403).send({
+        error: {
+          message: "Agent tokens cannot create beliefs. Use a client token."
+        }
+      });
+    }
+
     if (!body.type || !body.canonical_name?.trim() || !body.content?.trim()) {
       return reply.code(400).send({
         error: { message: "type, canonical_name, and content are required" }
@@ -215,6 +246,17 @@ export function registerBeliefsRoutes(
     if (!Array.isArray(body.scope) || body.scope.length === 0) {
       return reply.code(400).send({
         error: { message: "scope is required and must be a non-empty array" }
+      });
+    }
+
+    const scopeCheck = assertTokenProjectScopes(req, body.scope);
+    if (!scopeCheck.ok) {
+      return reply.code(403).send({
+        error: {
+          message: scopeCheck.message,
+          token_project_scopes: req.tenureTokenProjectScopes ?? null,
+          requested_scope: body.scope
+        }
       });
     }
 
@@ -298,9 +340,23 @@ export function registerBeliefsRoutes(
     async (req, reply) => {
       const { text, source_label, scope } = req.body ?? {};
 
+      if (scope?.length) {
+        const scopeCheck = assertTokenProjectScopes(req, scope);
+        if (!scopeCheck.ok) {
+          return reply.code(403).send({
+            error: {
+              message: scopeCheck.message,
+              token_project_scopes: req.tenureTokenProjectScopes ?? null,
+              requested_scope: scope
+            }
+          });
+        }
+      }
+
       if (!text?.trim()) {
         return reply.code(400).send({ error: { message: "text is required" } });
       }
+
       if (text.length > 50_000) {
         return reply.code(400).send({
           error: {
@@ -374,8 +430,17 @@ export function registerBeliefsRoutes(
       }
 
       try {
+        if (!req.tenureTokenId || !req.tenureTokenKind) {
+          return reply.code(401).send({
+            error: { message: "missing token attribution for import" }
+          });
+        }
+
         const jobId = await deps.jobs.enqueueImport({
           userId: req.tenureUserId,
+          tokenId: req.tenureTokenId,
+          tokenName: req.tenureTokenName ?? "",
+          tokenKind: req.tenureTokenKind,
           sourceLabel: source_label ?? "manual import",
           sidecarJson,
           sourceModel: cfg.default_model,
@@ -416,6 +481,20 @@ export function registerBeliefsRoutes(
       };
     }
   );
+
+  app.get("/v1/scopes/projects", async (req) => {
+    const userId = req.tenureUserId;
+    const values = await col.distinct("scope", {
+      user_id: userId,
+      ...buildBeliefProjectScopeFilter(req.tenureTokenProjectScopes)
+    });
+    const scopes = values
+      .filter(
+        (s): s is string => typeof s === "string" && s.startsWith("project:")
+      )
+      .sort((a, b) => a.localeCompare(b));
+    return { scopes };
+  });
 
   app.get("/v1/beliefs/suggestions", async (req) => {
     const userId = req.tenureUserId;
@@ -542,7 +621,6 @@ function redactForClient(b: WithId<Belief>) {
     confidence: b.confidence,
     pinned: b.pinned,
     scope: b.scope,
-    aliases: b.aliases,
-    visibility: b.visibility ?? "user"
+    aliases: b.aliases
   };
 }

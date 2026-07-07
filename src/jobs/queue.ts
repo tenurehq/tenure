@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { Collection, Db } from "mongodb";
-import type { ExtractionJob, ParseStatus } from "../types/job.js";
+import type { ExtractionJob, ParseStatus, JobTokenKind } from "../types/job.js";
 
 export interface EnqueueParams {
   userId: string;
-  teamId?: string | null;
-  orgId?: string | null;
   agentId?: string | null;
+  tokenId: string;
+  tokenName: string;
+  tokenKind: JobTokenKind;
   sessionId: string;
   requestId: string;
   userMessage: string;
@@ -26,8 +27,9 @@ export interface EnqueueParams {
 
 export interface EnqueueOnboardingParams {
   userId: string;
-  teamId?: string | null;
-  orgId?: string | null;
+  tokenId: string;
+  tokenName: string;
+  tokenKind: JobTokenKind;
   sessionId: string;
   sidecarRaw: string;
   sourceModel: string;
@@ -35,8 +37,9 @@ export interface EnqueueOnboardingParams {
 
 export interface EnqueueImportParams {
   userId: string;
-  teamId?: string | null;
-  orgId?: string | null;
+  tokenId: string;
+  tokenName: string;
+  tokenKind: JobTokenKind;
   sourceLabel: string;
   sidecarJson: string;
   sourceModel: string;
@@ -56,11 +59,12 @@ export class ExtractionJobQueue {
       _id: randomUUID(),
       type: "extract_beliefs",
       user_id: params.userId,
-      team_id: params.teamId ?? null,
-      org_id: params.orgId ?? null,
       session_id: params.sessionId,
       turn_id: params.requestId,
       agent_id: params.agentId ?? null,
+      token_id: params.tokenId,
+      token_name: params.tokenName,
+      token_kind: params.tokenKind,
       status: "pending",
       attempts: 0,
       max_attempts: 3,
@@ -97,8 +101,10 @@ export class ExtractionJobQueue {
       _id: randomUUID(),
       type: "onboarding_extraction",
       user_id: params.userId,
-      team_id: params.teamId ?? null,
-      org_id: params.orgId ?? null,
+      agent_id: null,
+      token_id: params.tokenId,
+      token_name: params.tokenName,
+      token_kind: params.tokenKind,
       session_id: params.sessionId,
       turn_id: "",
       status: "pending",
@@ -128,8 +134,10 @@ export class ExtractionJobQueue {
       _id: randomUUID(),
       type: "import_extraction",
       user_id: params.userId,
-      team_id: params.teamId ?? null,
-      org_id: params.orgId ?? null,
+      agent_id: null,
+      token_id: params.tokenId,
+      token_name: params.tokenName,
+      token_kind: params.tokenKind,
       session_id: `import_${Date.now()}`,
       turn_id: "",
       status: "pending",

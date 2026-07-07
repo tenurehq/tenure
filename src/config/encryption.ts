@@ -3,13 +3,14 @@ import {
   createDecipheriv,
   randomBytes,
   scryptSync,
+  createHmac
 } from "node:crypto";
 import {
   readFileSync,
   writeFileSync,
   existsSync,
   chmodSync,
-  mkdirSync,
+  mkdirSync
 } from "node:fs";
 import { dirname } from "node:path";
 
@@ -32,7 +33,7 @@ export class CredentialVault {
     const cipher = createCipheriv(ALGO, derived, iv);
     const encrypted = Buffer.concat([
       cipher.update(plaintext, "utf8"),
-      cipher.final(),
+      cipher.final()
     ]);
     const tag = cipher.getAuthTag();
     return Buffer.concat([salt, iv, tag, encrypted]).toString("base64");
@@ -49,8 +50,29 @@ export class CredentialVault {
     decipher.setAuthTag(tag);
     return Buffer.concat([
       decipher.update(encrypted),
-      decipher.final(),
+      decipher.final()
     ]).toString("utf8");
+  }
+
+  hkdfExpand(info: string, length: number = KEY_LEN): Buffer {
+    const hmac = createHmac("sha256", this.masterKey);
+    hmac.update(info);
+    return hmac.digest().subarray(0, length);
+  }
+
+  encryptToFile(plaintext: string, filePath: string): void {
+    const encrypted = this.encrypt(plaintext);
+    mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
+    writeFileSync(filePath, encrypted, { mode: 0o600 });
+    chmodSync(filePath, 0o600);
+  }
+
+  decryptFromFile(filePath: string): string {
+    if (!existsSync(filePath)) {
+      throw new Error(`Encrypted file not found: ${filePath}`);
+    }
+    const data = readFileSync(filePath, "utf8").trim();
+    return this.decrypt(data);
   }
 
   private loadOrCreateKey(path: string): Buffer {

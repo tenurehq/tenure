@@ -9,18 +9,17 @@ import { OpenAIAdapter } from "../providers/openai.js";
 import { AnthropicAdapter } from "../providers/anthropic.js";
 import type { Db } from "mongodb";
 import { rotateApiToken } from "../config/appConfig.js";
-import type { BeliefCompactionRunner } from "../jobs/compactionRunner.js";
 import { registry } from "./beliefs-ws.js";
-import type { ApiTokenDoc } from "../db/collections.js";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { requireRootToken } from "./setup-guard.js";
+import type { CredentialVault } from "../config/encryption.js";
+import type { TokenService } from "../auth/tokenService.js";
 
 export interface AdminDeps {
   runtimeStore: RuntimeConfigStore;
   providers: ProviderRegistry;
   db: Db;
   updateToken: (t: string) => void;
-  compactionRunner: BeliefCompactionRunner;
+  vault: CredentialVault;
+  tokenService: TokenService;
 }
 
 const PROVIDER_CONFIG: Record<
@@ -63,24 +62,11 @@ export function registerAdminRoutes(
       anthropic_configured: cfg.anthropic_api_key !== null,
       anthropic_base_url: cfg.anthropic_base_url,
       always_on_token_target: cfg.always_on_token_target,
-      managed_history_token_cap: cfg.managed_history_token_cap,
       error_retention_days: cfg.error_retention_days,
       extraction_enabled: cfg.extraction_enabled,
       strict_model_tiers: cfg.strict_model_tiers,
-      compaction_mode: cfg.compaction_mode,
       scope_auto_detect: cfg.scope_auto_detect
     };
-  });
-
-  app.post("/admin/maintenance/compact", async (req, reply) => {
-    try {
-      await deps.compactionRunner.run(req.tenureUserId);
-      return { ok: true };
-    } catch (e) {
-      return reply.code(500).send({
-        error: { message: (e as Error).message }
-      });
-    }
   });
 
   app.put<{ Params: { key: string }; Body: { value: unknown } }>(
@@ -99,12 +85,10 @@ export function registerAdminRoutes(
         "openai_base_url",
         "anthropic_base_url",
         "always_on_token_target",
-        "managed_history_token_cap",
         "error_retention_days",
         "default_model",
         "extraction_enabled",
         "strict_model_tiers",
-        "compaction_mode",
         "scope_auto_detect",
         "injection_enabled"
       ]);
@@ -134,56 +118,6 @@ export function registerAdminRoutes(
       }
 
       return { ok: true, key, value };
-    }
-  );
-
-  app.post<{ Body: { name: string } }>("/admin/tokens", async (req, reply) => {
-    const { name } = req.body ?? {};
-    if (!name || typeof name !== "string") {
-      return reply.code(400).send({ error: { message: "name is required" } });
-    }
-
-    const token = `tpat_${randomBytes(24).toString("base64url")}`;
-    const hash = createHash("sha256").update(token).digest("hex");
-    const userId = req.tenureUserId;
-
-    await deps.db.collection<ApiTokenDoc>("api_tokens").insertOne({
-      _id: randomUUID(),
-      token_hash: hash,
-      name,
-      user_id: userId,
-      created_at: new Date(),
-      revoked_at: null
-    });
-
-    return { ok: true, token, name, user_id: userId };
-  });
-
-  app.get("/admin/tokens", async (req) => {
-    const userId = req.tenureUserId;
-    const tokens = await deps.db
-      .collection<ApiTokenDoc>("api_tokens")
-      .find({ user_id: userId, revoked_at: { $exists: false } })
-      .sort({ created_at: -1 })
-      .project({ token_hash: 0 })
-      .toArray();
-    return { tokens };
-  });
-
-  app.delete<{ Params: { id: string } }>(
-    "/admin/tokens/:id",
-    async (req, reply) => {
-      const userId = req.tenureUserId;
-      const result = await deps.db
-        .collection<ApiTokenDoc>("api_tokens")
-        .updateOne(
-          { _id: req.params.id, user_id: userId },
-          { $set: { revoked_at: new Date() } }
-        );
-      if (result.matchedCount === 0) {
-        return reply.code(404).send({ error: { message: "token not found" } });
-      }
-      return { ok: true, revoked: req.params.id };
     }
   );
 
@@ -241,67 +175,60 @@ export function registerAdminRoutes(
   app.put<{
     Params: { id: string };
     Body: { api_key: string; base_url?: string; endpoint_flavor?: string };
-  }>(
-    "/admin/providers/:id",
-    { preHandler: requireRootToken },
-    async (req, reply) => {
-      const { id } = req.params;
-      const { api_key, base_url, endpoint_flavor } = req.body ?? {};
-      const spec = PROVIDER_CONFIG[id];
+  }>("/admin/providers/:id", async (req, reply) => {
+    const { id } = req.params;
+    const { api_key, base_url, endpoint_flavor } = req.body ?? {};
+    const spec = PROVIDER_CONFIG[id];
 
-      if (!spec) {
-        return reply.code(400).send({
-          error: {
-            message: `Unknown provider "${id}". Supported: ${Object.keys(
-              PROVIDER_CONFIG
-            ).join(", ")}`
-          }
-        });
-      }
-
-      if (!api_key || typeof api_key !== "string") {
-        return reply
-          .code(400)
-          .send({ error: { message: "api_key is required" } });
-      }
-
-      if (id === "openai" && endpoint_flavor !== undefined) {
-        await deps.runtimeStore.set(
-          "openai_endpoint_flavor",
-          endpoint_flavor as OpenAIEndpointFlavor
-        );
-      }
-
-      const cfg = await deps.runtimeStore.load();
-      const flavor = id === "openai" ? cfg.openai_endpoint_flavor : undefined;
-
-      const adapter = spec.factory(api_key, base_url ?? null, flavor);
-      try {
-        if (adapter.listModels) await adapter.listModels();
-      } catch (err) {
-        return reply.code(502).send({
-          error: {
-            message: `Credentials rejected by provider: ${
-              (err as Error).message
-            }`
-          }
-        });
-      }
-
-      await deps.runtimeStore.set(spec.keyField, api_key);
-      if (base_url !== undefined) {
-        await deps.runtimeStore.set(spec.urlField, base_url);
-      }
-
-      deps.providers.register(adapter);
-
-      return { ok: true, provider: id };
+    if (!spec) {
+      return reply.code(400).send({
+        error: {
+          message: `Unknown provider "${id}". Supported: ${Object.keys(
+            PROVIDER_CONFIG
+          ).join(", ")}`
+        }
+      });
     }
-  );
+
+    if (!api_key || typeof api_key !== "string") {
+      return reply
+        .code(400)
+        .send({ error: { message: "api_key is required" } });
+    }
+
+    if (id === "openai" && endpoint_flavor !== undefined) {
+      await deps.runtimeStore.set(
+        "openai_endpoint_flavor",
+        endpoint_flavor as OpenAIEndpointFlavor
+      );
+    }
+
+    const cfg = await deps.runtimeStore.load();
+    const flavor = id === "openai" ? cfg.openai_endpoint_flavor : undefined;
+
+    const adapter = spec.factory(api_key, base_url ?? null, flavor);
+    try {
+      if (adapter.listModels) await adapter.listModels();
+    } catch (err) {
+      return reply.code(502).send({
+        error: {
+          message: `Credentials rejected by provider: ${(err as Error).message}`
+        }
+      });
+    }
+
+    await deps.runtimeStore.set(spec.keyField, api_key);
+    if (base_url !== undefined) {
+      await deps.runtimeStore.set(spec.urlField, base_url);
+    }
+
+    deps.providers.register(adapter);
+
+    return { ok: true, provider: id };
+  });
 
   app.delete<{ Params: { id: string } }>(
     "/admin/providers/:id",
-    { preHandler: requireRootToken },
     async (req, reply) => {
       const { id } = req.params;
       const spec = PROVIDER_CONFIG[id];
@@ -325,7 +252,7 @@ export function registerAdminRoutes(
 
   app.post("/admin/token/rotate", async (_req, reply) => {
     try {
-      const newToken = await rotateApiToken(deps.db);
+      const newToken = await rotateApiToken(deps.db, deps.vault);
       deps.updateToken(newToken);
 
       return { ok: true, token: newToken };

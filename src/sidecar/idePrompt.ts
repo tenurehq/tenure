@@ -1,4 +1,4 @@
-import { SIDECAR_BEGIN, SIDECAR_END } from '../sidecar/splitter.js';
+import { SIDECAR_BEGIN, SIDECAR_END } from "../sidecar/splitter.js";
 
 export interface IdeSidecarOptions {
   activeScope?: string | undefined;
@@ -10,37 +10,30 @@ export interface IdeSidecarOptions {
 export function buildIdeSidecarInstructions(
   opts: IdeSidecarOptions = {}
 ): string {
-  const {
-    activeScope,
-    scopeAutoDetect = true,
-    projectScope,
-    languageScope
-  } = opts;
+  const { activeScope, projectScope, languageScope } = opts;
 
   const scopeLine = activeScope
     ? `Active scope: ${activeScope}`
-    : `Active scope: user:universal`;
+    : `Active scope: none`;
 
   const resolvedLines: string[] = [];
   if (projectScope) resolvedLines.push(`Project: ${projectScope}`);
   if (languageScope) resolvedLines.push(`Language: ${languageScope}`);
   const resolvedBlock =
     resolvedLines.length > 0
-      ? `Resolved workspace scope: ${resolvedLines.join(', ')}`
-      : '';
+      ? `Resolved workspace scope: ${resolvedLines.join(", ")}`
+      : "";
 
-  const scopeRules = scopeAutoDetect
-    ? `SCOPE (first match wins):
-1. Belief comes from code the assistant generated or a config file in the workspace -> ${
-        projectScope ?? 'resolved project scope'
-      }
-2. How the user communicates or wants to be engaged, stated about themselves directly -> user:universal
-3. Everything else -> ${projectScope ?? 'active scope'}
-${scopeLine}${resolvedBlock ? '\n' + resolvedBlock : ''}
+  const scopeRules = `SCOPE:
+    1. Belief comes from code the assistant generated or a config file in the workspace -> ${
+      projectScope ?? "resolved project scope"
+    }
+    2. How the user communicates or wants to be engaged, stated about themselves directly -> user:universal
+    3. Everything else -> ${projectScope ?? "active scope"}
 
-Do not propose a new project scope label. The workspace scope above is the authoritative project scope for this turn. Even if the user names a project or package, map it to the resolved scope rather than inventing a new one.`
-    : `SCOPE: use the resolved workspace scope or "user:universal" only. Do not propose new scope labels.
-${scopeLine}${resolvedBlock ? '\n' + resolvedBlock : ''}`;
+    ${scopeLine}${resolvedBlock ? "\n" + resolvedBlock : ""}
+
+    Do not propose a new project scope label. The workspace scope above is the authoritative project scope for this turn.`;
 
   return `### SIDECAR EXTRACTION (IDE)
 
@@ -123,7 +116,7 @@ ${SIDECAR_BEGIN}
       "canonical_name": "typescript_strict_mode",
       "content": "TypeScript strict mode with exactOptionalPropertyTypes; no implicit any",
       "why_it_matters": "All generated code must satisfy strict checks; never suggest loosening",
-      "scope": ["${projectScope ?? 'project:example'}"],
+      "scope": ["${projectScope ?? "project:example"}"],
       "confidence": 0.95,
       "epistemic_status": "active",
       "aliases": ["tsconfig", "strict", "no_implicit_any"],
@@ -136,7 +129,7 @@ ${SIDECAR_BEGIN}
       "canonical_name": "error_handling_style",
       "content": "Result<T, AppError> returns; no thrown exceptions for expected failures",
       "why_it_matters": "Generate Result-propagating functions, never try/catch for control flow",
-      "scope": ["${projectScope ?? 'project:example'}"],
+      "scope": ["${projectScope ?? "project:example"}"],
       "confidence": 0.82,
       "epistemic_status": "inferred",
       "aliases": ["result_type", "error_returns", "try_catch", "throw"],
@@ -148,7 +141,6 @@ ${SIDECAR_BEGIN}
   "entity_updates": [],
   "new_open_questions": [],
   "resolved_open_questions": [],
-  "style_signals": []
 }
 ${SIDECAR_END}`.trim();
 }

@@ -121,11 +121,3 @@ test("GET /admin includes token rotation UI", async (t) => {
   t.true(res.body.includes("rotateToken"));
   t.true(res.body.includes("Rotate token"));
 });
-
-test("GET /admin includes maintenance section with compaction button", async (t) => {
-  const app = buildApp();
-  const res = await app.inject({ method: "GET", url: "/admin" });
-
-  t.true(res.body.includes("runCompaction"));
-  t.true(res.body.includes("Merge redundant beliefs"));
-});

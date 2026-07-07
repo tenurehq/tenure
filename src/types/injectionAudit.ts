@@ -29,6 +29,9 @@ export interface InjectionAuditRecord {
   expanded_query: string;
   scope: string[];
   agent_id: string | null;
+  token_id?: string | null;
+  token_name?: string | null;
+  token_kind?: "client" | "agent" | "root" | null;
   injected: boolean;
   injected_beliefs: {
     pinned_facts: BeliefSnapshot[];

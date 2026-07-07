@@ -12,8 +12,7 @@ export type ErrorStage =
   | "supersession"
   | "topic_index"
   | "config"
-  | "job_enqueue"
-  | "compaction";
+  | "job_enqueue";
 
 export interface ErrorLog {
   _id: string;

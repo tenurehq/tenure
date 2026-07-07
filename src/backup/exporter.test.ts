@@ -28,7 +28,7 @@ function makeBelief(overrides: Record<string, unknown> = {}) {
       session_id: "session-1",
       turn_id: "turn-1",
       extracted_at: new Date("2025-01-01"),
-      source_model: "anthropic:claude-haiku-4-5-20251001",
+      source_model: "anthropic:claude-haiku-4-5-20251001"
     },
     epistemic_status: "active",
     confidence: 0.9,
@@ -43,12 +43,12 @@ function makeBelief(overrides: Record<string, unknown> = {}) {
         changed_at: new Date("2025-01-01"),
         trigger: "extraction",
         changed_by_session: "session-1",
-        changed_by_turn: "turn-1",
-      },
+        changed_by_turn: "turn-1"
+      }
     ],
     created_at: new Date("2025-01-01"),
     updated_at: new Date("2025-01-02"),
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -60,18 +60,7 @@ function makePersonaDoc() {
     contributing_belief_ids: ["b1", "b2"],
     beliefs_hash: "abc123",
     generated_at: new Date("2025-01-03"),
-    model: "claude-haiku-4-5-20251001",
-  };
-}
-
-function makeCompactionEntry() {
-  return {
-    _id: "comp-1",
-    user_id: USER_ID,
-    scope: "user:universal",
-    belief_type: "preference",
-    ran_at: new Date("2025-01-04"),
-    merged_count: 3,
+    model: "claude-haiku-4-5-20251001"
   };
 }
 
@@ -83,7 +72,7 @@ function makeSession() {
     model: "claude-haiku-4-5-20251001",
     activeScope: ["user:universal"],
     createdAt: new Date("2025-01-01"),
-    lastUsedAt: new Date("2025-01-05"),
+    lastUsedAt: new Date("2025-01-05")
   };
 }
 
@@ -97,10 +86,9 @@ function makeRuntimeConfig() {
     anthropic_base_url: null,
     openai_endpoint_flavor: "generic",
     always_on_token_target: 400,
-    managed_history_token_cap: 120000,
     error_retention_days: 30,
     strict_model_tiers: true,
-    extraction_enabled: true,
+    extraction_enabled: true
   };
 }
 
@@ -108,19 +96,17 @@ function makeDeps(
   options: {
     beliefs?: unknown[];
     persona?: unknown | null;
-    compactionLog?: unknown[];
     sessions?: unknown[];
     runtimeConfig?: Record<string, unknown>;
-  } = {},
+  } = {}
 ): ExporterDeps {
   const beliefs = options.beliefs ?? [makeBelief()];
   const persona =
     options.persona !== undefined ? options.persona : makePersonaDoc();
-  const compactionLog = options.compactionLog ?? [makeCompactionEntry()];
   const sessions = options.sessions ?? [makeSession()];
 
   const toArrayStub = (data: unknown[]) => ({
-    toArray: sinon.stub().resolves(data),
+    toArray: sinon.stub().resolves(data)
   });
 
   const db = {
@@ -131,19 +117,16 @@ function makeDeps(
       if (name === "persona_cache") {
         return { findOne: sinon.stub().resolves(persona) };
       }
-      if (name === "compaction_log") {
-        return { find: sinon.stub().returns(toArrayStub(compactionLog)) };
-      }
       if (name === "sessions") {
         return { find: sinon.stub().returns(toArrayStub(sessions)) };
       }
       return { find: sinon.stub().returns(toArrayStub([])) };
-    }),
+    })
   } as unknown as ExporterDeps["db"];
 
   const runtimeStore = {
     load: sinon.stub().resolves(options.runtimeConfig ?? makeRuntimeConfig()),
-    set: sinon.stub().resolves(),
+    set: sinon.stub().resolves()
   } as unknown as ExporterDeps["runtimeStore"];
 
   return { db, runtimeStore, userId: USER_ID };
@@ -210,7 +193,7 @@ test("exportUnencrypted includes persona cache", async (t) => {
   t.truthy(payload.persona_cache);
   t.is(
     payload.persona_cache!.universal,
-    "A developer who prefers concise responses",
+    "A developer who prefers concise responses"
   );
   t.is(typeof payload.persona_cache!.generated_at, "string");
 });
@@ -220,14 +203,6 @@ test("exportUnencrypted returns null persona when none exists", async (t) => {
   const exporter = new BackupExporter(deps);
   const payload = await exporter.exportUnencrypted();
   t.is(payload.persona_cache, null);
-});
-
-test("exportUnencrypted includes compaction log", async (t) => {
-  const payload = await t.context.exporter.exportUnencrypted();
-  t.is(payload.compaction_log.length, 1);
-  t.is(payload.compaction_log[0].scope, "user:universal");
-  t.is(payload.compaction_log[0].merged_count, 3);
-  t.is(typeof payload.compaction_log[0].ran_at, "string");
 });
 
 test("exportUnencrypted includes sessions", async (t) => {
@@ -242,15 +217,13 @@ test("exportUnencrypted handles empty collections", async (t) => {
   const deps = makeDeps({
     beliefs: [],
     persona: null,
-    compactionLog: [],
-    sessions: [],
+    sessions: []
   });
   const exporter = new BackupExporter(deps);
   const payload = await exporter.exportUnencrypted();
 
   t.is(payload.beliefs.length, 0);
   t.is(payload.persona_cache, null);
-  t.is(payload.compaction_log.length, 0);
   t.is(payload.sessions.length, 0);
 });
 
@@ -258,7 +231,7 @@ test("exportUnencrypted handles multiple beliefs", async (t) => {
   const beliefs = [
     makeBelief({ _id: "b1", canonical_name: "first" }),
     makeBelief({ _id: "b2", canonical_name: "second" }),
-    makeBelief({ _id: "b3", canonical_name: "third" }),
+    makeBelief({ _id: "b3", canonical_name: "third" })
   ];
   const deps = makeDeps({ beliefs });
   const exporter = new BackupExporter(deps);
@@ -301,7 +274,7 @@ test("export with wrong passphrase fails to decrypt", async (t) => {
   const encrypted = await t.context.exporter.export("correct-pass");
 
   t.throws(() => decryptArchive(encrypted, "wrong-pass"), {
-    message: /Decryption failed|Wrong passphrase/,
+    message: /Decryption failed|Wrong passphrase/
   });
 });
 
@@ -310,8 +283,8 @@ test("exportUnencrypted includes expertise fields when present", async (t) => {
     makeBelief({
       expertise_domain: "typescript",
       expertise_depth: "advanced",
-      expertise_evidence_count: 5,
-    }),
+      expertise_evidence_count: 5
+    })
   ];
   const deps = makeDeps({ beliefs });
   const exporter = new BackupExporter(deps);
@@ -320,13 +293,4 @@ test("exportUnencrypted includes expertise fields when present", async (t) => {
   t.is(payload.beliefs[0].expertise_domain, "typescript");
   t.is(payload.beliefs[0].expertise_depth, "advanced");
   t.is(payload.beliefs[0].expertise_evidence_count, 5);
-});
-
-test("exportUnencrypted includes compaction_note when present", async (t) => {
-  const beliefs = [makeBelief({ compaction_note: "Merged from 3 beliefs" })];
-  const deps = makeDeps({ beliefs });
-  const exporter = new BackupExporter(deps);
-  const payload = await exporter.exportUnencrypted();
-
-  t.is(payload.beliefs[0].compaction_note, "Merged from 3 beliefs");
 });

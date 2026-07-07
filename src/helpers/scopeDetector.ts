@@ -1,14 +1,7 @@
-import type { Db } from "mongodb";
-import type { InternalLLMCaller } from "../providers/types.js";
 import type { FastifyBaseLogger } from "fastify";
 import type { SessionPatch } from "../session/manager.js";
 import type { RuntimeConfig } from "../config/runtime.js";
-
-export interface ScopeDetectorDeps {
-  db: Db;
-  adapter: () => InternalLLMCaller;
-  modelId: string;
-}
+import type { Db } from "mongodb";
 
 export interface InterceptResult {
   message: string;
@@ -27,8 +20,7 @@ export interface SessionInterceptResult {
 
 export type CommandAction = "off" | "on" | "global-off" | "global-on";
 
-const SCOPE_PATTERN =
-  /^(domain:[a-z0-9_-]+(\/[a-z0-9_-]+)*|project:[a-z0-9_-]+|user:universal)$/;
+const SCOPE_PATTERN = /^project:[a-z0-9_-]+$/;
 
 const VALID_ACTIONS: CommandAction[] = ["on", "off", "global-on", "global-off"];
 
@@ -52,8 +44,7 @@ export function validateCommandInput(
     if (parts.length === 0) {
       return {
         valid: false,
-        message:
-          "No scope provided. Usage: `!scope domain:code` or `!scope domain:code domain:writing`"
+        message: "No scope provided. Usage: `!scope project:my-project`"
       };
     }
 
@@ -61,11 +52,9 @@ export function validateCommandInput(
     if (invalid.length > 0) {
       return {
         valid: false,
-        message:
-          `Invalid scope format: ${invalid
-            .map((s) => `\`${s}\``)
-            .join(", ")}. ` +
-          `Use \`domain:code\`, \`domain:code/typescript\`, or \`project:my-project\`.`
+        message: `Invalid scope format: ${invalid
+          .map((s) => `\`${s}\``)
+          .join(", ")}. Use only \`project:my-project\`.`
       };
     }
 
@@ -84,21 +73,6 @@ export function validateCommandInput(
   }
 
   return { valid: true };
-}
-
-export function expandScopeHierarchy(scopes: string[]): string[] {
-  const expanded = new Set<string>();
-  for (const scope of scopes) {
-    expanded.add(scope);
-
-    const parts = scope.split("/");
-    if (parts.length > 1) {
-      for (let i = 1; i < parts.length; i++) {
-        expanded.add(parts.slice(0, i).join("/"));
-      }
-    }
-  }
-  return [...expanded];
 }
 
 export function matchScopeCommand(content: string): string | null {
@@ -146,7 +120,7 @@ export async function tryInterceptScopeCommand(
     return { message: validation.message, newScope: [] };
   }
 
-  const newScope = expandScopeHierarchy(validation.parts!);
+  const newScope = validation.parts!;
 
   try {
     await deps.sessions.update(sessionId, userId, { activeScope: newScope });
@@ -164,76 +138,12 @@ export async function tryInterceptScopeCommand(
   };
 }
 
-const SCOPE_DETECT_PROMPT = `You classify a user's first message into one or more scope strings.
-
-Existing scopes for this user are provided. Match to an existing scope if the message clearly belongs there.
-If no existing scope matches, suggest a new one.
-
-Scope format rules:
-- domain:<slug> — top-level domain (domain:code, domain:writing, domain:hobby, domain:teaching, domain:music)
-- domain:<slug>/<tech> — technology sub-domain within a domain (domain:code/typescript, domain:code/python, domain:code/databases)
-- project:<slug> — a named, specific project the user is working on
-- Only use project scope when the user names a specific project explicitly
-
-When emitting a sub-domain scope like domain:code/typescript, do NOT include the parent domain:code —
-the system expands the hierarchy automatically.
-
-Return ONLY a JSON array of the most specific scopes that apply, e.g. 
-["domain:code/typescript"] not ["domain:code/typescript", "domain:code"].
-If the message is ambiguous or meta (greetings, system questions), return [].
-No explanation. No markdown. Only the JSON array.`;
-
-export async function detectScopeFromMessage(
-  message: string,
-  existingScopes: string[],
-  deps: ScopeDetectorDeps,
-  logger: FastifyBaseLogger
-): Promise<string[]> {
-  try {
-    const userContent = existingScopes.length
-      ? `Existing scopes: ${existingScopes.join(
-          ", "
-        )}\n\nUser message: ${message.slice(0, 500)}`
-      : `User message: ${message.slice(0, 500)}`;
-
-    const adapter = deps.adapter();
-    const resp = await adapter.call(
-      deps.modelId,
-      SCOPE_DETECT_PROMPT,
-      [{ role: "user", content: userContent }],
-      { temperature: 0, max_tokens: 64 }
-    );
-    const raw = (resp.content ?? "").trim();
-    const clamped = raw.slice(0, 4_000);
-    const match = clamped.match(/\[[\s\S]*?\]/);
-    if (!match) return [];
-
-    const parsed = JSON.parse(match[0]);
-    if (!Array.isArray(parsed)) return [];
-
-    return expandScopeHierarchy(
-      parsed
-        .filter(
-          (s): s is string => typeof s === "string" && s.trim().length > 0
-        )
-        .map((s) => s.trim())
-    );
-  } catch (err) {
-    logger.warn({ err }, "scope detection failed — proceeding without scope");
-    return [];
-  }
-}
-
 export async function fetchExistingUserScopes(
   userId: string,
-  db: Db,
-  teamId?: string | null,
-  orgId?: string | null
+  db: Db
 ): Promise<string[]> {
   try {
     const filter: Record<string, unknown> = { user_id: userId };
-    if (teamId) filter.team_id = teamId;
-    if (orgId) filter.org_id = orgId;
 
     const scopes = await db.collection("beliefs").distinct("scope", filter);
 
