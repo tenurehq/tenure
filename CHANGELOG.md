@@ -6,6 +6,24 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.31] - 2026-07-15
+
+### Changed
+
+- **Core server dependencies updated** (`package.json`, `package-lock.json`): Upgraded Fastify to 5.10.0, `@fastify/helmet` to 13.1.0, `@fastify/static` to 10.1.0, and `@fastify/websocket` to 11.3.0. Related Fastify plugins and transitive dependencies were refreshed accordingly.
+
+- **Database dependencies updated** (`package.json`, `package-lock.json`): Upgraded the MongoDB driver to 7.5.0 and MongoDB Client-Side Field Level Encryption support to 7.2.0, along with associated native module and connection dependencies.
+
+- **Utility and scheduling dependencies updated** (`package.json`, `package-lock.json`): Upgraded `jsonrepair` to 3.15.0 and `toad-scheduler` to 4.1.0, while pinning updated dependency versions for reproducible installs.
+
+- **OpenClaw integration updated** (`integrations/openclaw/package.json`, `integrations/openclaw/package-lock.json`): Upgraded OpenClaw from 2026.6.8 to the 2026.7.1-compatible release range and refreshed its AI provider SDKs, browser automation, Telegram, filesystem safety, archive, networking, parsing, and runtime dependencies.
+
+- **OpenClaw Node.js requirements tightened** (`integrations/openclaw/package-lock.json`): Updated the supported Node.js engine range to require Node.js 22.22.3, 24.15.0, or 25.9.0 and later within their respective major versions.
+
+- **OpenClaw plugin version bumped** (`integrations/openclaw/package.json`): Incremented `@tenureai/openclaw-plugin` from 1.0.16 to 1.0.17.
+
+---
+
 ## [1.0.30] - 2026-07-07
 
 ### Added
