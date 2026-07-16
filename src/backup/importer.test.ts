@@ -18,9 +18,6 @@ interface Context {
   personaCol: {
     replaceOne: sinon.SinonStub;
   };
-  sessionsCol: {
-    replaceOne: sinon.SinonStub;
-  };
   runtimeStore: {
     load: sinon.SinonStub;
     set: sinon.SinonStub;
@@ -49,8 +46,6 @@ function makeExportPayload(
         why_it_matters: "Controls verbosity",
         scope: ["user:universal"],
         provenance: {
-          session_id: "session-orig",
-          turn_id: "turn-orig",
           extracted_at: "2025-01-01T00:00:00.000Z",
           source_model: "anthropic:claude-haiku-4-5-20251001"
         },
@@ -65,9 +60,7 @@ function makeExportPayload(
         change_log: [
           {
             changed_at: "2025-01-01T00:00:00.000Z",
-            trigger: "extraction",
-            changed_by_session: "session-orig",
-            changed_by_turn: "turn-orig"
+            trigger: "extraction"
           }
         ],
         created_at: "2025-01-01T00:00:00.000Z",
@@ -89,23 +82,11 @@ function makeExportPayload(
     },
     persona_cache: {
       universal: "A concise developer",
-      per_scope: { "project:app": "React developer" },
       contributing_belief_ids: ["belief-1"],
       beliefs_hash: "hash123",
       generated_at: "2025-01-12T00:00:00.000Z",
       model: "claude-haiku-4-5-20251001"
     },
-    sessions: [
-      {
-        _id: "session-orig",
-        userId: "original-user",
-        providerId: "anthropic",
-        model: "claude-haiku-4-5-20251001",
-        activeScope: ["user:universal"],
-        createdAt: "2025-01-01T00:00:00.000Z",
-        lastUsedAt: "2025-01-15T00:00:00.000Z"
-      }
-    ],
     ...overrides
   };
 }
@@ -118,15 +99,11 @@ function makeDeps(): Context {
   const personaCol = {
     replaceOne: sinon.stub().resolves()
   };
-  const sessionsCol = {
-    replaceOne: sinon.stub().resolves()
-  };
 
   const db = {
     collection: sinon.stub().callsFake((name: string) => {
       if (name === "beliefs") return beliefsCol;
       if (name === "persona_cache") return personaCol;
-      if (name === "sessions") return sessionsCol;
       return {};
     })
   } as unknown as ImporterDeps["db"];
@@ -149,7 +126,6 @@ function makeDeps(): Context {
     importer,
     beliefsCol,
     personaCol,
-    sessionsCol,
     runtimeStore
   };
 }
@@ -266,30 +242,6 @@ test("importPayload handles null persona cache", async (t) => {
 
   t.false(result.persona_restored);
   t.false(t.context.personaCol.replaceOne.called);
-});
-
-test("importPayload does not import sessions by default", async (t) => {
-  const payload = makeExportPayload();
-  const result = await t.context.importer.importPayload(payload);
-
-  t.is(result.sessions_imported, 0);
-  t.false(t.context.sessionsCol.replaceOne.called);
-});
-
-test("importPayload imports sessions when importSessions is true", async (t) => {
-  const payload = makeExportPayload();
-  const result = await t.context.importer.importPayload(payload, {
-    importSessions: true
-  });
-
-  t.is(result.sessions_imported, 1);
-  t.true(t.context.sessionsCol.replaceOne.calledOnce);
-
-  const [filter, doc] = t.context.sessionsCol.replaceOne.firstCall.args;
-  t.deepEqual(filter, { _id: "session-orig" });
-  t.is(doc.userId, USER_ID);
-  t.true(doc.createdAt instanceof Date);
-  t.true(doc.lastUsedAt instanceof Date);
 });
 
 test("importPayload rejects unsupported version", async (t) => {

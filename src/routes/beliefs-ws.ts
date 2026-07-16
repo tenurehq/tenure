@@ -188,8 +188,6 @@ export function registerBeliefsWsRoute(
               trigger: string;
               previous_content?: string | null;
               previous_epistemic_status?: string | null;
-              changed_by_session: null;
-              changed_by_turn: null;
             }> = [];
 
             const mutable = [
@@ -216,9 +214,7 @@ export function registerBeliefsWsRoute(
                     : {}),
                   ...(field === "epistemic_status"
                     ? { previous_epistemic_status: current.epistemic_status }
-                    : {}),
-                  changed_by_session: null,
-                  changed_by_turn: null
+                    : {})
                 });
               }
             }
@@ -292,8 +288,6 @@ export function registerBeliefsWsRoute(
               why_it_matters: msg.why_it_matters.trim(),
               scope: msg.scope,
               provenance: {
-                session_id: "manual",
-                turn_id: "manual",
                 extracted_at: now,
                 source_model: "user"
               },
@@ -309,9 +303,7 @@ export function registerBeliefsWsRoute(
               change_log: [
                 {
                   changed_at: now,
-                  trigger: "manual_creation",
-                  changed_by_session: null,
-                  changed_by_turn: null
+                  trigger: "manual_creation"
                 }
               ]
             });

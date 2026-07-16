@@ -147,7 +147,7 @@ ${SIDECAR_BEGIN}
   "belief_updates": [],
   "entity_updates": [],
   "new_open_questions": [],
-  "resolved_open_questions": [],
+  "resolved_open_questions": []
 }
 ${SIDECAR_END}`.trim();
 }

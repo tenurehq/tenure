@@ -5,7 +5,6 @@ import type { Belief } from "../types/belief.js";
 import type { PersonaDoc } from "../context/personaCache.js";
 import type { TenureExport, ExportedBelief } from "./types.js";
 import { decryptArchive } from "./crypto.js";
-import type { Session } from "../session/manager.js";
 import type { InjectionAuditRecord } from "../types/injectionAudit.js";
 
 export interface ImporterDeps {
@@ -17,7 +16,6 @@ export interface ImporterDeps {
 export interface ImportResult {
   beliefs_imported: number;
   beliefs_skipped: number;
-  sessions_imported: number;
   persona_restored: boolean;
   config_restored: boolean;
 }
@@ -25,14 +23,12 @@ export interface ImportResult {
 export interface ImportOptions {
   skipExisting?: boolean;
   importConfig?: boolean;
-  importSessions?: boolean;
   remapUserId?: boolean;
 }
 
 const DEFAULT_OPTIONS: Required<ImportOptions> = {
   skipExisting: true,
   importConfig: true,
-  importSessions: false,
   remapUserId: true
 };
 
@@ -66,7 +62,6 @@ export class BackupImporter {
     const result: ImportResult = {
       beliefs_imported: 0,
       beliefs_skipped: 0,
-      sessions_imported: 0,
       persona_restored: false,
       config_restored: false
     };
@@ -156,28 +151,6 @@ export class BackupImporter {
       });
     }
 
-    if (opts.importSessions && payload.sessions.length > 0) {
-      const sessionsCol = db.collection<Session>("sessions");
-      for (const s of payload.sessions) {
-        await sessionsCol.replaceOne(
-          { _id: s._id },
-          {
-            userId: targetUserId,
-            type: (s.type ?? "chat") as Session["type"],
-            providerId: s.providerId,
-            model: s.model,
-            activeScope: s.activeScope,
-            agentId: s.agentId ?? null,
-            turnCounter: s.turnCounter ?? 0,
-            createdAt: new Date(s.createdAt),
-            lastUsedAt: new Date(s.lastUsedAt)
-          },
-          { upsert: true }
-        );
-        result.sessions_imported++;
-      }
-    }
-
     return result;
   }
 
@@ -193,8 +166,6 @@ export class BackupImporter {
       why_it_matters: exported.why_it_matters,
       scope: exported.scope,
       provenance: {
-        session_id: exported.provenance.session_id,
-        turn_id: exported.provenance.turn_id,
         extracted_at: new Date(exported.provenance.extracted_at),
         source_model: exported.provenance.source_model
       },
@@ -208,9 +179,7 @@ export class BackupImporter {
       resolved_at: exported.resolved_at ? new Date(exported.resolved_at) : null,
       change_log: exported.change_log.map((entry) => ({
         changed_at: new Date(entry.changed_at),
-        trigger: entry.trigger,
-        changed_by_session: entry.changed_by_session,
-        changed_by_turn: entry.changed_by_turn
+        trigger: entry.trigger
       })),
       ...(exported.expertise_domain && {
         expertise_domain: exported.expertise_domain

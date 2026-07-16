@@ -31,15 +31,13 @@ test.beforeEach(async () => {
 function makeParams(overrides: Partial<EnqueueParams> = {}): EnqueueParams {
   return {
     userId: "user-1",
-    sessionId: "session-1",
-    turnId: "turn-1",
     userMessage: "Hello",
     assistantMessage: "Hi there",
     sidecarRaw: null,
     parseStatus: "missing",
     scope: ["global"],
     sourceModel: "anthropic:claude-3-5-sonnet",
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -89,22 +87,20 @@ test("inserted job persists all EnqueueParams fields", async (t) => {
   const q = new ExtractionJobQueue(db);
   const params = makeParams({
     userId: "user-42",
-    sessionId: "sess-abc",
     userMessage: "What is AI?",
     assistantMessage: "It stands for artificial intelligence.",
     sidecarRaw: '{"turn_signal":"substantive"}',
     parseStatus: "parsed",
     scope: ["work", "research"],
-    sourceModel: "openai:gpt-4o",
+    sourceModel: "openai:gpt-4o"
   });
   const id = await q.enqueue(params);
   const job = await col.findOne({ _id: id });
   t.is(job!.user_id, "user-42");
-  t.is(job!.session_id, "sess-abc");
   t.is(job!.payload.user_message, "What is AI?");
   t.is(
     job!.payload.assistant_message,
-    "It stands for artificial intelligence.",
+    "It stands for artificial intelligence."
   );
   t.is(job!.payload.sidecar, '{"turn_signal":"substantive"}');
   t.is(job!.payload.parse_status, "parsed");
@@ -126,14 +122,4 @@ test("enqueue works with null sidecarRaw", async (t) => {
   const id = await q.enqueue(makeParams({ sidecarRaw: null }));
   const job = await col.findOne({ _id: id });
   t.is(job!.payload.sidecar, null);
-});
-
-test("multiple enqueues are all retrievable", async (t) => {
-  const q = new ExtractionJobQueue(db);
-  const ids = await Promise.all([
-    q.enqueue(makeParams({ turnId: "t1" })),
-    q.enqueue(makeParams({ turnId: "t2" })),
-    q.enqueue(makeParams({ turnId: "t3" })),
-  ]);
-  t.is(await col.countDocuments({ _id: { $in: ids } }), 3);
 });

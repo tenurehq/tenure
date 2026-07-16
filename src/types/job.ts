@@ -28,12 +28,11 @@ export interface ExtractionJob {
   _id: string;
   type: JobType;
   user_id: string;
+  request_id: string;
   agent_id?: string | null;
   token_id: string;
   token_name: string;
   token_kind: JobTokenKind;
-  session_id: string;
-  turn_id: string;
   status: JobStatus;
   attempts: number;
   max_attempts: number;

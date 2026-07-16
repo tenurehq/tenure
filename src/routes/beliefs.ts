@@ -123,8 +123,6 @@ export function registerBeliefsRoutes(
       trigger: string;
       previous_content?: string | null;
       previous_epistemic_status?: string | null;
-      changed_by_session: null;
-      changed_by_turn: null;
     }> = [];
 
     const mutable = [
@@ -149,9 +147,7 @@ export function registerBeliefsRoutes(
           ...(field === "content" ? { previous_content: current.content } : {}),
           ...(field === "epistemic_status"
             ? { previous_epistemic_status: current.epistemic_status }
-            : {}),
-          changed_by_session: null,
-          changed_by_turn: null
+            : {})
         });
       }
     }
@@ -198,9 +194,7 @@ export function registerBeliefsRoutes(
             change_log: {
               changed_at: new Date(),
               trigger: "user_deletion",
-              previous_epistemic_status: current.epistemic_status,
-              changed_by_session: null,
-              changed_by_turn: null
+              previous_epistemic_status: current.epistemic_status
             }
           } as any
         }
@@ -299,8 +293,6 @@ export function registerBeliefsRoutes(
         why_it_matters: body.why_it_matters.trim(),
         scope: body.scope,
         provenance: {
-          session_id: "manual",
-          turn_id: "manual",
           extracted_at: new Date(),
           source_model: "user"
         },
@@ -311,9 +303,7 @@ export function registerBeliefsRoutes(
         change_log: [
           {
             changed_at: new Date(),
-            trigger: "manual_creation",
-            changed_by_session: null,
-            changed_by_turn: null
+            trigger: "manual_creation"
           }
         ]
       });
@@ -546,8 +536,6 @@ export function registerBeliefsRoutes(
           why_it_matters: sug.why_it_matters ?? "",
           scope: sug.scope ?? ["user:universal"],
           provenance: sug.provenance ?? {
-            session_id: "curated",
-            turn_id: "curated",
             extracted_at: new Date(),
             source_model: sug.source_model ?? "unknown"
           },
@@ -558,9 +546,7 @@ export function registerBeliefsRoutes(
           change_log: [
             {
               changed_at: new Date(),
-              trigger: "curated_approval",
-              changed_by_session: null,
-              changed_by_turn: null
+              trigger: "curated_approval"
             }
           ]
         });

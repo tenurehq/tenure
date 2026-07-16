@@ -95,8 +95,6 @@
           "updated_at": "2026-10-07T00:00:00Z",
           "change_log": [],
           "provenance": {
-            "session_id": "session-drift-eval",
-            "turn_id": "turn-4",
             "extracted_at": "2026-10-07T00:00:00Z",
             "source_model": "eval-synthetic"
           }

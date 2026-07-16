@@ -34,11 +34,8 @@ function makeCollections(overrides: Partial<Collections> = {}): Collections {
   return {
     errors: errorCol,
     beliefs: null as any,
-    turns: null as any,
-    sessions: null as any,
     jobs: null as any,
     config: null as any,
-    topic_index: null as any,
     persona_cache: null as any,
     ...overrides
   };
@@ -116,13 +113,6 @@ test("log defaults resolved_at to null", async (t) => {
   t.is(doc!.resolved_at, null);
 });
 
-test("log persists session_id when provided", async (t) => {
-  const logger = new ErrorLogger(makeCollections());
-  await logger.log(makeInput({ session_id: "sess-1" }));
-  const doc = await errorCol.findOne({});
-  t.is(doc!.session_id, "sess-1");
-});
-
 test("log persists provider when provided", async (t) => {
   const logger = new ErrorLogger(makeCollections());
   await logger.log(makeInput({ provider: "anthropic" }));
@@ -171,13 +161,6 @@ test("log extracts stack_trace from Error object", async (t) => {
   await logger.log(makeInput({ error: err }));
   const doc = await errorCol.findOne({});
   t.is(doc!.stack_trace, err.stack ?? null);
-});
-
-test("log defaults session_id to null when not provided", async (t) => {
-  const logger = new ErrorLogger(makeCollections());
-  await logger.log(makeInput());
-  const doc = await errorCol.findOne({});
-  t.is(doc!.session_id, null);
 });
 
 test("log defaults provider to null when not provided", async (t) => {

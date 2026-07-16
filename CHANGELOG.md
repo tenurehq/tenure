@@ -6,6 +6,66 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.32] - 2026-07-16
+
+### Added
+
+- **Persistent active scopes for access tokens** (`src/auth/tokenService.ts`, `src/db/collections.ts`, `src/helpers/scopeDetector.ts`, `src/routes/chat.ts`, `src/routes/messages.ts`, `src/server.ts`): Added per-token `active_scope` storage and APIs for reading and updating it. Chat and Messages requests now resolve scope from explicit request metadata, IDE context, the token’s persisted scope, a single authorized project, or `user:universal` as a fallback.
+
+- **Transactional belief replacement** (`src/extraction/beliefWriter.ts`, `src/extraction/merger.ts`): Added an atomic replacement flow that supersedes an existing belief and inserts its replacement in a MongoDB transaction, preventing partially applied supersession updates.
+
+- **Improved streaming event support** (`src/providers/anthropic.ts`, `src/providers/types.ts`, `src/routes/chat.ts`, `src/routes/messages.ts`): Added Anthropic `message_start` metadata, including the resolved model and input token count, and forwarded streamed OpenAI-compatible tool call deltas to clients.
+
+### Changed
+
+- **Chat and Messages processing is now request-based instead of session-based** (`src/routes/chat.ts`, `src/routes/messages.ts`, `src/routes/shared/sideEffects.ts`, `src/jobs/queue.ts`, `src/types/job.ts`): Replaced session and turn identifiers with request IDs across routing, extraction jobs, orientation-tax handling, logging, and side effects. Provider and model binding is now determined directly from each request.
+
+- **Scope handling moved from sessions to access tokens** (`src/helpers/scopeDetector.ts`, `src/routes/chat.ts`, `src/routes/messages.ts`, `src/auth/tokenService.ts`): Scope commands now normalize, deduplicate, authorize, and persist scopes against the calling token. Supported values include project, universal user, and domain scopes, while token project restrictions continue to be enforced.
+
+- **IDE scope resolution tightened** (`src/routes/chat.ts`, `src/routes/messages.ts`): IDE requests now require a resolved project scope, derive project and language scopes from headers or workspace state, validate them against token restrictions, and persist the result as the token’s active scope.
+
+- **Extraction and injection commands are now global-only** (`src/helpers/scopeDetector.ts`): Per-conversation `!extract on/off` and `!inject on/off` controls now direct users to their global equivalents. Global commands continue to update runtime configuration.
+
+- **Belief provenance and change history simplified** (`src/types/belief.ts`, `src/extraction/beliefWriter.ts`, `src/extraction/merger.ts`, `src/routes/beliefs.ts`, `src/routes/beliefs-ws.ts`): Removed session and turn attribution from belief provenance and change-log entries. Beliefs continue to retain extraction timestamps, source models, token attribution, and relevant previous values.
+
+- **Backup payloads aligned with the sessionless model** (`src/backup/exporter.ts`, `src/backup/importer.ts`, `src/backup/types.ts`, `src/routes/backup.ts`, `src/routes/admin-ui.ts`): Backups no longer export or import sessions, session attribution, or turn attribution. Backup previews and import results were updated accordingly.
+
+- **Anthropic default output limit reduced** (`src/providers/anthropic.ts`): Changed the default `max_tokens` value from `120000` to `8192` when callers do not provide an explicit limit.
+
+- **Streaming writes now respect backpressure** (`src/routes/chat.ts`, `src/routes/messages.ts`): SSE writes are awaited when the response buffer fills, heartbeat writes avoid adding pressure while draining, and route side effects are awaited after response completion.
+
+- **Root-token extraction and injection behavior clarified** (`src/server.ts`): Root tokens now receive extraction and injection access regardless of whether those capabilities are explicitly listed.
+
+- **Extraction job indexing updated** (`src/db/indexes.ts`): Replaced the turn-based job status index with a named request-based index over `request_id` and `status`.
+
+### Removed
+
+- **Session persistence and management subsystem** (`src/session/manager.ts`, `src/session/derivation.ts`, `src/types/session.ts`, `src/routes/shared/sessionBind.ts`, `src/app.ts`, `src/server.ts`, `src/db/collections.ts`, `src/db/indexes.ts`): Removed session creation, derivation, provider/model binding, active-scope storage, pause flags, turn counters, session indexes, and session lifecycle management.
+
+- **Session command support** (`src/helpers/scopeDetector.ts`): Removed the `!session` command and its agent/session establishment behavior.
+
+- **Session and turn fields from operational records** (`src/audit/injectionAuditLogger.ts`, `src/errors/logger.ts`, `src/types/error.ts`, `src/types/injectionAudit.ts`, `src/types/job.ts`, `src/routes/admin.ts`, `src/routes/admin-ui.ts`): Removed session and turn identifiers from injection audits, error records, extraction jobs, admin error displays, and copied diagnostics.
+
+- **Session backup controls** (`src/backup/importer.ts`, `src/backup/types.ts`, `src/routes/backup.ts`): Removed `importSessions`, `sessions_imported`, exported session records, and the `import_sessions` API option.
+
+### Fixed
+
+- **Belief change stream shutdown and retry handling** (`src/db/beliefChangeStream.ts`): Added active stream and retry timer tracking, prevented duplicate retry scheduling, cleared pending retries during shutdown, and explicitly closed the active stream.
+
+- **Supersession consistency** (`src/extraction/beliefWriter.ts`, `src/extraction/merger.ts`): Prevented beliefs from being marked superseded before their replacements are successfully created.
+
+- **Anthropic stream metadata accuracy** (`src/providers/anthropic.ts`, `src/routes/messages.ts`): Streaming responses now use the provider’s resolved model and actual input token count in `message_start` and include complete usage data in `message_delta`.
+
+- **OpenAI-compatible streamed tool calls** (`src/routes/chat.ts`): Tool call IDs, names, indexes, and argument deltas are now emitted in the expected streamed response structure.
+
+- **Messages route registration** (`src/server.ts`): Registered the Anthropic-compatible Messages route alongside the Chat Completions route during server construction.
+
+- **Orientation-tax audit correlation** (`src/extraction/worker.ts`): Orientation-tax updates now locate audit records using `request_id`, matching the request-based extraction job model.
+
+- **Sidecar JSON examples** (`src/sidecar/prompt.ts`, `src/sidecar/idePrompt.ts`): Removed trailing commas from generated sidecar examples so they are valid JSON.
+
+---
+
 ## [1.0.31] - 2026-07-15
 
 ### Changed

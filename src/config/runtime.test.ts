@@ -40,11 +40,8 @@ function makeCollections(overrides: Partial<Collections> = {}): Collections {
   return {
     config: configCol,
     beliefs: null as any,
-    turns: null as any,
-    sessions: null as any,
     jobs: null as any,
     errors: null as any,
-    topic_index: null as any,
     persona_cache: null as any,
     ...overrides
   };

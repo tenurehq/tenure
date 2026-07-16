@@ -27,7 +27,6 @@ import type {
 import { CredentialVault } from "../config/encryption.js";
 import { RuntimeConfigStore } from "../config/runtime.js";
 import { TokenService } from "../auth/tokenService.js";
-import { SessionManager } from "../session/manager.js";
 import { ContextBuilder } from "../context/contextBuilder.js";
 import { ProviderRegistry } from "../providers/registry.js";
 import { ExtractionJobQueue } from "../jobs/queue.js";
@@ -173,7 +172,6 @@ async function clearChatState(
   await Promise.all([
     cols.jobs.deleteMany({}),
     cols.beliefs.deleteMany({}),
-    cols.sessions.deleteMany({}),
     cols.injection_audit.deleteMany({}),
     cols.belief_suggestions.deleteMany({}),
     cols.persona_cache.deleteMany({}),
@@ -507,7 +505,6 @@ export async function setupIntegrationEnv(): Promise<IntegrationEnv> {
       listModels: listModelsStub
     };
 
-    const sessions = new SessionManager(sharedDb!);
     const beliefs = new BeliefsReader(cols.beliefs);
     const persona = new PersonaCache(cols.persona_cache);
     const context = new ContextBuilder(beliefs, persona);
@@ -527,7 +524,6 @@ export async function setupIntegrationEnv(): Promise<IntegrationEnv> {
     const app = await buildServer({
       db: sharedDb!,
       cols,
-      sessions,
       context,
       providers,
       jobs,

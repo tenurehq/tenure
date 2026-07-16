@@ -23,7 +23,6 @@ export type BeliefSnapshot = Pick<
 export interface InjectionAuditRecord {
   _id: string;
   user_id: string;
-  session_id: string;
   request_id: string;
   user_query: string;
   expanded_query: string;

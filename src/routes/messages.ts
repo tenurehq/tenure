@@ -1,19 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import type { ChatDeps } from "./chat.js";
+import { resolveTurnScope, type ChatDeps } from "./chat.js";
 import { ProviderNotConfiguredError } from "../providers/registry.js";
 import { checkModelTier, listSupportedFamilies } from "../providers/tiers.js";
-import { deriveSessionId } from "../session/derivation.js";
 import type { Message, ContentPart, SystemPrompt } from "../providers/types.js";
 import { splitSidecar, SIDECAR_BEGIN } from "../sidecar/splitter.js";
 import { parseClient } from "../helpers/clientDetector.js";
-import {
-  tryInterceptScopeCommand,
-  tryInterceptExtractCommand,
-  tryInterceptInjectCommand,
-  tryInterceptSessionCommand
-} from "../helpers/scopeDetector.js";
-import type { Session } from "../session/manager.js";
 import { EMPTY_CONTEXT } from "../context/contextBuilder.js";
 import { buildSystemPrompt } from "../context/systemPromptBuilder.js";
 import {
@@ -24,6 +16,11 @@ import {
 import { runSideEffects } from "./shared/sideEffects.js";
 import { extractLatestUserText } from "../helpers/content.js";
 import { assertTokenProjectScopes } from "../server.js";
+import {
+  tryInterceptScopeCommand,
+  tryInterceptExtractCommand,
+  tryInterceptInjectCommand
+} from "../helpers/scopeDetector.js";
 
 interface AnthropicSystemBlock {
   type: "text";
@@ -38,7 +35,7 @@ interface AnthropicRequestBody {
   max_tokens?: number;
   temperature?: number;
   stream?: boolean;
-  metadata?: { user_id?: string; session_id?: string };
+  metadata?: { user_id?: string; scope?: string[] };
   [key: string]: unknown;
 }
 
@@ -130,12 +127,17 @@ function buildAnthropicResponse(
   };
 }
 
-function writeAnthropicSSE(
+async function writeAnthropicSSE(
   raw: import("node:http").ServerResponse,
   eventType: string,
   data: unknown
-): void {
-  raw.write(`event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`);
+): Promise<void> {
+  const ok = raw.write(
+    `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`
+  );
+  if (!ok) {
+    await new Promise<void>((resolve) => raw.once("drain", resolve));
+  }
 }
 
 export function registerMessagesRoute(
@@ -212,46 +214,54 @@ export function registerMessagesRoute(
         body.messages as Message[]
       );
 
-      let sessionId: string;
-      try {
-        sessionId =
-          body.metadata?.session_id ??
-          (req.headers["x-session-id"] as string | undefined) ??
-          deriveSessionId(body.messages as Message[], userId, undefined);
-      } catch {
-        sessionId = randomUUID();
-      }
-
-      let ocAgentId =
+      const ocAgentId =
         (req.headers["x-agent-id"] as string | undefined)
           ?.trim()
           .toLowerCase() || undefined;
-
-      let session: (Session & { providerId: string; model: string }) | null =
-        null;
-      try {
-        const raw = await deps.sessions.getOrCreate(sessionId, userId);
-        const needsBind =
-          !raw.providerId || !raw.model || raw.model !== requestedModel;
-        if (needsBind) {
-          const updated = await deps.sessions.update(sessionId, userId, {
-            providerId: adapter.id,
-            model: requestedModel
-          });
-          if (updated?.providerId && updated?.model) {
-            session = updated as Session & {
-              providerId: string;
-              model: string;
-            };
-          }
-        } else {
-          session = raw as Session & { providerId: string; model: string };
-        }
-      } catch (err) {
-        req.log.warn({ err, sessionId }, "session load failed");
+      if (!req.tenureTokenId) {
+        return reply.code(401).send({
+          type: "error",
+          error: { type: "authentication_error", message: "unauthorized" }
+        });
       }
 
-      let scope = session?.activeScope ?? [];
+      const explicitScope = resolveExplicitScope(
+        body.metadata?.scope,
+        req.headers["x-tenure-scope"]
+      );
+
+      const scopeCommand = await tryInterceptScopeCommand(
+        latestUserMessage,
+        userId,
+        req.tenureTokenId,
+        req.tenureTokenProjectScopes,
+        deps.tokenScopes,
+        req.log
+      );
+      const extractCommand = await tryInterceptExtractCommand(
+        latestUserMessage,
+        deps.runtimeStore,
+        req.log
+      );
+      const injectCommand = await tryInterceptInjectCommand(
+        latestUserMessage,
+        deps.runtimeStore,
+        req.log
+      );
+      const commandMessage =
+        scopeCommand?.message ?? extractCommand?.message ?? injectCommand?.message;
+
+      if (commandMessage) {
+        return reply.send(
+          buildAnthropicResponse(
+            `msg_${requestId}`,
+            requestedModel,
+            commandMessage,
+            "stop",
+            { input_tokens: 0, output_tokens: 0 }
+          )
+        );
+      }
 
       const cfg = await deps.runtimeStore.load().catch(() => ({
         extraction_enabled: true,
@@ -263,85 +273,38 @@ export function registerMessagesRoute(
         req.headers["user-agent"] as string | undefined
       );
 
-      const sessionIntercepted = await tryInterceptSessionCommand(
-        latestUserMessage,
+
+      const noExtractHeader = req.headers["x-tenure-no-extract"] === "true";
+      const bootstrapInProgress = req.headers["x-tenure-bootstrapping"] === "1";
+      const isIdeTurn = req.headers["x-tenure-ide"] === "1";
+      const ideExtractionEnabled =
+        (cfg as any).ide_extraction_enabled !== false;
+
+      const extractionEnabled =
+        cfg.extraction_enabled !== false &&
+        req.tenureTokenExtractionEnabled !== false &&
+        !noExtractHeader &&
+        !bootstrapInProgress &&
+        (isIdeTurn ? ideExtractionEnabled : true);
+
+      const injectionEnabled =
+        cfg.injection_enabled !== false &&
+        req.tenureTokenInjectionEnabled !== false &&
+        !bootstrapInProgress;
+
+      const extractionMode: "standard" | "ide" = isIdeTurn ? "ide" : "standard";
+
+      const scopeResolution = await resolveTurnScope({
+        tokenId: req.tenureTokenId,
+        explicitScope,
+        tokenProjectScopes: req.tenureTokenProjectScopes,
+        isIdeTurn,
         userId,
-        deps,
-        req.log
-      );
-      if (sessionIntercepted) {
-        sessionId = sessionIntercepted.sessionId;
-        ocAgentId = sessionIntercepted.agentId;
-      }
-
-      const intercepted = await tryInterceptScopeCommand(
-        latestUserMessage,
-        sessionId,
-        userId,
-        deps,
-        req.log
-      );
-      if (intercepted) {
-        return reply.send(
-          buildAnthropicResponse(
-            `msg_${requestId}`,
-            requestedModel,
-            intercepted.message,
-            "stop",
-            { input_tokens: 0, output_tokens: 0 }
-          )
-        );
-      }
-
-      const extractIntercepted = await tryInterceptExtractCommand(
-        latestUserMessage,
-        sessionId,
-        userId,
-        { sessions: deps.sessions, runtimeStore: deps.runtimeStore },
-        req.log
-      );
-      if (extractIntercepted) {
-        return reply.send(
-          buildAnthropicResponse(
-            `msg_${requestId}`,
-            requestedModel,
-            extractIntercepted.message,
-            "stop",
-            { input_tokens: 0, output_tokens: 0 }
-          )
-        );
-      }
-
-      const injectIntercepted = await tryInterceptInjectCommand(
-        latestUserMessage,
-        sessionId,
-        userId,
-        { sessions: deps.sessions, runtimeStore: deps.runtimeStore },
-        req.log
-      );
-      if (injectIntercepted) {
-        return reply.send(
-          buildAnthropicResponse(
-            `msg_${requestId}`,
-            requestedModel,
-            injectIntercepted.message,
-            "stop",
-            { input_tokens: 0, output_tokens: 0 }
-          )
-        );
-      }
-
-      if (ocAgentId && ocAgentId !== "main") {
-        const currentAgentId = (session as any)?.agentId;
-        if (currentAgentId !== ocAgentId) {
-          await deps.sessions
-            .update(sessionId, userId, { agentId: ocAgentId })
-            .catch((err) =>
-              req.log.warn({ err, sessionId }, "agent id persist failed")
-            );
-        }
-      }
-
+        headers: req.headers,
+        deps
+      });
+      const scope = scopeResolution.scope;
+      const ideScope = scopeResolution.ideScope;
       const scopeCheck = assertTokenProjectScopes(req, scope);
       if (!scopeCheck.ok) {
         return reply.code(403).send({
@@ -354,26 +317,6 @@ export function registerMessagesRoute(
           }
         });
       }
-
-      const noExtractHeader = req.headers["x-tenure-no-extract"] === "true";
-      const bootstrapInProgress = req.headers["x-tenure-bootstrapping"] === "1";
-      const isIdeTurn = req.headers["x-tenure-ide"] === "1";
-      const ideExtractionEnabled =
-        (cfg as any).ide_extraction_enabled !== false;
-
-      const extractionEnabled =
-        cfg.extraction_enabled !== false &&
-        session?.extractionPaused !== true &&
-        !noExtractHeader &&
-        !bootstrapInProgress &&
-        (isIdeTurn ? ideExtractionEnabled : true);
-
-      const injectionEnabled =
-        cfg.injection_enabled !== false &&
-        session?.injectionPaused !== true &&
-        !bootstrapInProgress;
-
-      const extractionMode: "standard" | "ide" = isIdeTurn ? "ide" : "standard";
       const agentId = ocAgentId && ocAgentId !== "main" ? ocAgentId : null;
 
       const beliefCtx = await deps.context
@@ -383,38 +326,6 @@ export function registerMessagesRoute(
           return EMPTY_CONTEXT;
         });
 
-      let ideScope: {
-        projectScope: string | null;
-        languageScope: string | null;
-      } | null = null;
-
-      if (isIdeTurn) {
-        const headerProject = req.headers["x-tenure-project"] as
-          | string
-          | undefined;
-        const headerLanguage = req.headers["x-tenure-language"] as
-          | string
-          | undefined;
-        ideScope = {
-          projectScope: headerProject
-            ? `project:${headerProject
-                .toLowerCase()
-                .replace(/[^a-z0-9-]/g, "-")
-                .replace(/-+/g, "-")
-                .replace(/^-|-$/g, "")}`
-            : null,
-          languageScope: headerLanguage
-            ? `domain:code/${headerLanguage.toLowerCase()}`
-            : null
-        };
-        if (!ideScope.projectScope && deps.workspaceState) {
-          ideScope.projectScope =
-            deps.workspaceState.resolveProjectScope(userId);
-          ideScope.languageScope =
-            ideScope.languageScope ??
-            deps.workspaceState.resolveLanguageScope(userId);
-        }
-      }
 
       let systemPrompt: SystemPrompt;
       try {
@@ -439,7 +350,6 @@ export function registerMessagesRoute(
         deps.injectionAudit
           .log({
             userId,
-            sessionId,
             requestId,
             userQuery: latestUserMessage,
             expandedQuery: beliefCtx.expandedQuery,
@@ -489,7 +399,6 @@ export function registerMessagesRoute(
           systemPrompt,
           {
             requestId,
-            sessionId,
             userId,
             tokenId: req.tenureTokenId ?? "root",
             tokenName: req.tenureTokenName ?? "",
@@ -499,9 +408,10 @@ export function registerMessagesRoute(
             rawContent,
             scope,
             deps,
-            session,
             adapter,
-            tierWarning,
+            tierWarning: scopeResolution.usedUniversalFallback
+              ? "No project scope is selected; using user:universal only."
+              : tierWarning,
             logger: req.log,
             extractionEnabled,
             client,
@@ -527,7 +437,6 @@ export function registerMessagesRoute(
             error: e instanceof Error ? e : new Error(reason),
             user_id: userId,
             actor_id: userId,
-            session_id: sessionId,
             request_id: requestId,
             provider: adapter.id,
             model: requestedModel,
@@ -546,7 +455,10 @@ export function registerMessagesRoute(
         providerResp.content ?? ""
       );
 
-      if (tierWarning) reply.header("x-tenure-warning", tierWarning);
+      const warning = scopeResolution.usedUniversalFallback
+        ? "No project scope is selected; using user:universal only."
+        : tierWarning;
+      if (warning) reply.header("x-tenure-warning", warning);
 
       reply.send(
         buildAnthropicResponse(
@@ -566,14 +478,13 @@ export function registerMessagesRoute(
         throw new Error("missing token attribution for side effects");
       }
 
-      runSideEffects({
+      await runSideEffects({
         deps,
         userId,
         agentId,
         tokenId: req.tenureTokenId,
         tokenName: req.tenureTokenName ?? "",
         tokenKind: req.tenureTokenKind,
-        sessionId,
         requestId,
         latestUserMessage,
         visible,
@@ -583,7 +494,6 @@ export function registerMessagesRoute(
         scope,
         adapter,
         model: providerResp.model,
-        session,
         logger: req.log,
         extractionEnabled,
         client,
@@ -598,7 +508,6 @@ export function registerMessagesRoute(
 
 interface StreamingCtx {
   requestId: string;
-  sessionId: string;
   userId: string;
   tokenId: string;
   tokenName: string;
@@ -608,7 +517,6 @@ interface StreamingCtx {
   rawContent: string | ContentPart[];
   scope: string[];
   deps: ChatDeps;
-  session: (Session & { providerId: string; model: string }) | null;
   adapter: AnthropicAdapter;
   tierWarning: string | null;
   logger: import("fastify").FastifyBaseLogger;
@@ -642,21 +550,29 @@ async function handleAnthropicStream(
   const messageId = `msg_${ctx.requestId}`;
   const HOLDBACK = SIDECAR_BEGIN.length;
 
-  writeAnthropicSSE(raw, "message_start", {
-    type: "message_start",
-    message: {
-      id: messageId,
-      type: "message",
-      role: "assistant",
-      content: [],
-      model: ctx.requestedModel,
-      stop_reason: null,
-      stop_sequence: null,
-      usage: { input_tokens: 0, output_tokens: 0 }
-    }
-  });
+  let messageStarted = false;
+  const startMessage = async (
+    model: string,
+    inputTokens: number
+  ): Promise<void> => {
+    if (messageStarted) return;
+    messageStarted = true;
+    await writeAnthropicSSE(raw, "message_start", {
+      type: "message_start",
+      message: {
+        id: messageId,
+        type: "message",
+        role: "assistant",
+        content: [],
+        model,
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: inputTokens, output_tokens: 0 }
+      }
+    });
+  };
 
-  writeAnthropicSSE(raw, "ping", { type: "ping" });
+  await writeAnthropicSSE(raw, "ping", { type: "ping" });
 
   let fullContent = "";
   let flushedIdx = 0;
@@ -675,7 +591,7 @@ async function handleAnthropicStream(
 
   const heartbeat = setInterval(() => {
     if (!raw.writableEnded && !abortController.signal.aborted) {
-      raw.write(": keep-alive\n\n");
+      if (!raw.writableNeedDrain) raw.write(": keep-alive\n\n");
     }
   }, 15_000);
 
@@ -686,6 +602,17 @@ async function handleAnthropicStream(
     )) {
       if (abortController.signal.aborted) break;
 
+      if (event.type === "message_start") {
+        finalModel = event.model;
+        usage.input_tokens = event.input_tokens;
+        await startMessage(event.model, event.input_tokens);
+        continue;
+      }
+
+      if (!messageStarted) {
+        await startMessage(finalModel, usage.input_tokens);
+      }
+
       if (event.type === "content_delta" && event.delta) {
         fullContent += event.delta;
 
@@ -695,7 +622,7 @@ async function handleAnthropicStream(
           currentTextBlockIndex = nextBlockIndex;
           activeBlockIndex = nextBlockIndex;
           nextBlockIndex++;
-          writeAnthropicSSE(raw, "content_block_start", {
+          await writeAnthropicSSE(raw, "content_block_start", {
             type: "content_block_start",
             index: currentTextBlockIndex,
             content_block: { type: "text", text: "" }
@@ -706,7 +633,7 @@ async function handleAnthropicStream(
         if (markerIdx !== -1) {
           const remaining = fullContent.slice(flushedIdx, markerIdx);
           if (remaining) {
-            writeAnthropicSSE(raw, "content_block_delta", {
+            await writeAnthropicSSE(raw, "content_block_delta", {
               type: "content_block_delta",
               index: currentTextBlockIndex,
               delta: { type: "text_delta", text: remaining }
@@ -717,7 +644,7 @@ async function handleAnthropicStream(
         } else {
           const safeEnd = fullContent.length - HOLDBACK;
           if (safeEnd > flushedIdx) {
-            writeAnthropicSSE(raw, "content_block_delta", {
+            await writeAnthropicSSE(raw, "content_block_delta", {
               type: "content_block_delta",
               index: currentTextBlockIndex,
               delta: {
@@ -732,7 +659,7 @@ async function handleAnthropicStream(
 
       if (event.type === "text_block_start") {
         if (activeBlockIndex !== -1) {
-          writeAnthropicSSE(raw, "content_block_stop", {
+          await writeAnthropicSSE(raw, "content_block_stop", {
             type: "content_block_stop",
             index: activeBlockIndex
           });
@@ -740,7 +667,7 @@ async function handleAnthropicStream(
         currentTextBlockIndex = nextBlockIndex;
         activeBlockIndex = nextBlockIndex;
         nextBlockIndex++;
-        writeAnthropicSSE(raw, "content_block_start", {
+        await writeAnthropicSSE(raw, "content_block_start", {
           type: "content_block_start",
           index: currentTextBlockIndex,
           content_block: { type: "text", text: "" }
@@ -749,7 +676,7 @@ async function handleAnthropicStream(
 
       if (event.type === "tool_use_start") {
         if (activeBlockIndex !== -1) {
-          writeAnthropicSSE(raw, "content_block_stop", {
+          await writeAnthropicSSE(raw, "content_block_stop", {
             type: "content_block_stop",
             index: activeBlockIndex
           });
@@ -759,7 +686,7 @@ async function handleAnthropicStream(
         activeBlockIndex = nextBlockIndex;
         nextBlockIndex++;
 
-        writeAnthropicSSE(raw, "content_block_start", {
+        await writeAnthropicSSE(raw, "content_block_start", {
           type: "content_block_start",
           index: currentToolBlockIndex,
           content_block: {
@@ -774,7 +701,7 @@ async function handleAnthropicStream(
       if (event.type === "tool_use_delta") {
         if (currentToolBlockIndex === -1) continue;
 
-        writeAnthropicSSE(raw, "content_block_delta", {
+        await writeAnthropicSSE(raw, "content_block_delta", {
           type: "content_block_delta",
           index: currentToolBlockIndex,
           delta: {
@@ -804,7 +731,6 @@ async function handleAnthropicStream(
           error: err instanceof Error ? err : new Error((err as Error).message),
           user_id: ctx.userId,
           actor_id: ctx.userId,
-          session_id: ctx.sessionId,
           request_id: ctx.requestId,
           provider: ctx.adapter.id,
           model: ctx.requestedModel,
@@ -813,7 +739,7 @@ async function handleAnthropicStream(
         })
         .catch(() => {});
 
-      writeAnthropicSSE(raw, "error", {
+      await writeAnthropicSSE(raw, "error", {
         type: "error",
         error: { type: "api_error", message: (err as Error).message }
       });
@@ -830,8 +756,10 @@ async function handleAnthropicStream(
     return;
   }
 
+  await startMessage(finalModel, usage.input_tokens);
+
   if (!sidecarDetected && flushedIdx < fullContent.length) {
-    writeAnthropicSSE(raw, "content_block_delta", {
+    await writeAnthropicSSE(raw, "content_block_delta", {
       type: "content_block_delta",
       index: currentTextBlockIndex,
       delta: {
@@ -842,32 +770,34 @@ async function handleAnthropicStream(
   }
 
   if (activeBlockIndex !== -1) {
-    writeAnthropicSSE(raw, "content_block_stop", {
+    await writeAnthropicSSE(raw, "content_block_stop", {
       type: "content_block_stop",
       index: activeBlockIndex
     });
   }
 
-  writeAnthropicSSE(raw, "message_delta", {
+  await writeAnthropicSSE(raw, "message_delta", {
     type: "message_delta",
     delta: { stop_reason: finishReason, stop_sequence: null },
-    usage: { output_tokens: usage.output_tokens }
+    usage: {
+      input_tokens: usage.input_tokens,
+      output_tokens: usage.output_tokens
+    }
   });
 
-  writeAnthropicSSE(raw, "message_stop", { type: "message_stop" });
+  await writeAnthropicSSE(raw, "message_stop", { type: "message_stop" });
 
   raw.end();
 
   const { visible, sidecarRaw, parseStatus } = splitSidecar(fullContent);
 
-  runSideEffects({
+  await runSideEffects({
     deps: ctx.deps,
     userId: ctx.userId,
     agentId: ctx.agentId,
     tokenId: ctx.tokenId,
     tokenName: ctx.tokenName,
     tokenKind: ctx.tokenKind,
-    sessionId: ctx.sessionId,
     requestId: ctx.requestId,
     latestUserMessage: ctx.latestUserMessage,
     visible,
@@ -877,7 +807,6 @@ async function handleAnthropicStream(
     scope: ctx.scope,
     adapter: ctx.adapter,
     model: finalModel,
-    session: ctx.session,
     logger: ctx.logger,
     extractionEnabled: ctx.extractionEnabled,
     client: ctx.client,
@@ -886,4 +815,19 @@ async function handleAnthropicStream(
     ideLanguageScope: ctx.ideLanguageScope,
     ideActiveFile: ctx.ideActiveFile
   });
+}
+
+function resolveExplicitScope(
+  bodyScope: string[] | undefined,
+  headerScope: string | string[] | undefined
+): string[] {
+  const values = bodyScope?.length
+    ? bodyScope
+    : typeof headerScope === "string"
+      ? headerScope.split(",")
+      : Array.isArray(headerScope)
+        ? headerScope.flatMap((value) => value.split(","))
+        : [];
+
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }

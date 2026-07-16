@@ -42,8 +42,6 @@ function makeBelief() {
     why_it_matters: "Test importance",
     scope: ["user:universal"],
     provenance: {
-      session_id: "s1",
-      turn_id: "t1",
       extracted_at: new Date("2025-01-01"),
       source_model: "anthropic:claude-haiku-4-5-20251001"
     },
@@ -91,12 +89,6 @@ function makeDeps(): BackupDeps {
       if (name === "persona_cache") {
         return {
           findOne: sinon.stub().resolves(null),
-          replaceOne: sinon.stub().resolves()
-        };
-      }
-      if (name === "sessions") {
-        return {
-          find: sinon.stub().returns(toArrayStub([])),
           replaceOne: sinon.stub().resolves()
         };
       }
@@ -194,7 +186,6 @@ test("GET /v1/backup/preview returns export summary", async (t) => {
   t.truthy(body.counts);
   t.is(typeof body.counts.beliefs, "number");
   t.is(typeof body.counts.beliefs_active, "number");
-  t.is(typeof body.counts.sessions, "number");
   t.is(typeof body.counts.has_persona, "boolean");
   t.is(typeof body.counts.has_config, "boolean");
 });
@@ -367,8 +358,6 @@ function makeExportPayload(): TenureExport {
         why_it_matters: "Imported importance",
         scope: ["user:universal"],
         provenance: {
-          session_id: "s1",
-          turn_id: "t1",
           extracted_at: "2025-01-01T00:00:00.000Z",
           source_model: "anthropic:claude-haiku-4-5-20251001"
         },
@@ -399,7 +388,6 @@ function makeExportPayload(): TenureExport {
       extraction_enabled: true
     },
     persona_cache: null,
-    sessions: [],
     injection_audit: []
   };
 }

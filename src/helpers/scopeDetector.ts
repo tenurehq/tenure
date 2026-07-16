@@ -1,5 +1,4 @@
 import type { FastifyBaseLogger } from "fastify";
-import type { SessionPatch } from "../session/manager.js";
 import type { RuntimeConfig } from "../config/runtime.js";
 import type { Db } from "mongodb";
 
@@ -12,15 +11,18 @@ export interface ExtractInterceptResult {
   message: string;
 }
 
-export interface SessionInterceptResult {
-  message: string;
-  sessionId: string;
-  agentId: string;
-}
-
 export type CommandAction = "off" | "on" | "global-off" | "global-on";
 
-const SCOPE_PATTERN = /^project:[a-z0-9_-]+$/;
+export interface TokenScopeStore {
+  getActiveScope(userId: string, tokenId: string): Promise<string[] | null>;
+  setActiveScope(
+    userId: string,
+    tokenId: string,
+    scope: string[]
+  ): Promise<void>;
+}
+
+const SCOPE_PATTERN = /^(?:project:[a-z0-9_-]+|user:universal|domain:[a-z0-9_/-]+)$/;
 
 const VALID_ACTIONS: CommandAction[] = ["on", "off", "global-on", "global-off"];
 
@@ -48,17 +50,17 @@ export function validateCommandInput(
       };
     }
 
-    const invalid = parts.filter((s) => !SCOPE_PATTERN.test(s));
+    const invalid = parts.filter((scope) => !SCOPE_PATTERN.test(scope));
     if (invalid.length > 0) {
       return {
         valid: false,
         message: `Invalid scope format: ${invalid
-          .map((s) => `\`${s}\``)
-          .join(", ")}. Use only \`project:my-project\`.`
+          .map((scope) => `\`${scope}\``)
+          .join(", ")}.`
       };
     }
 
-    return { valid: true, parts };
+    return { valid: true, parts: [...new Set(parts)] };
   }
 
   const action = input as CommandAction;
@@ -67,7 +69,6 @@ export function validateCommandInput(
       valid: false,
       message:
         `Unknown ${type} command. Valid commands: ` +
-        `\`!${type} on\`, \`!${type} off\`, ` +
         `\`!${type} global on\`, \`!${type} global off\`.`
     };
   }
@@ -78,33 +79,25 @@ export function validateCommandInput(
 export function matchScopeCommand(content: string): string | null {
   const trimmed = content.trim();
   const lower = trimmed.toLowerCase();
+  const prefixes = ["!scope", "set scope"] as const;
 
-  const PREFIXES = ["!scope", "set scope"] as const;
-
-  for (const prefix of PREFIXES) {
-    if (lower.startsWith(prefix)) {
-      const after = trimmed.slice(prefix.length);
-      if (after.length === 0 || /^[\s,]/.test(after)) {
-        return after.trim();
-      }
+  for (const prefix of prefixes) {
+    if (!lower.startsWith(prefix)) continue;
+    const after = trimmed.slice(prefix.length);
+    if (after.length === 0 || /^[\s,]/.test(after)) {
+      return after.trim();
     }
   }
+
   return null;
 }
 
 export async function tryInterceptScopeCommand(
   content: string,
-  sessionId: string,
   userId: string,
-  deps: {
-    sessions: {
-      update: (
-        id: string,
-        userId: string,
-        patch: { activeScope: string[] }
-      ) => Promise<unknown>;
-    };
-  },
+  tokenId: string,
+  tokenProjectScopes: string[] | null | undefined,
+  tokenScopes: TokenScopeStore,
   logger: FastifyBaseLogger
 ): Promise<InterceptResult | null> {
   const raw = matchScopeCommand(content);
@@ -112,7 +105,7 @@ export async function tryInterceptScopeCommand(
 
   const parts = raw
     .split(/[\s,]+/)
-    .map((s) => s.trim())
+    .map((scope) => scope.trim().toLowerCase())
     .filter(Boolean);
 
   const validation = validateCommandInput("scope", parts);
@@ -120,12 +113,18 @@ export async function tryInterceptScopeCommand(
     return { message: validation.message, newScope: [] };
   }
 
-  const newScope = validation.parts!;
+  const newScope = validation.parts;
+  if (!allowsProjectScopes(tokenProjectScopes, newScope)) {
+    return {
+      message: "Token is not authorized for one or more requested project scopes.",
+      newScope: []
+    };
+  }
 
   try {
-    await deps.sessions.update(sessionId, userId, { activeScope: newScope });
+    await tokenScopes.setActiveScope(userId, tokenId, newScope);
   } catch (err) {
-    logger.warn({ err, sessionId }, "scope command: session update failed");
+    logger.warn({ err, tokenId }, "scope command: token update failed");
     return {
       message: "Failed to update scope. Try again.",
       newScope: []
@@ -133,7 +132,7 @@ export async function tryInterceptScopeCommand(
   }
 
   return {
-    message: `Scope set to: ${newScope.map((s) => `\`${s}\``).join(", ")}`,
+    message: `Scope set to: ${newScope.map((scope) => `\`${scope}\``).join(", ")}`,
     newScope
   };
 }
@@ -143,12 +142,12 @@ export async function fetchExistingUserScopes(
   db: Db
 ): Promise<string[]> {
   try {
-    const filter: Record<string, unknown> = { user_id: userId };
-
-    const scopes = await db.collection("beliefs").distinct("scope", filter);
+    const scopes = await db
+      .collection("beliefs")
+      .distinct("scope", { user_id: userId });
 
     return (scopes as string[]).filter(
-      (s) => s !== "user:universal" && s !== "universal"
+      (scope) => scope !== "user:universal" && scope !== "universal"
     );
   } catch {
     return [];
@@ -156,243 +155,89 @@ export async function fetchExistingUserScopes(
 }
 
 export function matchExtractCommand(content: string): CommandAction | null {
-  const trimmed = content.trim().toLowerCase();
-
-  const COMMANDS: Record<string, CommandAction> = {
-    "!extract off": "off",
-    "!extract on": "on",
-    "!extract global off": "global-off",
-    "!extract global on": "global-on"
-  };
-
-  return COMMANDS[trimmed] ?? null;
+  return matchToggleCommand(content, "extract");
 }
 
 export async function tryInterceptExtractCommand(
   content: string,
-  sessionId: string,
-  userId: string,
-  deps: {
-    sessions: {
-      update: (
-        id: string,
-        userId: string,
-        patch: SessionPatch
-      ) => Promise<unknown>;
-    };
-    runtimeStore: {
-      set: <K extends keyof RuntimeConfig>(
-        key: K,
-        value: RuntimeConfig[K]
-      ) => Promise<void>;
-    };
-  },
+  runtimeStore: RuntimeConfigStore,
   logger: FastifyBaseLogger
 ): Promise<ExtractInterceptResult | null> {
   const action = matchExtractCommand(content);
   if (action === null) return null;
-
-  const validation = validateCommandInput("extract", action);
-  if (!validation.valid) {
-    return { message: validation.message };
-  }
-
-  switch (action) {
-    case "off":
-      try {
-        await deps.sessions.update(sessionId, userId, {
-          extractionPaused: true
-        });
-      } catch (err) {
-        logger.warn(
-          { err, sessionId },
-          "extract command: session update failed"
-        );
-        return { message: "Failed to pause extraction. Try again." };
-      }
-      return {
-        message:
-          "Extraction paused for this session. Existing beliefs are still injected. " +
-          "Send `!extract on` to resume, or `!extract global off` to disable permanently."
-      };
-
-    case "on":
-      try {
-        await deps.sessions.update(sessionId, userId, {
-          extractionPaused: false
-        });
-      } catch (err) {
-        logger.warn(
-          { err, sessionId },
-          "extract command: session update failed"
-        );
-        return { message: "Failed to resume extraction. Try again." };
-      }
-      return { message: "Extraction resumed for this session." };
-
-    case "global-off":
-      try {
-        await deps.runtimeStore.set("extraction_enabled", false);
-      } catch (err) {
-        logger.warn({ err }, "extract command: global disable failed");
-        return { message: "Failed to disable extraction globally. Try again." };
-      }
-      return {
-        message:
-          "Extraction disabled globally. No new beliefs will be extracted from any session. " +
-          "Existing beliefs are still injected. Send `!extract global on` to re-enable."
-      };
-
-    case "global-on":
-      try {
-        await deps.runtimeStore.set("extraction_enabled", true);
-      } catch (err) {
-        logger.warn({ err }, "extract command: global enable failed");
-        return {
-          message: "Failed to re-enable extraction globally. Try again."
-        };
-      }
-      return { message: "Extraction re-enabled globally." };
-  }
+  return applyGlobalToggle("extract", action, runtimeStore, logger);
 }
 
 export function matchInjectCommand(content: string): CommandAction | null {
-  const trimmed = content.trim().toLowerCase();
-
-  const COMMANDS: Record<string, CommandAction> = {
-    "!inject off": "off",
-    "!inject on": "on",
-    "!inject global off": "global-off",
-    "!inject global on": "global-on"
-  };
-
-  return COMMANDS[trimmed] ?? null;
+  return matchToggleCommand(content, "inject");
 }
 
 export async function tryInterceptInjectCommand(
   content: string,
-  sessionId: string,
-  userId: string,
-  deps: {
-    sessions: {
-      update: (
-        id: string,
-        userId: string,
-        patch: SessionPatch
-      ) => Promise<unknown>;
-    };
-    runtimeStore: {
-      set: <K extends keyof RuntimeConfig>(
-        key: K,
-        value: RuntimeConfig[K]
-      ) => Promise<void>;
-    };
-  },
+  runtimeStore: RuntimeConfigStore,
   logger: FastifyBaseLogger
 ): Promise<ExtractInterceptResult | null> {
   const action = matchInjectCommand(content);
   if (action === null) return null;
-
-  const validation = validateCommandInput("inject", action);
-  if (!validation.valid) {
-    return { message: validation.message };
-  }
-
-  switch (action) {
-    case "off":
-      try {
-        await deps.sessions.update(sessionId, userId, {
-          injectionPaused: true
-        });
-      } catch (err) {
-        logger.warn(
-          { err, sessionId },
-          "inject command: session update failed"
-        );
-        return { message: "Failed to pause injection. Try again." };
-      }
-      return {
-        message:
-          "Belief injection paused for this session. " +
-          "Tenure is still extracting from this conversation — send `!extract off` too if you want a fully clean session. " +
-          "Send `!inject on` to resume."
-      };
-
-    case "on":
-      try {
-        await deps.sessions.update(sessionId, userId, {
-          injectionPaused: false
-        });
-      } catch (err) {
-        logger.warn(
-          { err, sessionId },
-          "inject command: session update failed"
-        );
-        return { message: "Failed to resume injection. Try again." };
-      }
-      return { message: "Belief injection resumed for this session." };
-
-    case "global-off":
-      try {
-        await deps.runtimeStore.set("injection_enabled", false);
-      } catch (err) {
-        logger.warn({ err }, "inject command: global disable failed");
-        return { message: "Failed to disable injection globally. Try again." };
-      }
-      return {
-        message:
-          "Belief injection disabled globally. " +
-          "The model will receive no context from your world model in any session. " +
-          "Send `!inject global on` to re-enable."
-      };
-
-    case "global-on":
-      try {
-        await deps.runtimeStore.set("injection_enabled", true);
-      } catch (err) {
-        logger.warn({ err }, "inject command: global enable failed");
-        return {
-          message: "Failed to re-enable injection globally. Try again."
-        };
-      }
-      return { message: "Belief injection re-enabled globally." };
-  }
+  return applyGlobalToggle("inject", action, runtimeStore, logger);
 }
 
-export function matchSessionCommand(
-  content: string
-): { sessionKey: string; agentId: string } | null {
-  const trimmed = content.trim();
-  const match = trimmed.match(/^!session\s+(\S+)\s+(\S+)$/i);
-  if (!match) return null;
-  return { sessionKey: match[1], agentId: match[2] };
+interface RuntimeConfigStore {
+  set<K extends keyof RuntimeConfig>(
+    key: K,
+    value: RuntimeConfig[K]
+  ): Promise<void>;
 }
 
-export async function tryInterceptSessionCommand(
+function matchToggleCommand(
   content: string,
-  userId: string,
-  deps: {
-    sessions: {
-      getOrCreate: (id: string, userId: string) => Promise<unknown>;
-    };
-  },
+  type: "extract" | "inject"
+): CommandAction | null {
+  const value = content.trim().toLowerCase();
+  const commands: Record<string, CommandAction> = {
+    [`!${type} off`]: "off",
+    [`!${type} on`]: "on",
+    [`!${type} global off`]: "global-off",
+    [`!${type} global on`]: "global-on"
+  };
+  return commands[value] ?? null;
+}
+
+async function applyGlobalToggle(
+  type: "extract" | "inject",
+  action: CommandAction,
+  runtimeStore: RuntimeConfigStore,
   logger: FastifyBaseLogger
-): Promise<SessionInterceptResult | null> {
-  const matched = matchSessionCommand(content);
-  if (!matched) return null;
+): Promise<ExtractInterceptResult> {
+  if (action === "off" || action === "on") {
+    return {
+      message: `Per-conversation ${type} controls are unavailable. Use \`!${type} global ${action}\`.`
+    };
+  }
+
+  const enabled = action === "global-on";
+  const key = type === "extract" ? "extraction_enabled" : "injection_enabled";
 
   try {
-    await deps.sessions.getOrCreate(matched.sessionKey, userId);
+    await runtimeStore.set(key, enabled);
   } catch (err) {
-    logger.warn(
-      { err, sessionKey: matched.sessionKey },
-      "session command: getOrCreate failed"
-    );
+    logger.warn({ err }, `${type} command: global update failed`);
+    return { message: `Failed to update ${type} globally. Try again.` };
   }
 
   return {
-    message: `__session_established__`,
-    sessionId: matched.sessionKey,
-    agentId: matched.agentId
+    message: `${type === "extract" ? "Extraction" : "Belief injection"} ${
+      enabled ? "enabled" : "disabled"
+    } globally.`
   };
+}
+
+function allowsProjectScopes(
+  allowed: string[] | null | undefined,
+  requested: string[]
+): boolean {
+  if (allowed == null) return true;
+  return requested.every(
+    (scope) => !scope.startsWith("project:") || allowed.includes(scope)
+  );
 }

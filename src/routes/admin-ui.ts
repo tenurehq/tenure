@@ -518,7 +518,6 @@ function render() {
           <div id="backup-preview" style="margin-top:.75rem;font-size:.8rem;color:var(--muted);display:none">
             <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:.75rem">
               <span id="bp-beliefs"></span>
-              <span id="bp-sessions"></span>
               <span id="bp-persona"></span>
             </div>
           </div>
@@ -1311,7 +1310,6 @@ async function loadBackupPreview() {
     if (el) {
       el.style.display = "block";
       document.getElementById("bp-beliefs").textContent = \`\${c.beliefs_active} active beliefs (\${c.beliefs} total)\`;
-      document.getElementById("bp-sessions").textContent = \`\${c.sessions} sessions\`;
       document.getElementById("bp-persona").textContent = c.has_persona ? "Persona: ✓" : "Persona: not generated";
     }
   } catch (e) {
@@ -1458,8 +1456,6 @@ async function loadErrors() {
         <div style="display:flex;flex-wrap:wrap;gap:.4rem .75rem;font-size:.72rem;color:var(--muted)">
           \${e.provider ? \`<span>provider: <code style="color:var(--text)">\${esc(e.provider)}</code></span>\` : ""}
           \${e.model           ? \`<span>model: <code style="color:var(--text)">\${esc(e.model)}</code></span>\` : ""}
-          \${e.session_id      ? \`<span>session: <code style="color:var(--text)">\${esc(e.session_id)}</code></span>\` : ""}
-          \${e.turn_id         ? \`<span>turn: <code style="color:var(--text)">\${esc(e.turn_id)}</code></span>\` : ""}
           \${e.exception_type  ? \`<span>exception: <code style="color:var(--text)">\${esc(e.exception_type)}</code></span>\` : ""}
           \${e.user_impacted ? \`<span style="color:var(--danger)">user impacted</span>\` : ""}
           \${e.passthrough_succeeded === true ? \`<span style="color:var(--ok)">response delivered</span>\` : e.passthrough_succeeded === false ? \`<span style="color:var(--danger)">response failed</span>\` : ""}
@@ -1486,8 +1482,6 @@ async function copyErrors() {
       \`[\${e.occurred_at}] \${e.severity}/\${e.stage}: \${e.message}\`,
       e.provider        ? \`  provider: \${e.provider}\`                         : null,
       e.model           ? \`  model: \${e.model}\`                                : null,
-      e.session_id      ? \`  session: \${e.session_id}\`                         : null,
-      e.turn_id         ? \`  turn: \${e.turn_id}\`                               : null,
       e.exception_type  ? \`  exception: \${e.exception_type}\`                   : null,
       e.user_impacted !== undefined ? \`  user_impacted: \${e.user_impacted}\`    : null,
       e.passthrough_succeeded !== null && e.passthrough_succeeded !== undefined

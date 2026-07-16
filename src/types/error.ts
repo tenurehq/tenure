@@ -1,7 +1,6 @@
 export type ErrorSeverity = "warning" | "error" | "critical";
 
 export type ErrorStage =
-  | "session_resolution"
   | "context_assembly"
   | "topical_retrieval"
   | "provider_call"
@@ -23,7 +22,6 @@ export interface ErrorLog {
   exception_type: string | null;
   stack_trace: string | null;
   user_id: string;
-  session_id: string | null;
   request_id: string | null;
   provider: string | null;
   model: string | null;

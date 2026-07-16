@@ -58,7 +58,6 @@ export function registerBackupRoutes(
       passphrase: string;
       skip_existing?: boolean;
       import_config?: boolean;
-      import_sessions?: boolean;
     };
   }>("/v1/backup/import", async (req, reply) => {
     if (!importsEnabled) {
@@ -67,8 +66,7 @@ export function registerBackupRoutes(
       });
     }
 
-    const { passphrase, skip_existing, import_config, import_sessions } =
-      req.body;
+    const { passphrase, skip_existing, import_config } = req.body;
 
     if (!passphrase) {
       return reply.code(400).send({
@@ -88,7 +86,6 @@ export function registerBackupRoutes(
     const options: ImportOptions = {
       skipExisting: skip_existing ?? true,
       importConfig: import_config ?? true,
-      importSessions: import_sessions ?? false,
       remapUserId: true
     };
 
@@ -145,7 +142,6 @@ export function registerBackupRoutes(
         beliefs_active: payload.beliefs.filter(
           (b) => b.superseded_by === null && b.resolved_at === null
         ).length,
-        sessions: payload.sessions.length,
         has_persona: payload.persona_cache !== null,
         has_config: payload.runtime_config !== null
       }

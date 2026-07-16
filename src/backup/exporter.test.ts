@@ -25,8 +25,6 @@ function makeBelief(overrides: Record<string, unknown> = {}) {
     why_it_matters: "Test importance",
     scope: ["user:universal"],
     provenance: {
-      session_id: "session-1",
-      turn_id: "turn-1",
       extracted_at: new Date("2025-01-01"),
       source_model: "anthropic:claude-haiku-4-5-20251001"
     },
@@ -41,9 +39,7 @@ function makeBelief(overrides: Record<string, unknown> = {}) {
     change_log: [
       {
         changed_at: new Date("2025-01-01"),
-        trigger: "extraction",
-        changed_by_session: "session-1",
-        changed_by_turn: "turn-1"
+        trigger: "extraction"
       }
     ],
     created_at: new Date("2025-01-01"),
@@ -61,18 +57,6 @@ function makePersonaDoc() {
     beliefs_hash: "abc123",
     generated_at: new Date("2025-01-03"),
     model: "claude-haiku-4-5-20251001"
-  };
-}
-
-function makeSession() {
-  return {
-    _id: "session-1",
-    userId: USER_ID,
-    providerId: "anthropic",
-    model: "claude-haiku-4-5-20251001",
-    activeScope: ["user:universal"],
-    createdAt: new Date("2025-01-01"),
-    lastUsedAt: new Date("2025-01-05")
   };
 }
 
@@ -96,14 +80,12 @@ function makeDeps(
   options: {
     beliefs?: unknown[];
     persona?: unknown | null;
-    sessions?: unknown[];
     runtimeConfig?: Record<string, unknown>;
   } = {}
 ): ExporterDeps {
   const beliefs = options.beliefs ?? [makeBelief()];
   const persona =
     options.persona !== undefined ? options.persona : makePersonaDoc();
-  const sessions = options.sessions ?? [makeSession()];
 
   const toArrayStub = (data: unknown[]) => ({
     toArray: sinon.stub().resolves(data)
@@ -116,9 +98,6 @@ function makeDeps(
       }
       if (name === "persona_cache") {
         return { findOne: sinon.stub().resolves(persona) };
-      }
-      if (name === "sessions") {
-        return { find: sinon.stub().returns(toArrayStub(sessions)) };
       }
       return { find: sinon.stub().returns(toArrayStub([])) };
     })
@@ -205,26 +184,16 @@ test("exportUnencrypted returns null persona when none exists", async (t) => {
   t.is(payload.persona_cache, null);
 });
 
-test("exportUnencrypted includes sessions", async (t) => {
-  const payload = await t.context.exporter.exportUnencrypted();
-  t.is(payload.sessions.length, 1);
-  t.is(payload.sessions[0]._id, "session-1");
-  t.is(payload.sessions[0].providerId, "anthropic");
-  t.is(typeof payload.sessions[0].createdAt, "string");
-});
-
 test("exportUnencrypted handles empty collections", async (t) => {
   const deps = makeDeps({
     beliefs: [],
-    persona: null,
-    sessions: []
+    persona: null
   });
   const exporter = new BackupExporter(deps);
   const payload = await exporter.exportUnencrypted();
 
   t.is(payload.beliefs.length, 0);
   t.is(payload.persona_cache, null);
-  t.is(payload.sessions.length, 0);
 });
 
 test("exportUnencrypted handles multiple beliefs", async (t) => {

@@ -32,6 +32,7 @@ export interface ModelInfo {
 }
 
 export type StreamEvent =
+  | { type: "message_start"; model: string; input_tokens: number }
   | { type: "content_delta"; delta: string }
   | { type: "text_block_start" }
   | {
@@ -74,20 +75,11 @@ export function flattenSystemPrompt(sp: SystemPrompt): string {
   return [sp.static, sp.beliefs, sp.dynamic].filter(Boolean).join("\n\n");
 }
 
-/**
- * Minimal shared interface. Only used for model listing and provider
- * registration/detection. Route handlers call the concrete adapter type
- * directly for call/callStream.
- */
 export interface ProviderAdapter {
   readonly id: string;
   listModels?(): Promise<ModelInfo[]>;
 }
 
-/**
- * Interface for internal callers (compaction, persona, scope detection)
- * that need to make LLM calls with positional arguments.
- */
 export interface InternalLLMCaller {
   call(
     model: string,

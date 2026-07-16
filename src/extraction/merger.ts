@@ -58,10 +58,11 @@ export interface MergeReport {
 
 export interface MergeInput {
   userId: string;
-  sessionId: string;
-  turnId: string;
   sourceModel: string;
   agentId: string | null;
+  tokenId: string;
+  tokenName: string;
+  tokenKind: "client" | "agent" | "root";
   result: ExtractionResult;
   originContext?: OriginContext | null;
 }
@@ -80,10 +81,11 @@ export class BeliefMerger {
   async merge(input: MergeInput): Promise<MergeReport> {
     const {
       userId,
-      sessionId,
-      turnId,
       sourceModel,
       agentId,
+      tokenId,
+      tokenName,
+      tokenKind,
       result,
       originContext
     } = input;
@@ -100,11 +102,12 @@ export class BeliefMerger {
       try {
         const decision = await this.applyBeliefUpdate(
           userId,
-          sessionId,
-          turnId,
           sourceModel,
           signal,
-          agentId
+          agentId,
+          tokenId,
+          tokenName,
+          tokenKind
         );
         report.decisions.push(decision);
       } catch (e) {
@@ -128,11 +131,12 @@ export class BeliefMerger {
       try {
         const decision = await this.mergeOne(
           userId,
-          sessionId,
-          turnId,
           sourceModel,
           nb,
           agentId,
+          tokenId,
+          tokenName,
+          tokenKind,
           originContext
         );
         report.decisions.push(decision);
@@ -169,13 +173,15 @@ export class BeliefMerger {
       try {
         const qid = await this.insertOpenQuestion(
           userId,
-          sessionId,
-          turnId,
+
           sourceModel,
           q.canonical_name,
           q.content,
           q.scope,
           agentId,
+          tokenId,
+          tokenName,
+          tokenKind,
           originContext
         );
         report.newOpenQuestionIds.push(qid);
@@ -204,11 +210,12 @@ export class BeliefMerger {
 
   private async mergeOne(
     userId: string,
-    sessionId: string,
-    turnId: string,
     sourceModel: string,
     nb: NewBelief,
     agentId: string | null,
+    tokenId: string,
+    tokenName: string,
+    tokenKind: "client" | "agent" | "root",
     originContext?: OriginContext | null
   ): Promise<MergeDecision> {
     const matches = await this.writer.findByAliasOrCanonical(
@@ -253,11 +260,13 @@ export class BeliefMerger {
       try {
         const beliefId = await this.insertBelief(
           userId,
-          sessionId,
-          turnId,
+
           sourceModel,
           nb,
           agentId,
+          tokenId,
+          tokenName,
+          tokenKind,
           originContext
         );
         return {
@@ -282,18 +291,8 @@ export class BeliefMerger {
             };
           }
 
-          await this.writer.reinforce(
-            userId,
-            conflictMatch._id,
-            sessionId,
-            turnId
-          );
-          await this.maybePromoteInferred(
-            userId,
-            conflictMatch._id,
-            sessionId,
-            turnId
-          );
+          await this.writer.reinforce(userId, conflictMatch._id);
+          await this.maybePromoteInferred(userId, conflictMatch._id);
 
           return {
             action: MergeAction.REINFORCED,
@@ -334,8 +333,8 @@ export class BeliefMerger {
       await this.writer.addAliases(userId, existing._id, newAliases);
     }
 
-    await this.writer.reinforce(userId, existing._id, sessionId, turnId);
-    await this.maybePromoteInferred(userId, existing._id, sessionId, turnId);
+    await this.writer.reinforce(userId, existing._id);
+    await this.maybePromoteInferred(userId, existing._id);
 
     return {
       action: MergeAction.REINFORCED,
@@ -346,9 +345,7 @@ export class BeliefMerger {
 
   private async maybePromoteInferred(
     userId: string,
-    beliefId: string,
-    sessionId: string,
-    turnId: string
+    beliefId: string
   ): Promise<void> {
     const belief = await this.writer.get(userId, beliefId);
     if (!belief || belief.epistemic_status !== "inferred") return;
@@ -369,17 +366,18 @@ export class BeliefMerger {
       : this.policy.inferredPromotionAgeMs;
 
     if (belief.reinforcement_count >= requiredCount && ageMs >= requiredAge) {
-      await this.writer.promoteToActive(userId, beliefId, sessionId, turnId);
+      await this.writer.promoteToActive(userId, beliefId);
     }
   }
 
   private async applyBeliefUpdate(
     userId: string,
-    sessionId: string,
-    turnId: string,
     sourceModel: string,
     signal: BeliefUpdateSignal,
-    agentId: string | null
+    agentId: string | null,
+    tokenId: string,
+    tokenName: string,
+    tokenKind: "client" | "agent" | "root"
   ): Promise<MergeDecision> {
     const target = await this.writer.get(userId, signal.belief_id);
     if (!target) {
@@ -392,7 +390,7 @@ export class BeliefMerger {
 
     switch (signal.change) {
       case "reinforced":
-        await this.writer.reinforce(userId, target._id, sessionId, turnId);
+        await this.writer.reinforce(userId, target._id);
         return {
           action: MergeAction.REINFORCED,
           beliefId: target._id,
@@ -407,8 +405,6 @@ export class BeliefMerger {
         };
 
       case "superseded": {
-        await this.writer.supersede(userId, target._id, "", sessionId, turnId);
-
         const newContent = signal.new_content ?? target.content;
         const newCanonical = signal.new_canonical_name ?? target.canonical_name;
 
@@ -419,9 +415,12 @@ export class BeliefMerger {
         let replacementId: string;
 
         try {
-          replacementId = await this.writer.create({
+          replacementId = await this.writer.replace(userId, target._id, {
             user_id: userId,
             agent_id: agentId,
+            token_id: tokenId,
+            token_name: tokenName,
+            token_kind: tokenKind,
             type: target.type,
             subtype: target.subtype,
             canonical_name: newCanonical,
@@ -430,8 +429,6 @@ export class BeliefMerger {
             why_it_matters: target.why_it_matters,
             scope: [...target.scope],
             provenance: {
-              session_id: sessionId,
-              turn_id: turnId,
               extracted_at: new Date(),
               source_model: sourceModel
             },
@@ -457,9 +454,7 @@ export class BeliefMerger {
                 trigger: `supersedes belief ${target._id}`,
                 previous_content: target.content,
                 previous_epistemic_status: target.epistemic_status,
-                previous_confidence: target.confidence,
-                changed_by_session: sessionId,
-                changed_by_turn: turnId
+                previous_confidence: target.confidence
               }
             ]
           });
@@ -474,8 +469,6 @@ export class BeliefMerger {
           }
           throw e;
         }
-
-        await this.writer.setSupersededBy(userId, target._id, replacementId);
 
         return {
           action: MergeAction.SUPERSEDED,
@@ -496,9 +489,7 @@ export class BeliefMerger {
         const success = await this.writer.enrichContent(
           userId,
           target._id,
-          signal.new_content,
-          sessionId,
-          turnId
+          signal.new_content
         );
 
         return {
@@ -556,11 +547,12 @@ export class BeliefMerger {
 
   private async insertBelief(
     userId: string,
-    sessionId: string,
-    turnId: string,
     sourceModel: string,
     nb: NewBelief,
     agentId: string | null,
+    tokenId: string,
+    tokenName: string,
+    tokenKind: "client" | "agent" | "root",
     originContext?: OriginContext | null
   ): Promise<string> {
     const trigger = nb.provenance_hint
@@ -570,6 +562,9 @@ export class BeliefMerger {
     return this.writer.create({
       user_id: userId,
       agent_id: agentId,
+      token_id: tokenId,
+      token_name: tokenName,
+      token_kind: tokenKind,
       type: nb.type as BeliefType,
       subtype: nb.subtype ?? null,
       canonical_name: nb.canonical_name,
@@ -578,8 +573,6 @@ export class BeliefMerger {
       why_it_matters: nb.why_it_matters,
       scope: nb.scope,
       provenance: {
-        session_id: sessionId,
-        turn_id: turnId,
         extracted_at: new Date(),
         source_model: sourceModel
       },
@@ -597,9 +590,7 @@ export class BeliefMerger {
       change_log: [
         {
           changed_at: new Date(),
-          trigger,
-          changed_by_session: sessionId,
-          changed_by_turn: turnId
+          trigger
         }
       ]
     });
@@ -607,18 +598,22 @@ export class BeliefMerger {
 
   private async insertOpenQuestion(
     userId: string,
-    sessionId: string,
-    turnId: string,
     sourceModel: string,
     canonicalName: string,
     content: string,
     scope: string[],
     agentId: string | null,
+    tokenId: string,
+    tokenName: string,
+    tokenKind: "client" | "agent" | "root",
     originContext?: OriginContext | null
   ): Promise<string> {
     return this.writer.create({
       user_id: userId,
       agent_id: agentId,
+      token_id: tokenId,
+      token_name: tokenName,
+      token_kind: tokenKind,
       type: "open_question",
       subtype: null,
       canonical_name: canonicalName,
@@ -627,8 +622,6 @@ export class BeliefMerger {
       why_it_matters: "",
       scope,
       provenance: {
-        session_id: sessionId,
-        turn_id: turnId,
         extracted_at: new Date(),
         source_model: sourceModel
       },
@@ -640,9 +633,7 @@ export class BeliefMerger {
       change_log: [
         {
           changed_at: new Date(),
-          trigger: "open question extracted",
-          changed_by_session: sessionId,
-          changed_by_turn: turnId
+          trigger: "open question extracted"
         }
       ]
     });

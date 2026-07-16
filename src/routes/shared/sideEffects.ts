@@ -1,5 +1,4 @@
 import type { FastifyBaseLogger } from "fastify";
-import type { Session } from "../../session/manager.js";
 import type { ProviderAdapter } from "../../providers/types.js";
 import type { ContentPart } from "../../providers/types.js";
 import type { ParsedClient } from "../../helpers/clientDetector.js";
@@ -11,7 +10,6 @@ export interface SideEffectInput {
   tokenId: string;
   tokenName: string;
   tokenKind: "client" | "agent" | "root";
-  sessionId: string;
   requestId: string;
   latestUserMessage: string;
   visible: string;
@@ -21,7 +19,6 @@ export interface SideEffectInput {
   scope: string[];
   adapter: ProviderAdapter;
   model: string;
-  session: (Session & { providerId: string; model: string }) | null;
   logger: FastifyBaseLogger;
   extractionEnabled: boolean;
   client: ParsedClient;
@@ -32,9 +29,6 @@ export interface SideEffectInput {
 }
 
 export interface SideEffectDeps {
-  sessions: {
-    touch: (sessionId: string, userId: string) => Promise<void>;
-  };
   jobs: {
     enqueue: (args: {
       userId: string;
@@ -42,7 +36,6 @@ export interface SideEffectDeps {
       tokenId: string;
       tokenName: string;
       tokenKind: "client" | "agent" | "root";
-      sessionId: string;
       requestId: string;
       userMessage: string;
       assistantMessage: string;
@@ -82,7 +75,6 @@ export async function runSideEffects(input: SideEffectInput): Promise<void> {
         tokenId: input.tokenId,
         tokenName: input.tokenName,
         tokenKind: input.tokenKind,
-        sessionId: input.sessionId,
         requestId: input.requestId,
         userMessage: input.latestUserMessage,
         assistantMessage: input.visible,
@@ -99,26 +91,15 @@ export async function runSideEffects(input: SideEffectInput): Promise<void> {
         .processById(jobId)
         .catch((err) =>
           input.logger.warn(
-            { err, jobId, sessionId: input.sessionId },
+            { err, jobId },
             "inline extraction failed — sweep will retry"
           )
         );
     } catch (err) {
       input.logger.error(
-        { err, sessionId: input.sessionId, requestId: input.requestId },
+        { err, requestId: input.requestId },
         "job enqueue failed — turn persisted but extraction will not run"
       );
     }
-  }
-
-  if (input.session) {
-    input.deps.sessions
-      .touch(input.sessionId, input.userId)
-      .catch((err) =>
-        input.logger.warn(
-          { err, sessionId: input.sessionId },
-          "session touch failed"
-        )
-      );
   }
 }

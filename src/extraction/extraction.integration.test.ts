@@ -11,7 +11,6 @@ import type { Belief } from "../types/belief.js";
 const test = anyTest.serial as TestFn<{ env: IntegrationEnv }>;
 
 const USER_ID = "integration-test-user";
-const SESSION_ID = "integration-test-session";
 
 async function retryUntilReady<T>(
   fn: () => Promise<T>,
@@ -68,8 +67,6 @@ function makeJob(overrides: Partial<ExtractionJob> = {}): ExtractionJob {
     status: "pending",
     user_id: USER_ID,
     agent_id: null,
-    session_id: SESSION_ID,
-    turn_id: randomUUID(),
     attempts: 0,
     max_attempts: 3,
     run_after: new Date(Date.now() - 1000),
@@ -102,8 +99,6 @@ function makeBelief(overrides: Partial<Belief> = {}): Belief {
     why_it_matters: "Default reason",
     scope: ["coding"],
     provenance: {
-      session_id: SESSION_ID,
-      turn_id: "seed",
       extracted_at: now,
       source_model: "test"
     },
@@ -541,12 +536,9 @@ test("orientation tax reinforces matching beliefs and stamps the audit record", 
     })
   );
 
-  const turnId = randomUUID();
   await cols.injection_audit.insertOne({
     _id: randomUUID(),
     user_id: USER_ID,
-    request_id: turnId,
-    session_id: SESSION_ID,
     scope: ["coding"],
     injected_beliefs: { pinned_facts: [], relevant_beliefs: [] },
     orientation_tax: false,
@@ -580,7 +572,6 @@ test("orientation tax reinforces matching beliefs and stamps the audit record", 
       source_model: "anthropic:claude-haiku"
     }
   });
-  job.turn_id = turnId;
   await cols.jobs.insertOne(job);
 
   const worker = makeWorker();
@@ -596,7 +587,6 @@ test("orientation tax reinforces matching beliefs and stamps the audit record", 
   t.is(belief!.reinforcement_count, 2);
 
   const audit = await cols.injection_audit.findOne({
-    request_id: turnId,
     user_id: USER_ID
   });
   t.true(audit!.orientation_tax);

@@ -12,7 +12,6 @@ export class InjectionAuditLogger {
 
   async log(params: {
     userId: string;
-    sessionId: string;
     requestId: string;
     userQuery: string;
     expandedQuery: string;
@@ -26,7 +25,6 @@ export class InjectionAuditLogger {
   }): Promise<void> {
     const {
       userId,
-      sessionId,
       requestId,
       userQuery,
       expandedQuery,
@@ -53,7 +51,6 @@ export class InjectionAuditLogger {
     const record: InjectionAuditRecord = {
       _id: randomUUID(),
       user_id: userId,
-      session_id: sessionId,
       request_id: requestId,
       user_query: userQuery.trim().slice(0, 2000),
       expanded_query: expandedQuery.trim().slice(0, 2000),

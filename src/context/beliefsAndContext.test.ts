@@ -47,8 +47,6 @@ function makeBelief(overrides: Partial<Belief> = {}): Belief {
     why_it_matters: "It matters",
     scope: ["global"],
     provenance: {
-      session_id: "seed",
-      turn_id: "seed-turn",
       extracted_at: now,
       source_model: "test"
     },

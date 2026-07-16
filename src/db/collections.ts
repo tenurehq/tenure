@@ -1,6 +1,5 @@
 import type { Collection, Db } from "mongodb";
 import type { Belief, BeliefSuggestion } from "../types/belief.js";
-import type { Session } from "../types/session.js";
 import type { ExtractionJob } from "../types/job.js";
 import type { ErrorLog } from "../types/error.js";
 import type { PersonaDoc } from "../context/personaCache.js";
@@ -43,6 +42,7 @@ export interface TokenDoc {
   name: string;
   user_id: string;
   capabilities: TokenCapability[];
+  active_scope: string[] | null;
   project_scopes: string[] | null;
   encrypted_value?: string | null;
   created_at: Date;
@@ -55,7 +55,6 @@ export interface Collections {
   db: Db;
   beliefs_plain: Collection<Belief>;
   beliefs: Collection<Belief>;
-  sessions: Collection<Session>;
   jobs: Collection<ExtractionJob>;
   errors: Collection<ErrorLog>;
   config: Collection<ConfigDoc>;
@@ -73,7 +72,6 @@ export function getCollections(db: Db, plainDb?: Db): Collections {
     db,
     beliefs_plain: plain.collection<Belief>("beliefs"),
     beliefs: db.collection<Belief>("beliefs"),
-    sessions: db.collection<Session>("sessions"),
     jobs: db.collection<ExtractionJob>("jobs"),
     errors: db.collection<ErrorLog>("errors"),
     config: db.collection<ConfigDoc>("config"),

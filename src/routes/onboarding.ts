@@ -587,7 +587,6 @@ export function registerOnboardingRoutes(
         tokenId,
         tokenName,
         tokenKind,
-        sessionId: `onboarding:${randomUUID()}`,
         sidecarRaw: finalSidecarJson,
         sourceModel: `onboarding:${draft.modelId}`
       });

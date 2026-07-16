@@ -16,8 +16,6 @@ export type EpistemicStatus =
   | "inferred";
 
 export interface Provenance {
-  session_id: string;
-  turn_id: string;
   extracted_at: Date;
   source_model: string;
 }
@@ -28,8 +26,6 @@ export interface ChangeLogEntry {
   previous_content?: string | null;
   previous_epistemic_status?: EpistemicStatus | null;
   previous_confidence?: number | null;
-  changed_by_session?: string | null;
-  changed_by_turn?: string | null;
 }
 
 export type SuggestionStatus = "pending" | "approved" | "rejected";
