@@ -2,7 +2,6 @@ import { Db, MongoClient, type MongoClientOptions } from "mongodb";
 import { existsSync, readFileSync } from "node:fs";
 import { getCollections } from "./db/collections.js";
 import { ensureIndexes, ensureSearchIndexes } from "./db/indexes.js";
-import { SessionManager } from "./session/manager.js";
 import { BeliefsReader } from "./context/beliefsReader.js";
 import { ContextBuilder } from "./context/contextBuilder.js";
 import { ExtractionJobQueue } from "./jobs/queue.js";
@@ -145,7 +144,6 @@ export async function buildApp(config: BootstrapConfig) {
   });
   console.log("App config loaded");
 
-  const sessions = new SessionManager(db);
   const beliefs = new BeliefsReader(cols.beliefs);
   const persona = new PersonaCache(cols.persona_cache);
   const context = new ContextBuilder(beliefs, persona);
@@ -220,7 +218,6 @@ export async function buildApp(config: BootstrapConfig) {
   const server = await buildServer({
     db,
     cols,
-    sessions,
     context,
     providers,
     jobs,

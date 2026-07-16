@@ -7,7 +7,6 @@ export interface TenureExport {
   beliefs: ExportedBelief[];
   runtime_config: ExportedRuntimeConfig;
   persona_cache: ExportedPersonaDoc | null;
-  sessions: ExportedSession[];
   injection_audit: ExportedAuditRecord[];
 }
 
@@ -21,8 +20,6 @@ export interface ExportedBelief {
   why_it_matters: string;
   scope: string[];
   provenance: {
-    session_id: string;
-    turn_id: string;
     extracted_at: string;
     source_model: string;
   };
@@ -37,8 +34,6 @@ export interface ExportedBelief {
   change_log: Array<{
     changed_at: string;
     trigger: string;
-    changed_by_session: string | null;
-    changed_by_turn: string | null;
   }>;
   expertise_domain?: string;
   expertise_depth?: string;
@@ -72,17 +67,4 @@ export interface ExportedPersonaDoc {
   beliefs_hash: string;
   generated_at: string;
   model: string;
-}
-
-export interface ExportedSession {
-  _id: string;
-  userId: string;
-  type: string;
-  providerId: string | null;
-  model: string | null;
-  activeScope: string[];
-  agentId?: string | null;
-  turnCounter: number;
-  createdAt: string;
-  lastUsedAt: string;
 }

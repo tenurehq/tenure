@@ -5,7 +5,6 @@ import sinon from "sinon";
 
 import { buildServer, type ServerDeps } from "./server.js";
 import { getCollections } from "./db/collections.js";
-import { SessionManager } from "./session/manager.js";
 import { ContextBuilder } from "./context/contextBuilder.js";
 import { ProviderRegistry } from "./providers/registry.js";
 import { ExtractionJobQueue } from "./jobs/queue.js";
@@ -52,6 +51,7 @@ function makeTokenDoc(overrides: Record<string, unknown> = {}) {
     name: "Test Token",
     kind: "root",
     capabilities: ["admin"],
+    active_scope: null,
     project_scopes: null,
     token_prefix: "mp_",
     token_hash: "hash",
@@ -77,7 +77,13 @@ function makeDeps(overrides: Partial<ServerDeps> = {}): ServerDeps {
             kind: "client",
             name: "Client Token",
             token_prefix: "pat_",
-            capabilities: ["chat", "beliefs:read", "beliefs:write", "extraction", "injection"]
+            capabilities: [
+              "chat",
+              "beliefs:read",
+              "beliefs:write",
+              "extraction",
+              "injection"
+            ]
           })
         };
       }
@@ -98,13 +104,14 @@ function makeDeps(overrides: Partial<ServerDeps> = {}): ServerDeps {
     listTokens: sinon.stub().resolves([]),
     issueToken: sinon.stub(),
     revokeToken: sinon.stub(),
-    revokeAllForUser: sinon.stub()
+    revokeAllForUser: sinon.stub(),
+    getActiveScope: sinon.stub().resolves(null),
+    setActiveScope: sinon.stub().resolves()
   } as unknown as TokenService;
 
   return {
     db,
     cols,
-    sessions: new SessionManager(db),
     context: new ContextBuilder(
       {
         listByScope: sinon.stub().resolves([]),
@@ -483,7 +490,9 @@ test("successful auth applies token request context and touches token", async (t
     listTokens: sinon.stub().resolves([]),
     issueToken: sinon.stub(),
     revokeToken: sinon.stub(),
-    revokeAllForUser: sinon.stub()
+    revokeAllForUser: sinon.stub(),
+    getActiveScope: sinon.stub().resolves(null),
+    setActiveScope: sinon.stub().resolves()
   } as unknown as TokenService;
 
   const providers = new ProviderRegistry();
@@ -498,8 +507,16 @@ test("successful auth applies token request context and touches token", async (t
   });
 
   t.is(res.statusCode, 200);
-  t.true((tokenService.validate as sinon.SinonStub).calledOnceWithExactly(CLIENT_TOKEN));
-  t.true((tokenService.touch as sinon.SinonStub).calledOnceWithExactly("client-token-id"));
+  t.true(
+    (tokenService.validate as sinon.SinonStub).calledOnceWithExactly(
+      CLIENT_TOKEN
+    )
+  );
+  t.true(
+    (tokenService.touch as sinon.SinonStub).calledOnceWithExactly(
+      "client-token-id"
+    )
+  );
 });
 
 test("POST /v1/chat/completions returns 403 when token lacks chat capability", async (t) => {
@@ -516,7 +533,9 @@ test("POST /v1/chat/completions returns 403 when token lacks chat capability", a
     listTokens: sinon.stub().resolves([]),
     issueToken: sinon.stub(),
     revokeToken: sinon.stub(),
-    revokeAllForUser: sinon.stub()
+    revokeAllForUser: sinon.stub(),
+    getActiveScope: sinon.stub().resolves(null),
+    setActiveScope: sinon.stub().resolves()
   } as unknown as TokenService;
 
   const server = await createServer({ tokenService });
@@ -566,7 +585,9 @@ test("GET beliefs route returns 403 when token lacks beliefs:read", async (t) =>
     listTokens: sinon.stub().resolves([]),
     issueToken: sinon.stub(),
     revokeToken: sinon.stub(),
-    revokeAllForUser: sinon.stub()
+    revokeAllForUser: sinon.stub(),
+    getActiveScope: sinon.stub().resolves(null),
+    setActiveScope: sinon.stub().resolves()
   } as unknown as TokenService;
 
   const server = await createServer({ tokenService });
@@ -617,7 +638,9 @@ test("POST beliefs route returns 403 when client token lacks beliefs:write", asy
     listTokens: sinon.stub().resolves([]),
     issueToken: sinon.stub(),
     revokeToken: sinon.stub(),
-    revokeAllForUser: sinon.stub()
+    revokeAllForUser: sinon.stub(),
+    getActiveScope: sinon.stub().resolves(null),
+    setActiveScope: sinon.stub().resolves()
   } as unknown as TokenService;
 
   const server = await createServer({ tokenService });

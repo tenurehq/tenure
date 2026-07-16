@@ -189,7 +189,7 @@ test("call() forwards temperature when provided", async (t) => {
   t.is(params.temperature, 0.8);
 });
 
-test("call() uses max_tokens from request or defaults to 120000", async (t) => {
+test("call() uses max_tokens from request or defaults to 8192", async (t) => {
   const adapter = new AnthropicAdapter("key");
   const createStub = stubCreate(adapter).resolves(MOCK_RESPONSE);
 
@@ -199,7 +199,7 @@ test("call() uses max_tokens from request or defaults to 120000", async (t) => {
   createStub.resetHistory();
   createStub.resolves(MOCK_RESPONSE);
   await adapter.call(BASE_REQ, "");
-  t.is((createStub.firstCall.args[0] as any).max_tokens, 120000);
+  t.is((createStub.firstCall.args[0] as any).max_tokens, 8192);
 });
 
 test("call() passes native Anthropic tools through verbatim", async (t) => {

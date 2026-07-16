@@ -94,6 +94,14 @@ export class AnthropicAdapter implements ProviderAdapter {
       let currentToolIndex = -1;
 
       for await (const event of stream) {
+        if (event.type === "message_start") {
+          yield {
+            type: "message_start",
+            model: event.message.model,
+            input_tokens: event.message.usage.input_tokens
+          };
+        }
+
         if (
           event.type === "content_block_delta" &&
           event.delta.type === "text_delta"
@@ -251,7 +259,7 @@ export class AnthropicAdapter implements ProviderAdapter {
     return {
       model: req.model,
       messages: conversation,
-      max_tokens: req.max_tokens ?? 120000,
+      max_tokens: req.max_tokens ?? 8192,
       ...(system !== undefined ? { system } : {}),
       ...(req.temperature !== undefined
         ? { temperature: req.temperature }

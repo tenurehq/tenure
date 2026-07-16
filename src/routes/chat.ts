@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyBaseLogger } from "fastify";
 import type { ServerResponse } from "node:http";
-import { SessionManager, type Session } from "../session/manager.js";
 import { splitSidecar, SIDECAR_BEGIN } from "../sidecar/splitter.js";
 import { ContextBuilder, EMPTY_CONTEXT } from "../context/contextBuilder.js";
 import {
@@ -12,16 +11,9 @@ import { ExtractionJobQueue } from "../jobs/queue.js";
 import type { ContentPart, Message, SystemPrompt } from "../providers/types.js";
 import type { OpenAIAdapter } from "../providers/openai.js";
 import { extractLatestUserText, extractText } from "../helpers/content.js";
-import { deriveSessionId } from "../session/derivation.js";
 import { checkModelTier, listSupportedFamilies } from "../providers/tiers.js";
 import type { ExtractionWorkerLike } from "../extraction/worker.js";
 import type { RuntimeConfigStore } from "../config/runtime.js";
-import {
-  tryInterceptScopeCommand,
-  tryInterceptExtractCommand,
-  tryInterceptInjectCommand,
-  tryInterceptSessionCommand
-} from "../helpers/scopeDetector.js";
 import type { ErrorLogger } from "../errors/logger.js";
 import { parseClient, type ParsedClient } from "../helpers/clientDetector.js";
 import type { WorkspaceStateCache } from "../workspace/stateCache.js";
@@ -29,9 +21,13 @@ import { buildSystemPrompt } from "../context/systemPromptBuilder.js";
 import { runSideEffects } from "./shared/sideEffects.js";
 import type { InjectionAuditLogger } from "../audit/injectionAuditLogger.js";
 import { assertTokenProjectScopes } from "../server.js";
+import {
+  tryInterceptScopeCommand,
+  tryInterceptExtractCommand,
+  tryInterceptInjectCommand
+} from "../helpers/scopeDetector.js";
 
 export interface ChatDeps {
-  sessions: SessionManager;
   context: ContextBuilder;
   providers: ProviderRegistry;
   jobs: ExtractionJobQueue;
@@ -40,16 +36,14 @@ export interface ChatDeps {
   errorLogger: ErrorLogger;
   workspaceState?: WorkspaceStateCache;
   injectionAudit?: InjectionAuditLogger;
-}
-
-interface ResolveScopeArgs {
-  ocAgentId: string | undefined;
-  sessionScope: string[];
-  session: (Session & { providerId: string; model: string }) | null;
-  sessionId: string;
-  userId: string;
-  deps: ChatDeps;
-  logger: FastifyBaseLogger;
+  tokenScopes: {
+    getActiveScope(userId: string, tokenId: string): Promise<string[] | null>;
+    setActiveScope(
+      userId: string,
+      tokenId: string,
+      scope: string[]
+    ): Promise<void>;
+  };
 }
 
 interface ChatBody {
@@ -65,7 +59,7 @@ interface ChatBody {
   temperature?: number;
   max_tokens?: number;
   user?: string;
-  metadata?: { session_id?: string; scope?: string[] };
+  metadata?: { scope?: string[] };
   [key: string]: unknown;
 }
 
@@ -135,53 +129,61 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       ...(max_tokens !== undefined && { max_tokens })
     };
 
-    let sessionId: string;
-    try {
-      sessionId =
-        metadata?.session_id ??
-        (req.headers["x-session-id"] as string | undefined) ??
-        deriveSessionId(messages as Message[], userId, undefined);
-    } catch (err) {
-      req.log.warn({ err }, "session derivation failed — using random UUID");
-      sessionId = randomUUID();
-    }
-
-    let ocAgentId =
+    const requestId = randomUUID();
+    const ocAgentId =
       (req.headers["x-agent-id"] as string | undefined)?.trim().toLowerCase() ||
       undefined;
-
-    let session: (Session & { providerId: string; model: string }) | null =
-      null;
-    try {
-      const raw = await deps.sessions.getOrCreate(sessionId, userId);
-      const needsBind =
-        !raw.providerId || !raw.model || raw.model !== requestedModel;
-
-      if (needsBind) {
-        const updated = await deps.sessions.update(sessionId, userId, {
-          providerId: adapter.id,
-          model: requestedModel
-        });
-        if (updated?.providerId && updated?.model) {
-          session = updated as Session & { providerId: string; model: string };
-        }
-      } else {
-        session = raw as Session & { providerId: string; model: string };
-      }
-    } catch (err) {
-      req.log.warn(
-        { err, sessionId },
-        "session load failed — proceeding without session"
-      );
+    if (!req.tenureTokenId) {
+      return reply.code(401).send({ error: { message: "unauthorized" } });
     }
 
-    let scope = metadata?.scope?.length
-      ? metadata.scope
-      : (session?.activeScope ?? []);
+    const explicitScope = resolveExplicitScope(
+      metadata?.scope,
+      req.headers["x-tenure-scope"]
+    );
 
-    const requestId = randomUUID();
     const rawContent: string | ContentPart[] = messages.at(-1)?.content ?? "";
     const latestUserMessage = extractLatestUserText(messages);
+
+    const scopeCommand = await tryInterceptScopeCommand(
+      latestUserMessage,
+      userId,
+      req.tenureTokenId,
+      req.tenureTokenProjectScopes,
+      deps.tokenScopes,
+      req.log
+    );
+    const extractCommand = await tryInterceptExtractCommand(
+      latestUserMessage,
+      deps.runtimeStore,
+      req.log
+    );
+    const injectCommand = await tryInterceptInjectCommand(
+      latestUserMessage,
+      deps.runtimeStore,
+      req.log
+    );
+    const commandMessage =
+      scopeCommand?.message ??
+      extractCommand?.message ??
+      injectCommand?.message;
+
+    if (commandMessage) {
+      return reply.send({
+        id: `chatcmpl-${requestId}`,
+        object: "chat.completion",
+        created: Math.floor(Date.now() / 1000),
+        model: requestedModel,
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: commandMessage },
+            finish_reason: "stop"
+          }
+        ],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+      });
+    }
 
     const cfg = await deps.runtimeStore.load().catch(() => ({
       extraction_enabled: true,
@@ -190,168 +192,6 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
     }));
 
     const client = parseClient(req.headers["user-agent"] as string | undefined);
-
-    const rawContentText =
-      typeof rawContent === "string" ? rawContent : extractText(rawContent);
-
-    const sessionIntercepted = await tryInterceptSessionCommand(
-      rawContentText,
-      userId,
-      deps,
-      req.log
-    );
-
-    if (sessionIntercepted) {
-      sessionId = sessionIntercepted.sessionId;
-      ocAgentId = sessionIntercepted.agentId;
-      try {
-        const raw = await deps.sessions.getOrCreate(sessionId, userId);
-        const needsBind =
-          !raw.providerId || !raw.model || raw.model !== requestedModel;
-        if (needsBind) {
-          const updated = await deps.sessions.update(sessionId, userId, {
-            providerId: adapter.id,
-            model: requestedModel
-          });
-          if (updated?.providerId && updated?.model) {
-            session = updated as Session & {
-              providerId: string;
-              model: string;
-            };
-          }
-        } else {
-          session = raw as Session & { providerId: string; model: string };
-        }
-      } catch (err) {
-        req.log.warn(
-          { err, sessionId },
-          "session reload after !session failed"
-        );
-      }
-    }
-
-    const intercepted = await tryInterceptScopeCommand(
-      rawContentText,
-      sessionId,
-      userId,
-      deps,
-      req.log
-    );
-
-    if (intercepted) {
-      if (tierWarning) reply.header("x-tenure-warning", tierWarning);
-      return reply.send({
-        id: `chatcmpl-${requestId}`,
-        object: "chat.completion",
-        created: Math.floor(Date.now() / 1000),
-        model: requestedModel,
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: intercepted.message },
-            finish_reason: "stop"
-          }
-        ],
-        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-        tenure: {
-          session_id: sessionId,
-          request_id: requestId,
-          scope: intercepted.newScope,
-          parse_status: "missing",
-          degraded: false,
-          context: { beliefs: 0, questions: 0, compacted_turns: 0 }
-        }
-      });
-    }
-
-    const extractIntercepted = await tryInterceptExtractCommand(
-      rawContentText,
-      sessionId,
-      userId,
-      { sessions: deps.sessions, runtimeStore: deps.runtimeStore },
-      req.log
-    );
-
-    if (extractIntercepted) {
-      if (tierWarning) reply.header("x-tenure-warning", tierWarning);
-      return reply.send({
-        id: `chatcmpl-${requestId}`,
-        object: "chat.completion",
-        created: Math.floor(Date.now() / 1000),
-        model: requestedModel,
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: extractIntercepted.message },
-            finish_reason: "stop"
-          }
-        ],
-        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-        tenure: {
-          session_id: sessionId,
-          request_id: requestId,
-          scope,
-          parse_status: "missing",
-          degraded: false,
-          context: { beliefs: 0, questions: 0, compacted_turns: 0 }
-        }
-      });
-    }
-
-    const injectIntercepted = await tryInterceptInjectCommand(
-      rawContentText,
-      sessionId,
-      userId,
-      { sessions: deps.sessions, runtimeStore: deps.runtimeStore },
-      req.log
-    );
-
-    if (injectIntercepted) {
-      if (tierWarning) reply.header("x-tenure-warning", tierWarning);
-      return reply.send({
-        id: `chatcmpl-${requestId}`,
-        object: "chat.completion",
-        created: Math.floor(Date.now() / 1000),
-        model: requestedModel,
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: injectIntercepted.message },
-            finish_reason: "stop"
-          }
-        ],
-        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-        tenure: {
-          session_id: sessionId,
-          request_id: requestId,
-          scope,
-          parse_status: "missing",
-          degraded: false,
-          context: { beliefs: 0, questions: 0, compacted_turns: 0 }
-        }
-      });
-    }
-
-    scope = await resolveScope({
-      ocAgentId,
-      sessionScope: scope,
-      session,
-      sessionId,
-      userId,
-      deps,
-      logger: req.log
-    });
-
-    const scopeCheck = assertTokenProjectScopes(req, scope);
-    if (!scopeCheck.ok) {
-      return reply.code(403).send({
-        error: {
-          message: scopeCheck.message,
-          token_project_scopes: req.tenureTokenProjectScopes ?? null,
-          requested_scope: scope
-        }
-      });
-    }
 
     const noExtractHeader =
       req.headers["x-tenure-no-extract"] === "true" ||
@@ -369,17 +209,40 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
 
     const extractionEnabled =
       cfg.extraction_enabled !== false &&
-      session?.extractionPaused !== true &&
+      req.tenureTokenExtractionEnabled !== false &&
       !noExtractHeader &&
       !bootstrapInProgress &&
       (isIdeTurn ? ideExtractionEnabled : true);
 
     const injectionEnabled =
       cfg.injection_enabled !== false &&
-      session?.injectionPaused !== true &&
+      req.tenureTokenInjectionEnabled !== false &&
       !bootstrapInProgress;
 
     const extractionMode: "standard" | "ide" = isIdeTurn ? "ide" : "standard";
+
+    const scopeResolution = await resolveTurnScope({
+      tokenId: req.tenureTokenId,
+      explicitScope,
+      tokenProjectScopes: req.tenureTokenProjectScopes,
+      isIdeTurn,
+      userId,
+      headers: req.headers,
+      deps
+    });
+    const scope = scopeResolution.scope;
+    const ideScope = scopeResolution.ideScope;
+
+    const scopeCheck = assertTokenProjectScopes(req, scope);
+    if (!scopeCheck.ok) {
+      return reply.code(403).send({
+        error: {
+          message: scopeCheck.message,
+          token_project_scopes: req.tenureTokenProjectScopes ?? null,
+          requested_scope: scope
+        }
+      });
+    }
 
     const agentId = ocAgentId && ocAgentId !== "main" ? ocAgentId : null;
 
@@ -397,40 +260,6 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
         : typeof incomingSystem === "string"
           ? incomingSystem
           : extractText(incomingSystem);
-
-    let ideScope: {
-      projectScope: string | null;
-      languageScope: string | null;
-    } | null = null;
-
-    if (isIdeTurn) {
-      const headerProject = req.headers["x-tenure-project"] as
-        | string
-        | undefined;
-      const headerLanguage = req.headers["x-tenure-language"] as
-        | string
-        | undefined;
-
-      ideScope = {
-        projectScope: headerProject
-          ? `project:${headerProject
-              .toLowerCase()
-              .replace(/[^a-z0-9-]/g, "-")
-              .replace(/-+/g, "-")
-              .replace(/^-|-$/g, "")}`
-          : null,
-        languageScope: headerLanguage
-          ? `domain:code/${headerLanguage.toLowerCase()}`
-          : null
-      };
-
-      if (!ideScope.projectScope && deps.workspaceState) {
-        ideScope.projectScope = deps.workspaceState.resolveProjectScope(userId);
-        ideScope.languageScope =
-          ideScope.languageScope ??
-          deps.workspaceState.resolveLanguageScope(userId);
-      }
-    }
 
     let systemPrompt: SystemPrompt;
     try {
@@ -455,7 +284,6 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
     if (deps.injectionAudit && beliefCtx.beliefCount > 0) {
       deps.injectionAudit.log({
         userId,
-        sessionId,
         requestId,
         userQuery: latestUserMessage,
         expandedQuery: beliefCtx.expandedQuery,
@@ -486,7 +314,6 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
         adapterBody,
         {
           requestId,
-          sessionId,
           userId,
           tokenId: req.tenureTokenId ?? "root",
           tokenName: req.tenureTokenName ?? "",
@@ -496,9 +323,10 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
           rawContent,
           scope,
           deps,
-          session,
           adapter,
-          tierWarning,
+          tierWarning: scopeResolution.usedUniversalFallback
+            ? "No project scope is selected; using user:universal only."
+            : tierWarning,
           logger: req.log,
           extractionEnabled,
           client,
@@ -530,7 +358,6 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
           error: e instanceof Error ? e : new Error(reason),
           user_id: userId,
           actor_id: userId,
-          session_id: sessionId,
           request_id: requestId,
           provider: adapter.id,
           model: requestedModel,
@@ -548,7 +375,10 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       providerResp.content ?? ""
     );
 
-    if (tierWarning) reply.header("x-tenure-warning", tierWarning);
+    const warning = scopeResolution.usedUniversalFallback
+      ? "No project scope is selected; using user:universal only."
+      : tierWarning;
+    if (warning) reply.header("x-tenure-warning", warning);
 
     const messagePayload: Record<string, unknown> = {
       role: "assistant",
@@ -583,10 +413,10 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
         throw new Error("missing token attribution for side effects");
       }
 
-      runSideEffects({
+      await runSideEffects({
         deps,
         userId,
-        sessionId,
+        agentId,
         requestId,
         latestUserMessage,
         visible,
@@ -596,11 +426,9 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
         scope,
         adapter,
         model: providerResp.model,
-        session,
         logger: req.log,
         extractionEnabled,
         client,
-        agentId,
         tokenId: req.tenureTokenId,
         tokenName: req.tenureTokenName ?? "",
         tokenKind: req.tenureTokenKind,
@@ -611,7 +439,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       });
     } catch (err) {
       req.log.error(
-        { err, sessionId, requestId },
+        { err, requestId },
         "side effects failed — response still delivered"
       );
     }
@@ -620,7 +448,6 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
 
 interface StreamingCtx {
   requestId: string;
-  sessionId: string;
   userId: string;
   tokenId: string;
   tokenName: string;
@@ -630,7 +457,6 @@ interface StreamingCtx {
   rawContent: string | ContentPart[];
   scope: string[];
   deps: ChatDeps;
-  session: (Session & { providerId: string; model: string }) | null;
   adapter: OpenAIAdapter;
   tierWarning: string | null;
   logger: FastifyBaseLogger;
@@ -673,7 +499,7 @@ async function handleStreamingResponse(
   let streamFinishReason = "stop";
   let streamUsage = { input_tokens: 0, output_tokens: 0 };
 
-  writeSSE(raw, {
+  await writeSSE(raw, {
     id: sseId,
     object: "chat.completion.chunk",
     created: ts(),
@@ -692,7 +518,7 @@ async function handleStreamingResponse(
 
   const heartbeat = setInterval(() => {
     if (!raw.writableEnded && !abortController.signal.aborted) {
-      raw.write(": keep-alive\n\n");
+      if (!raw.writableNeedDrain) raw.write(": keep-alive\n\n");
     }
   }, 15_000);
 
@@ -713,6 +539,39 @@ async function handleStreamingResponse(
         continue;
       }
 
+      if (event.type === "tool_call_delta") {
+        await writeSSE(raw, {
+          id: sseId,
+          object: "chat.completion.chunk",
+          created: ts(),
+          model: resolvedModel,
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: event.toolCallIndex,
+                    ...(event.toolCallId !== undefined && {
+                      id: event.toolCallId,
+                      type: "function"
+                    }),
+                    function: {
+                      ...(event.toolCallName !== undefined && {
+                        name: event.toolCallName
+                      }),
+                      arguments: event.toolCallArguments
+                    }
+                  }
+                ]
+              },
+              finish_reason: null
+            }
+          ]
+        });
+        continue;
+      }
+
       if (event.type !== "content_delta") {
         continue;
       }
@@ -724,7 +583,7 @@ async function handleStreamingResponse(
       if (markerIdx !== -1) {
         const remaining = fullContent.slice(flushedIdx, markerIdx);
         if (remaining) {
-          writeSSE(raw, {
+          await writeSSE(raw, {
             id: sseId,
             object: "chat.completion.chunk",
             created: ts(),
@@ -743,7 +602,7 @@ async function handleStreamingResponse(
       } else {
         const safeEnd = fullContent.length - HOLDBACK;
         if (safeEnd > flushedIdx) {
-          writeSSE(raw, {
+          await writeSSE(raw, {
             id: sseId,
             object: "chat.completion.chunk",
             created: ts(),
@@ -776,7 +635,6 @@ async function handleStreamingResponse(
         error: err instanceof Error ? err : new Error(message),
         user_id: ctx.userId,
         actor_id: ctx.userId,
-        session_id: ctx.sessionId,
         request_id: ctx.requestId,
         provider: ctx.adapter.id,
         model: ctx.requestedModel,
@@ -788,7 +646,6 @@ async function handleStreamingResponse(
     ctx.logger.error(
       {
         err,
-        sessionId: ctx.sessionId,
         requestId: ctx.requestId,
         userId: ctx.userId,
         partialContent: fullContent,
@@ -796,7 +653,7 @@ async function handleStreamingResponse(
       },
       "streaming provider error — no turn persisted"
     );
-    writeSSE(raw, { error: { message, type: "provider_error" } });
+    await writeSSE(raw, { error: { message, type: "provider_error" } });
     raw.write("data: [DONE]\n\n");
     raw.end();
     return;
@@ -810,7 +667,7 @@ async function handleStreamingResponse(
   }
 
   if (!sidecarDetected && flushedIdx < fullContent.length) {
-    writeSSE(raw, {
+    await writeSSE(raw, {
       id: sseId,
       object: "chat.completion.chunk",
       created: ts(),
@@ -825,7 +682,7 @@ async function handleStreamingResponse(
     });
   }
 
-  writeSSE(raw, {
+  await writeSSE(raw, {
     id: sseId,
     object: "chat.completion.chunk",
     created: ts(),
@@ -843,14 +700,13 @@ async function handleStreamingResponse(
 
   const { visible, sidecarRaw, parseStatus } = splitSidecar(fullContent);
 
-  runSideEffects({
+  await runSideEffects({
     deps: ctx.deps,
     userId: ctx.userId,
     agentId: ctx.agentId,
     tokenId: ctx.tokenId,
     tokenName: ctx.tokenName,
     tokenKind: ctx.tokenKind,
-    sessionId: ctx.sessionId,
     requestId: ctx.requestId,
     latestUserMessage: ctx.latestUserMessage,
     visible,
@@ -860,7 +716,6 @@ async function handleStreamingResponse(
     scope: ctx.scope,
     adapter: ctx.adapter,
     model,
-    session: ctx.session,
     logger: ctx.logger,
     extractionEnabled: ctx.extractionEnabled,
     client: ctx.client,
@@ -884,20 +739,140 @@ function ts(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-async function resolveScope(args: ResolveScopeArgs): Promise<string[]> {
-  const { ocAgentId, sessionScope, session, sessionId, userId, deps, logger } =
-    args;
+function resolveExplicitScope(
+  bodyScope: string[] | undefined,
+  headerScope: string | string[] | undefined
+): string[] {
+  const values = bodyScope?.length
+    ? bodyScope
+    : typeof headerScope === "string"
+      ? headerScope.split(",")
+      : Array.isArray(headerScope)
+        ? headerScope.flatMap((value) => value.split(","))
+        : [];
 
-  if (ocAgentId && ocAgentId !== "main") {
-    const currentAgentId = (session as any)?.agentId;
-    if (currentAgentId !== ocAgentId) {
-      await deps.sessions
-        .update(sessionId, userId, { agentId: ocAgentId })
-        .catch((err) =>
-          logger.warn({ err, sessionId }, "agent id persist failed")
-        );
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+export async function resolveTurnScope(args: {
+  tokenId: string;
+  explicitScope: string[];
+  tokenProjectScopes: string[] | null | undefined;
+  isIdeTurn: boolean;
+  userId: string;
+  headers: { [key: string]: string | string[] | undefined };
+  deps: ChatDeps;
+}): Promise<{
+  scope: string[];
+  ideScope: {
+    projectScope: string | null;
+    languageScope: string | null;
+  } | null;
+  usedUniversalFallback: boolean;
+}> {
+  if (args.isIdeTurn) {
+    const projectHeader = readHeader(args.headers["x-tenure-project"]);
+    const languageHeader = readHeader(args.headers["x-tenure-language"]);
+    const projectScope = projectHeader
+      ? normalizeProjectScope(projectHeader)
+      : (args.deps.workspaceState?.resolveProjectScope(args.userId) ?? null);
+    const languageScope = languageHeader
+      ? `domain:code/${languageHeader.toLowerCase()}`
+      : (args.deps.workspaceState?.resolveLanguageScope(args.userId) ?? null);
+
+    if (!projectScope) {
+      throw Object.assign(
+        new Error("IDE mode requires a resolved project scope"),
+        {
+          statusCode: 400
+        }
+      );
     }
+
+    const scope = [projectScope, ...(languageScope ? [languageScope] : [])];
+    assertAllowedScope(args.tokenProjectScopes, scope);
+    await args.deps.tokenScopes.setActiveScope(
+      args.userId,
+      args.tokenId,
+      scope
+    );
+    return {
+      scope,
+      ideScope: { projectScope, languageScope },
+      usedUniversalFallback: false
+    };
   }
 
-  return sessionScope;
+  if (args.explicitScope.length > 0) {
+    assertAllowedScope(args.tokenProjectScopes, args.explicitScope);
+    await args.deps.tokenScopes.setActiveScope(
+      args.userId,
+      args.tokenId,
+      args.explicitScope
+    );
+    return {
+      scope: args.explicitScope,
+      ideScope: null,
+      usedUniversalFallback: false
+    };
+  }
+
+  const activeScope = await args.deps.tokenScopes.getActiveScope(
+    args.userId,
+    args.tokenId
+  );
+  if (activeScope?.length) {
+    assertAllowedScope(args.tokenProjectScopes, activeScope);
+    return { scope: activeScope, ideScope: null, usedUniversalFallback: false };
+  }
+
+  if (args.tokenProjectScopes?.length === 1) {
+    const scope = [args.tokenProjectScopes[0]];
+    await args.deps.tokenScopes.setActiveScope(
+      args.userId,
+      args.tokenId,
+      scope
+    );
+    return { scope, ideScope: null, usedUniversalFallback: false };
+  }
+
+  return {
+    scope: ["user:universal"],
+    ideScope: null,
+    usedUniversalFallback: true
+  };
+}
+
+function readHeader(value: string | string[] | undefined): string | undefined {
+  const first = Array.isArray(value) ? value[0] : value;
+  return first?.trim() || undefined;
+}
+
+function normalizeProjectScope(value: string): string {
+  const raw = value.startsWith("project:") ? value.slice(8) : value;
+  const normalized = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `project:${normalized}`;
+}
+
+function assertAllowedScope(
+  allowed: string[] | null | undefined,
+  scope: string[]
+): void {
+  if (allowed == null) return;
+  if (
+    scope.some(
+      (value) => value.startsWith("project:") && !allowed.includes(value)
+    )
+  ) {
+    throw Object.assign(
+      new Error(
+        "Token is not authorized for one or more requested project scopes"
+      ),
+      { statusCode: 403 }
+    );
+  }
 }

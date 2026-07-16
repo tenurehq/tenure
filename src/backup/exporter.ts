@@ -32,12 +32,11 @@ export class BackupExporter {
   private async buildPayload(): Promise<TenureExport> {
     const { db, runtimeStore, userId } = this.deps;
 
-    const [beliefs, runtimeConfig, personaDoc, sessions, auditRecords] =
+    const [beliefs, runtimeConfig, personaDoc, auditRecords] =
       await Promise.all([
         db.collection<Belief>("beliefs").find({ user_id: userId }).toArray(),
         runtimeStore.load(),
         db.collection<PersonaDoc>("persona_cache").findOne({ _id: userId }),
-        db.collection("sessions").find({ userId }).toArray(),
         db
           .collection<InjectionAuditRecord>("injection_audit")
           .find({ user_id: userId })
@@ -64,20 +63,6 @@ export class BackupExporter {
         ide_extraction_enabled: runtimeConfig.ide_extraction_enabled
       },
       persona_cache: personaDoc ? this.serializePersona(personaDoc) : null,
-      sessions: sessions.map((s) => ({
-        _id: s._id.toString(),
-        userId: s.userId as string,
-        type: (s.type as string) ?? "chat",
-        providerId: (s.providerId as string) ?? null,
-        model: (s.model as string) ?? null,
-        activeScope: (s.activeScope as string[]) ?? [],
-        agentId: (s.agentId as string) ?? null,
-        turnCounter: (s.turnCounter as number) ?? 0,
-        createdAt:
-          (s.createdAt as Date)?.toISOString() ?? new Date().toISOString(),
-        lastUsedAt:
-          (s.lastUsedAt as Date)?.toISOString() ?? new Date().toISOString()
-      })),
       injection_audit: auditRecords.map((r) => ({
         ...r,
         created_at: r.created_at.toISOString()
@@ -96,8 +81,6 @@ export class BackupExporter {
       why_it_matters: b.why_it_matters,
       scope: b.scope,
       provenance: {
-        session_id: b.provenance.session_id,
-        turn_id: b.provenance.turn_id,
         extracted_at: b.provenance.extracted_at.toISOString(),
         source_model: b.provenance.source_model
       },
@@ -111,9 +94,7 @@ export class BackupExporter {
       resolved_at: b.resolved_at?.toISOString() ?? null,
       change_log: b.change_log.map((entry) => ({
         changed_at: entry.changed_at.toISOString(),
-        trigger: entry.trigger,
-        changed_by_session: entry.changed_by_session ?? null,
-        changed_by_turn: entry.changed_by_turn ?? null
+        trigger: entry.trigger
       })),
       ...(b.expertise_domain && { expertise_domain: b.expertise_domain }),
       ...(b.expertise_depth && { expertise_depth: b.expertise_depth }),

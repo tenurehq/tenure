@@ -8,7 +8,6 @@ export interface EnqueueParams {
   tokenId: string;
   tokenName: string;
   tokenKind: JobTokenKind;
-  sessionId: string;
   requestId: string;
   userMessage: string;
   assistantMessage: string;
@@ -30,7 +29,6 @@ export interface EnqueueOnboardingParams {
   tokenId: string;
   tokenName: string;
   tokenKind: JobTokenKind;
-  sessionId: string;
   sidecarRaw: string;
   sourceModel: string;
 }
@@ -59,8 +57,7 @@ export class ExtractionJobQueue {
       _id: randomUUID(),
       type: "extract_beliefs",
       user_id: params.userId,
-      session_id: params.sessionId,
-      turn_id: params.requestId,
+      request_id: params.requestId,
       agent_id: params.agentId ?? null,
       token_id: params.tokenId,
       token_name: params.tokenName,
@@ -101,12 +98,11 @@ export class ExtractionJobQueue {
       _id: randomUUID(),
       type: "onboarding_extraction",
       user_id: params.userId,
+      request_id: randomUUID(),
       agent_id: null,
       token_id: params.tokenId,
       token_name: params.tokenName,
       token_kind: params.tokenKind,
-      session_id: params.sessionId,
-      turn_id: "",
       status: "pending",
       attempts: 0,
       max_attempts: 3,
@@ -134,12 +130,11 @@ export class ExtractionJobQueue {
       _id: randomUUID(),
       type: "import_extraction",
       user_id: params.userId,
+      request_id: randomUUID(),
       agent_id: null,
       token_id: params.tokenId,
       token_name: params.tokenName,
       token_kind: params.tokenKind,
-      session_id: `import_${Date.now()}`,
-      turn_id: "",
       status: "pending",
       attempts: 0,
       max_attempts: 3,

@@ -1,4 +1,4 @@
-import type { Collection, ResumeToken } from "mongodb";
+import type { ChangeStream, Collection, ResumeToken } from "mongodb";
 import type { Belief } from "../types/belief.js";
 import { redactForClient, registry } from "../routes/beliefs-ws.js";
 
@@ -12,6 +12,8 @@ export function startBeliefChangeStream(
   let stopped = false;
   let resumeToken: ResumeToken | undefined;
   let attempt = 0;
+  let activeStream: ChangeStream<Belief> | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   function open(): void {
     if (stopped) return;
@@ -27,10 +29,13 @@ export function startBeliefChangeStream(
       }
     ];
 
+    retryTimer = null;
     const stream = col.watch(pipeline, {
       fullDocument: "updateLookup",
       ...(resumeToken ? { resumeAfter: resumeToken } : {})
     });
+
+    activeStream = stream;
 
     stream.on("change", async (event) => {
       resumeToken = event._id;
@@ -74,25 +79,34 @@ export function startBeliefChangeStream(
 
     stream.on("error", (err) => {
       console.error("[BeliefChangeStream] error, will retry:", err.message);
+      if (activeStream === stream) activeStream = null;
       stream.close().catch(() => {});
       scheduleReopen();
     });
 
     stream.on("close", () => {
+      if (activeStream === stream) activeStream = null;
       scheduleReopen();
     });
   }
 
   function scheduleReopen(): void {
-    if (stopped) return;
+    if (stopped || retryTimer) return;
     const delay = Math.min(BASE_RETRY_MS * Math.pow(2, attempt), MAX_RETRY_MS);
     attempt++;
-    setTimeout(open, delay);
+    retryTimer = setTimeout(open, delay);
   }
 
   open();
 
   return () => {
     stopped = true;
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+    const stream = activeStream;
+    activeStream = null;
+    if (stream) stream.close().catch(() => {});
   };
 }

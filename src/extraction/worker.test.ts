@@ -12,7 +12,6 @@ import type { Belief, BeliefType } from "../types/belief.js";
 const test = anyTest.serial as TestFn;
 
 const USER_ID = "extraction-worker-user";
-const SESSION_ID = "extraction-worker-session";
 
 let mongod: MongoMemoryServer;
 let client: MongoClient;
@@ -77,8 +76,6 @@ function makeJob(overrides: Partial<ExtractionJob> = {}): ExtractionJob {
     type: "extract_beliefs" as const,
     status: "pending" as const,
     user_id: USER_ID,
-    session_id: SESSION_ID,
-    turn_id: randomUUID(),
     attempts: 0,
     max_attempts: 3,
     run_after: new Date(Date.now() - 1_000),
@@ -110,8 +107,6 @@ function makeSeededBelief(canonicalName: string): Belief {
     why_it_matters: "Avoids re-explanation next session",
     scope: ["coding"],
     provenance: {
-      session_id: SESSION_ID,
-      turn_id: "seed-turn",
       extracted_at: now,
       source_model: "test"
     },

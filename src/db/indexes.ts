@@ -145,8 +145,6 @@ const SEARCH_INDEXES: SearchIndexMeta[] = [
 ];
 
 export async function ensureIndexes(cols: Collections): Promise<void> {
-  await cols.sessions.createIndexes([{ key: { userId: 1, lastUsedAt: -1 } }]);
-
   const beliefIndexes = await cols.beliefs.indexes();
   const existingCanonicalIndex = beliefIndexes.find(
     (idx) => idx.name === "user_canonical_unique_active"
@@ -196,7 +194,7 @@ export async function ensureIndexes(cols: Collections): Promise<void> {
       key: { status: 1, run_after: 1, created_at: 1 },
       partialFilterExpression: { status: "pending" }
     },
-    { key: { turn_id: 1, status: 1 } },
+    { key: { request_id: 1, status: 1 }, name: "jobs_request_status" },
     {
       key: { completed_at: 1 },
       expireAfterSeconds: 60 * 60 * 24 * 7

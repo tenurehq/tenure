@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Collection } from "mongodb";
+import type { Collection, ClientSession } from "mongodb";
 import type {
   Belief,
   BeliefSubtype,
@@ -32,8 +32,6 @@ export interface CreateBeliefInput {
   why_it_matters: string;
   scope: string[];
   provenance: {
-    session_id: string;
-    turn_id: string;
     extracted_at: Date;
     source_model: string;
   };
@@ -56,6 +54,15 @@ export class BeliefWriter {
 
   async create(input: CreateBeliefInput): Promise<string> {
     const id = randomUUID();
+    await this.insert(input, id);
+    return id;
+  }
+
+  private async insert(
+    input: CreateBeliefInput,
+    id: string,
+    session?: ClientSession
+  ): Promise<void> {
     const now = new Date();
 
     const doc: Belief = {
@@ -97,8 +104,7 @@ export class BeliefWriter {
     };
 
     try {
-      await this.col.insertOne(doc);
-      return id;
+      await this.col.insertOne(doc, session ? { session } : {});
     } catch (e: any) {
       if (e.code === 11000) {
         throw new CanonicalNameConflictError(
@@ -117,9 +123,7 @@ export class BeliefWriter {
   async enrichContent(
     userId: string,
     beliefId: string,
-    appendedContent: string,
-    sessionId: string,
-    turnId: string
+    appendedContent: string
   ): Promise<boolean> {
     const now = new Date();
     const belief = await this.col.findOne({ _id: beliefId, user_id: userId });
@@ -138,9 +142,7 @@ export class BeliefWriter {
           change_log: {
             changed_at: now,
             trigger: `enriched: "${appendedContent}"`,
-            previous_content: belief.content,
-            changed_by_session: sessionId,
-            changed_by_turn: turnId
+            previous_content: belief.content
           }
         }
       }
@@ -148,12 +150,7 @@ export class BeliefWriter {
     return res.modifiedCount === 1;
   }
 
-  async reinforce(
-    userId: string,
-    beliefId: string,
-    sessionId: string,
-    turnId: string
-  ): Promise<void> {
+  async reinforce(userId: string, beliefId: string): Promise<void> {
     const now = new Date();
     await this.col.updateOne(
       { _id: beliefId, user_id: userId },
@@ -163,9 +160,7 @@ export class BeliefWriter {
         $push: {
           change_log: {
             changed_at: now,
-            trigger: "reinforcement signal",
-            changed_by_session: sessionId,
-            changed_by_turn: turnId
+            trigger: "reinforcement signal"
           }
         }
       }
@@ -195,8 +190,7 @@ export class BeliefWriter {
     userId: string,
     oldId: string,
     newId: string,
-    sessionId: string,
-    turnId: string
+    session?: ClientSession
   ): Promise<void> {
     const now = new Date();
     await this.col.updateOne(
@@ -210,13 +204,31 @@ export class BeliefWriter {
         $push: {
           change_log: {
             changed_at: now,
-            trigger: `superseded by belief ${newId}`,
-            changed_by_session: sessionId,
-            changed_by_turn: turnId
+            trigger: `superseded by belief ${newId}`
           }
         }
-      }
+      },
+      session ? { session } : {}
     );
+  }
+
+  async replace(
+    userId: string,
+    oldId: string,
+    input: CreateBeliefInput
+  ): Promise<string> {
+    const session = this.col.db.client.startSession();
+    const replacementId = randomUUID();
+
+    try {
+      await session.withTransaction(async () => {
+        await this.supersede(userId, oldId, replacementId, session);
+        await this.insert(input, replacementId, session);
+      });
+      return replacementId;
+    } finally {
+      await session.endSession();
+    }
   }
 
   async findByCanonical(
@@ -272,17 +284,7 @@ export class BeliefWriter {
     return res.modifiedCount === 1;
   }
 
-  /**
-   * Promotes an inferred belief to active epistemic status. Called once
-   * reinforcement_count and age thresholds are both satisfied. No-ops if the
-   * belief is not currently inferred (guards against races).
-   */
-  async promoteToActive(
-    userId: string,
-    beliefId: string,
-    sessionId: string,
-    turnId: string
-  ): Promise<boolean> {
+  async promoteToActive(userId: string, beliefId: string): Promise<boolean> {
     const now = new Date();
     const res = await this.col.updateOne(
       { _id: beliefId, user_id: userId, epistemic_status: "inferred" },
@@ -295,25 +297,12 @@ export class BeliefWriter {
           change_log: {
             changed_at: now,
             trigger:
-              "promoted from inferred to active via reinforcement threshold",
-            changed_by_session: sessionId,
-            changed_by_turn: turnId
+              "promoted from inferred to active via reinforcement threshold"
           }
         }
       }
     );
     return res.modifiedCount === 1;
-  }
-
-  async setSupersededBy(
-    userId: string,
-    oldId: string,
-    newId: string
-  ): Promise<void> {
-    await this.col.updateOne(
-      { _id: oldId, user_id: userId },
-      { $set: { superseded_by: newId } }
-    );
   }
 }
 

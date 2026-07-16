@@ -104,6 +104,7 @@ export class TokenService {
             name: existing.name || "Root Token",
             user_id: userId,
             capabilities: ROOT_CAPABILITIES,
+            active_scope: existing.active_scope ?? null,
             project_scopes: null,
             revoked_at: null
           }
@@ -120,6 +121,7 @@ export class TokenService {
       name: "Root Token",
       user_id: userId,
       capabilities: ROOT_CAPABILITIES,
+      active_scope: null,
       project_scopes: null,
       created_at: now,
       expires_at: null,
@@ -145,6 +147,7 @@ export class TokenService {
       name: req.name,
       user_id: userId,
       capabilities: req.capabilities,
+      active_scope: null,
       project_scopes: req.project_scopes ?? null,
       created_at: new Date(),
       expires_at: expiresAt,
@@ -202,4 +205,29 @@ export class TokenService {
     );
     return result.modifiedCount;
   }
+  async getActiveScope(
+    userId: string,
+    tokenId: string
+  ): Promise<string[] | null> {
+    const doc = await this.tokenCol.findOne(
+      { _id: tokenId, user_id: userId, revoked_at: null },
+      { projection: { active_scope: 1 } }
+    );
+    return doc?.active_scope ?? null;
+  }
+
+  async setActiveScope(
+    userId: string,
+    tokenId: string,
+    scope: string[]
+  ): Promise<void> {
+    const result = await this.tokenCol.updateOne(
+      { _id: tokenId, user_id: userId, revoked_at: null },
+      { $set: { active_scope: [...new Set(scope)] } }
+    );
+    if (result.matchedCount !== 1) {
+      throw new Error("Token not found or not owned by user");
+    }
+  }
+
 }

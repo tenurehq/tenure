@@ -1,11 +1,11 @@
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import type { Db } from "mongodb";
 
-import { SessionManager } from "./session/manager.js";
 import { ContextBuilder } from "./context/contextBuilder.js";
 import { ProviderRegistry } from "./providers/registry.js";
 import { ExtractionJobQueue } from "./jobs/queue.js";
 import { registerChatRoute, type ChatDeps } from "./routes/chat.js";
+import { registerMessagesRoute } from "./routes/messages.js";
 import { registerAdminRoutes, type AdminDeps } from "./routes/admin.js";
 import { registerBeliefsRoutes, type BeliefsDeps } from "./routes/beliefs.js";
 import type { RuntimeConfigStore } from "./config/runtime.js";
@@ -122,14 +122,15 @@ function applyTokenRequestContext(req: FastifyRequest, doc: TokenDoc): void {
   req.tenureTokenProjectScopes = doc.project_scopes;
   req.tenureTokenKind = doc.kind;
   req.tenureTokenCapabilities = doc.capabilities;
-  req.tenureTokenExtractionEnabled = doc.capabilities.includes("extraction");
-  req.tenureTokenInjectionEnabled = doc.capabilities.includes("injection");
+  req.tenureTokenExtractionEnabled =
+    doc.kind === "root" || doc.capabilities.includes("extraction");
+  req.tenureTokenInjectionEnabled =
+    doc.kind === "root" || doc.capabilities.includes("injection");
 }
 
 export interface ServerDeps {
   db: Db;
   cols: Collections;
-  sessions: SessionManager;
   context: ContextBuilder;
   providers: ProviderRegistry;
   jobs: ExtractionJobQueue;
@@ -325,7 +326,6 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   const chatDeps: ChatDeps = {
-    sessions: deps.sessions,
     context: deps.context,
     providers: deps.providers,
     jobs: deps.jobs,
@@ -333,9 +333,14 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     runtimeStore: deps.runtimeStore,
     errorLogger: deps.errorLogger,
     workspaceState: deps.workspaceState,
-    injectionAudit: new InjectionAuditLogger(deps.cols.injection_audit)
+    injectionAudit: new InjectionAuditLogger(deps.cols.injection_audit),
+    tokenScopes: {
+      getActiveScope: deps.tokenService.getActiveScope.bind(deps.tokenService),
+      setActiveScope: deps.tokenService.setActiveScope.bind(deps.tokenService)
+    }
   };
   registerChatRoute(app, chatDeps);
+  registerMessagesRoute(app, chatDeps);
 
   const adminDeps: AdminDeps = {
     runtimeStore: deps.runtimeStore,
