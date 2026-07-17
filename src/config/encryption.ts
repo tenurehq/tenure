@@ -3,7 +3,7 @@ import {
   createDecipheriv,
   randomBytes,
   scryptSync,
-  createHmac
+  hkdfSync
 } from "node:crypto";
 import {
   readFileSync,
@@ -55,9 +55,15 @@ export class CredentialVault {
   }
 
   hkdfExpand(info: string, length: number = KEY_LEN): Buffer {
-    const hmac = createHmac("sha256", this.masterKey);
-    hmac.update(info);
-    return hmac.digest().subarray(0, length);
+    return Buffer.from(
+      hkdfSync(
+        "sha256",
+        this.masterKey,
+        Buffer.alloc(0),
+        Buffer.from(info, "utf8"),
+        length
+      )
+    );
   }
 
   encryptToFile(plaintext: string, filePath: string): void {
