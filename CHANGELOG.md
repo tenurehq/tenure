@@ -6,6 +6,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.33] - 2026-07-17
+
+### Changed
+
+- **Standards-compliant HKDF key derivation** (`src/config/encryption.ts`): Replaced the custom HMAC-based key expansion logic with Node.js `hkdfSync` using SHA-256, an empty salt, and UTF-8 context information for more robust credential encryption key derivation.
+
+---
+
 ## [1.0.32] - 2026-07-16
 
 ### Added
