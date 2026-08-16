@@ -35,16 +35,6 @@ The [VS Code extension](clients/vscode.md) adds real-time workspace scope resolu
 
 > The bootstrap token created on first install is for setup and admin access. External clients and IDEs need to use a client token created from the Tenure UI.
 
-## Agents
-
-Agent integrations run through Tenure with automatic per-agent memory isolation. Memory written in one agent never surfaces in another unless you explicitly design for shared scope.
-
-This model applies to any agent framework that routes through Tenure. Some integrations are native plugins, while others can connect over Tenure's supported API surfaces.
-
-| Client                          | Integration   | Status    |
-| ------------------------------- | ------------- | --------- |
-| [OpenClaw](clients/openclaw.md) | Native plugin | Supported |
-
 ## Manual mode
 
 If you prefer to manage your belief store by hand, extraction can be disabled entirely. Tenure still injects whatever you have authored into every session.

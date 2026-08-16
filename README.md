@@ -149,7 +149,6 @@ One state layer. Every AI client.
 
 - **IDE:** VS Code (native), Cursor, Windsurf, Continue, Cline
 - **Chat:** Open WebUI, LibreChat, any OpenAI-compatible client
-- **Mobile:** OpenClaw on WhatsApp or Telegram. An insight on a walk lands in the same belief store your IDE reads from tomorrow.
 - **Claude Code:** full Anthropic wire format, works today
 - **Teams:** Helm chart, OIDC, SCIM, audit trails
 
