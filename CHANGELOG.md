@@ -11,9 +11,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Removed
 
 - **OpenClaw integration** (`integrations/openclaw/`): Removed the `@tenureai/openclaw-plugin` package in its entirety, including the plugin entry point, Tenure client, model registry, bundled `tenure` skill, tests, README, license, and package manifests. The plugin previously let OpenClaw sessions connect to Tenure for persistent belief storage and retrieval.
+- **OpenClaw publish workflow** (`.github/workflows/publish-openclaw-plugin.yml`): Removed the CI workflow that built and published `@tenureai/openclaw-plugin` to npm and ClaWHub on `openclaw-v*` tags.
+- **OpenClaw client docs** (`docs/clients/openclaw.md`, `docs/clients.md`): Removed the OpenClaw client guide and the Agents section listing it as a supported native-plugin integration.
+- **OpenClaw extraction prompt** (`src/extraction/importPrompt.ts`, `src/routes/beliefs.ts`): Removed `buildOpenClawExtractionSystemPrompt`, which extracted beliefs from OpenClaw `USER.md`/`MEMORY.md` workspace files, along with the belief-import route's OpenClaw-specific `source_label` branch that selected it. Imports now always use the standard `buildImportExtractionSystemPrompt`, regardless of source label.
 
 ### Changed
 
+- **README client list trimmed** (`README.md`): Removed the "Mobile: OpenClaw on WhatsApp or Telegram" line from the supported-clients list.
 - **Root dependency versions loosened and bumped** (`package.json`): Relaxed several pinned dependency versions to caret ranges and bumped their floors — `@fastify/schedule` (`6.0.0` → `^7.0.0`), `@fastify/static` (`10.1.0` → `^10.1.3`), `fastify` (`5.10.0` → `^5.12.0`), `jsonrepair` (pinned → `^3.15.0`), `mongodb-client-encryption` (`7.2.0` → `^7.2.1`), `smol-toml` (`1.6.1` → `^1.8.0`), and `toad-scheduler` (pinned → `^4.1.0`).
 - **Lockfiles updated** (`package-lock.json`, `integrations/vscode/package-lock.json`): Regenerated to reflect the root dependency bumps and transitive dependency changes in the VS Code integration.
 

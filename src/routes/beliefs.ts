@@ -7,8 +7,7 @@ import type { ExtractionWorkerLike } from "../extraction/worker.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import {
   buildImportExtractionPrompt,
-  buildImportExtractionSystemPrompt,
-  buildOpenClawExtractionSystemPrompt
+  buildImportExtractionSystemPrompt
 } from "../extraction/importPrompt.js";
 import { extractJsonBlock } from "../extraction/extractJson.js";
 import type { BeliefWriter } from "../extraction/beliefWriter.js";
@@ -375,17 +374,10 @@ export function registerBeliefsRoutes(
       }
 
       let extractionRaw: string;
-      const isOpenClaw = (source_label ?? "").startsWith("openclaw:");
-      const agentId = isOpenClaw
-        ? (source_label ?? "").slice("openclaw:".length)
-        : null;
 
-      const systemPrompt =
-        isOpenClaw && agentId
-          ? buildOpenClawExtractionSystemPrompt(agentId)
-          : buildImportExtractionSystemPrompt(
-              scope?.length ? { declaredScope: scope } : {}
-            );
+      const systemPrompt = buildImportExtractionSystemPrompt(
+        scope?.length ? { declaredScope: scope } : {}
+      );
 
       try {
         const resp = await (adapter as unknown as InternalLLMCaller).call(
