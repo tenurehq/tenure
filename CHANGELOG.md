@@ -6,6 +6,19 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.34] - 2026-08-15
+
+### Removed
+
+- **OpenClaw integration** (`integrations/openclaw/`): Removed the `@tenureai/openclaw-plugin` package in its entirety, including the plugin entry point, Tenure client, model registry, bundled `tenure` skill, tests, README, license, and package manifests. The plugin previously let OpenClaw sessions connect to Tenure for persistent belief storage and retrieval.
+
+### Changed
+
+- **Root dependency versions loosened and bumped** (`package.json`): Relaxed several pinned dependency versions to caret ranges and bumped their floors — `@fastify/schedule` (`6.0.0` → `^7.0.0`), `@fastify/static` (`10.1.0` → `^10.1.3`), `fastify` (`5.10.0` → `^5.12.0`), `jsonrepair` (pinned → `^3.15.0`), `mongodb-client-encryption` (`7.2.0` → `^7.2.1`), `smol-toml` (`1.6.1` → `^1.8.0`), and `toad-scheduler` (pinned → `^4.1.0`).
+- **Lockfiles updated** (`package-lock.json`, `integrations/vscode/package-lock.json`): Regenerated to reflect the root dependency bumps and transitive dependency changes in the VS Code integration.
+
+---
+
 ## [1.0.33] - 2026-07-17
 
 ### Changed
