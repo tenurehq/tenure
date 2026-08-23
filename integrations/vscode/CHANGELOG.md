@@ -6,6 +6,18 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.26]
+
+### Removed
+
+- **VS Code walkthrough docs** (`integrations/vscode/media/walkthrough/beliefs.md`, `client.md`, `scope.md`, `token.md`): Removed the four walkthrough pages covering the belief store UI, IDE client setup, project scope isolation, and token connection.
+
+### Changed
+
+- **Lockfile updated** (`package-lock.json`): Regenerated to reflect the above version and toolchain bumps, including the TypeScript 7 platform-specific optional packages and updated transitive dependencies.
+
+---
+
 ## [1.0.25]
 
 ### Added

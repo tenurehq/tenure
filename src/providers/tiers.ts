@@ -27,7 +27,7 @@ function extractClaudeVersion(modelId: string): number | null {
   const id = modelId.replace(/^(?:us\.|eu\.|ap\.)?anthropic\./i, "");
 
   const newStyle = id.match(
-    /^claude-(?:opus|sonnet|haiku|claude)-(\d+)(?:-(\d+))?/i,
+    /^claude-(?:opus|sonnet|haiku|claude)-(\d+)(?:-(\d+))?/i
   );
   if (newStyle) {
     return parseInt(newStyle[1], 10) + parseInt(newStyle[2] ?? "0", 10) / 10;
@@ -42,17 +42,19 @@ function extractClaudeVersion(modelId: string): number | null {
 }
 
 function extractGptVersion(modelId: string): number | null {
-  if (/^gpt-4\.1-mini/i.test(modelId)) return 4.35;
-  if (/^gpt-4\.1-nano/i.test(modelId)) return 4.3;
-  if (/^gpt-4\.1/i.test(modelId)) return 4.5;
+  if (/^gpt-4\.1-mini(?:-|$)/i.test(modelId)) return 4.35;
+  if (/^gpt-4\.1-nano(?:-|$)/i.test(modelId)) return 4.3;
+  if (/^gpt-4\.1(?:-|$)/i.test(modelId)) return 4.5;
 
-  if (/^gpt-4o-mini/i.test(modelId)) return 4.4;
-  if (/^gpt-4o/i.test(modelId)) return 4.5;
+  if (/^gpt-4o-mini(?:-|$)/i.test(modelId)) return 4.4;
+  if (/^gpt-4o(?:-|$)/i.test(modelId)) return 4.5;
 
-  if (/^gpt-4-turbo/i.test(modelId)) return 4.1;
-  if (/^gpt-4/i.test(modelId)) return 4.0;
-  if (/^gpt-3/i.test(modelId)) return 3.0;
-  return null;
+  if (/^gpt-4-turbo(?:-|$)/i.test(modelId)) return 4.1;
+  if (/^gpt-4(?:-|$)/i.test(modelId)) return 4.0;
+  if (/^gpt-3(?:-|$)/i.test(modelId)) return 3.0;
+
+  const match = modelId.match(/^gpt-(\d+(?:\.\d+)?)(?:-|$)/i);
+  return match ? Number(match[1]) : null;
 }
 
 /**
@@ -79,7 +81,7 @@ export const TIER_FLOORS: readonly FamilyFloor[] = [
     detect: /^claude-/i,
     extractVersion: extractClaudeVersion,
     minVersion: 4.5,
-    status: "community",
+    status: "community"
   },
 
   {
@@ -88,14 +90,14 @@ export const TIER_FLOORS: readonly FamilyFloor[] = [
     detect: /^(?:us\.|eu\.|ap\.)?anthropic\.claude/i,
     extractVersion: extractClaudeVersion,
     minVersion: 4.5,
-    status: "verified",
+    status: "verified"
   },
 
   {
     family: "bedrock-nova-pro",
     tier: 2,
     detect: /^(?:us\.|eu\.|ap\.)?amazon\.nova-(?:pro|premier|2)/i,
-    status: "community",
+    status: "community"
   },
 
   {
@@ -104,28 +106,28 @@ export const TIER_FLOORS: readonly FamilyFloor[] = [
     detect: /^gpt-/i,
     extractVersion: extractGptVersion,
     minVersion: 4.4,
-    status: "community",
+    status: "community"
   },
 
   {
     family: "openai-o-series",
     tier: 1,
-    detect: /^o[3-9]\d*/i,
-    status: "community",
+    detect: /^o(?:[3-9]|\d{2,})(?:-|$)/i,
+    status: "community"
   },
 
   {
     family: "bedrock-gpt-oss-120b",
     tier: 2,
     detect: /^(?:us\.|eu\.|ap\.)?openai\.gpt-oss-120b/i,
-    status: "community",
+    status: "community"
   },
 
   {
     family: "bedrock-mistral-large",
     tier: 2,
     detect: /^(?:us\.|eu\.|ap\.)?mistral\.mistral-large-3/i,
-    status: "community",
+    status: "community"
   },
 
   {
@@ -134,8 +136,8 @@ export const TIER_FLOORS: readonly FamilyFloor[] = [
     detect: /^(?:qwen\.)?qwen3-235b/i,
     extractVersion: extractQwen3DateStamp,
     minVersion: 2507,
-    status: "community",
-  },
+    status: "community"
+  }
 ] as const;
 
 export function checkModelTier(modelId: string): TierCheckResult {
@@ -153,7 +155,7 @@ export function checkModelTier(modelId: string): TierCheckResult {
           family: entry.family,
           reason:
             `Cannot determine version for "${modelId}" in family "${entry.family}". ` +
-            `Minimum required: ${entry.minVersion}.`,
+            `Minimum required: ${entry.minVersion}.`
         };
       }
       if (version < entry.minVersion) {
@@ -163,7 +165,7 @@ export function checkModelTier(modelId: string): TierCheckResult {
           family: entry.family,
           reason:
             `"${modelId}" is version ${version} (family: ${entry.family}). ` +
-            `Minimum supported version is ${entry.minVersion}.`,
+            `Minimum supported version is ${entry.minVersion}.`
         };
       }
     }
@@ -184,49 +186,49 @@ export function listSupportedFamilies(): SupportedFamilySummary[] {
       family: "claude",
       tier: 2,
       floor: "Claude 4.5 and above",
-      status: "community",
+      status: "community"
     },
     {
       family: "gpt",
       tier: 2,
       floor: "GPT-4o-mini and above (gpt-4.1-mini is below floor)",
-      status: "community",
+      status: "community"
     },
     {
       family: "openai-o-series",
       tier: 1,
       floor: "o3, o4-mini and above",
-      status: "community",
+      status: "community"
     },
     {
       family: "bedrock-claude",
       tier: 2,
       floor: "Bedrock: Anthropic Claude 4.5 and above",
-      status: "verified",
+      status: "verified"
     },
     {
       family: "bedrock-nova-pro",
       tier: 2,
       floor: "Bedrock: Amazon Nova Pro, Nova 2, Nova Premier",
-      status: "community",
+      status: "community"
     },
     {
       family: "bedrock-gpt-oss-120b",
       tier: 2,
       floor: "Bedrock: OpenAI GPT-OSS 120B (20B excluded)",
-      status: "community",
+      status: "community"
     },
     {
       family: "bedrock-mistral-large",
       tier: 2,
       floor: "Bedrock: Mistral Large 3 (675B) only",
-      status: "community",
+      status: "community"
     },
     {
       family: "qwen3-235b",
       tier: 2,
       floor: "Qwen3-235B-A22B-2507 and above (Instruct or Thinking)",
-      status: "community",
-    },
+      status: "community"
+    }
   ];
 }

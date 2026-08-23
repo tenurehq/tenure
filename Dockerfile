@@ -1,10 +1,10 @@
 FROM dhi.io/node:26-alpine-dev AS crypt
 RUN apk add --no-cache curl ca-certificates
 
-ARG MONGO_CRYPT_VERSION=8.3.2
+ARG MONGO_CRYPT_VERSION=8.3.8
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "aarch64" ]; then \
-      URL="https://downloads.mongodb.com/linux/mongo_crypt_shared_v1-linux-aarch64-enterprise-ubuntu2204-${MONGO_CRYPT_VERSION}.tgz"; \
+      URL="https://downloads.mongodb.com/linux/mongo_crypt_shared_v1-linux-aarch64-enterprise-ubuntu2404-${MONGO_CRYPT_VERSION}.tgz"; \
     else \
       URL="https://downloads.mongodb.com/linux/mongo_crypt_shared_v1-linux-x86_64-enterprise-debian12-${MONGO_CRYPT_VERSION}.tgz"; \
     fi && \
@@ -16,6 +16,9 @@ FROM dhi.io/node:26-debian13-dev AS deps
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
+
+FROM deps AS prod-deps
+RUN npm prune --omit=dev
 
 FROM dhi.io/node:26-alpine-dev AS build
 WORKDIR /app
@@ -35,7 +38,7 @@ COPY --from=setup /etc/passwd /etc/passwd
 COPY --from=setup /etc/group /etc/group
 
 COPY --from=build /app/dist ./dist
-COPY --from=deps /app/node_modules ./node_modules
+COPY --from=prod-deps /app/node_modules ./node_modules
 COPY package*.json ./
 COPY src/static ./dist/static
 COPY --from=crypt /tmp/lib/mongo_crypt_v1.so /app/vendor/mongo_crypt_v1.so

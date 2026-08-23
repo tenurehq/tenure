@@ -6,7 +6,7 @@ import type {
   ModelInfo,
   Message,
   SystemPrompt
-} from "./types.ts";
+} from "./types.js";
 
 export interface AnthropicCallRequest {
   model: string;

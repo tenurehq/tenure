@@ -40,7 +40,7 @@ import { startBeliefChangeStream } from "./db/beliefChangeStream.js";
 import { InjectionAuditLogger } from "./audit/injectionAuditLogger.js";
 import { registerAuditRoutes, type AuditDeps } from "./routes/audit.js";
 import { registerAuditUiRoute } from "./routes/audit-ui.js";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import helmet from "@fastify/helmet";
 import type { ProjectResumeService } from "./context/projectResume.js";
 import { registerResumeRoutes, type ResumeRouteDeps } from "./routes/resume.js";
@@ -147,7 +147,11 @@ export interface ServerDeps {
 }
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
-  const app = Fastify({ logger: { level: "info" } });
+  const app = Fastify({
+    logger: { level: "info" },
+    bodyLimit: 50 * 1024 * 1024,
+    genReqId: () => randomUUID()
+  });
 
   app.addHook("onRequest", async (_req, reply) => {
     (reply.raw as any).cspNonce = randomBytes(16).toString("base64");
