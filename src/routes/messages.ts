@@ -188,10 +188,25 @@ export function registerMessagesRoute(
 
       let adapter: AnthropicAdapter;
       try {
-        adapter = deps.providers.detectFromModel(
+        const detectedAdapter = deps.providers.detectFromModel(
           requestedModel,
           "anthropic"
-        ) as unknown as AnthropicAdapter;
+        );
+
+        if (!(detectedAdapter instanceof AnthropicAdapter)) {
+          return reply.code(400).send({
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              message:
+                `Model "${requestedModel}" is not available through ` +
+                `the Anthropic-compatible /v1/messages endpoint. ` +
+                `Use /v1/chat/completions for this model.`
+            }
+          });
+        }
+
+        adapter = detectedAdapter;
       } catch (e) {
         if (e instanceof ProviderNotConfiguredError) {
           return reply.code(401).send({
@@ -206,7 +221,6 @@ export function registerMessagesRoute(
       }
 
       const userId = req.tenureUserId;
-
       const requestId = randomUUID();
 
       const systemText = extractSystemText(body.system);
@@ -249,7 +263,9 @@ export function registerMessagesRoute(
         req.log
       );
       const commandMessage =
-        scopeCommand?.message ?? extractCommand?.message ?? injectCommand?.message;
+        scopeCommand?.message ??
+        extractCommand?.message ??
+        injectCommand?.message;
 
       if (commandMessage) {
         return reply.send(
@@ -272,7 +288,6 @@ export function registerMessagesRoute(
       const client = parseClient(
         req.headers["user-agent"] as string | undefined
       );
-
 
       const noExtractHeader = req.headers["x-tenure-no-extract"] === "true";
       const bootstrapInProgress = req.headers["x-tenure-bootstrapping"] === "1";
@@ -325,7 +340,6 @@ export function registerMessagesRoute(
           req.log.warn({ err }, "context assembly failed");
           return EMPTY_CONTEXT;
         });
-
 
       let systemPrompt: SystemPrompt;
       try {

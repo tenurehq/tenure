@@ -6,6 +6,24 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.35] - 2026-08-22
+
+### Fixed
+
+- **`/v1/messages` model validation** (`src/routes/messages.ts`): `detectFromModel` results are now checked with `instanceof AnthropicAdapter` before use; requests for a non-Anthropic-compatible model now return a `400 invalid_request_error` directing the caller to `/v1/chat/completions` instead of silently coercing the adapter type.
+- **Model tier detection regexes** (`src/providers/tiers.ts`): Tightened `extractGptVersion` and the `openai-o-series` matcher to require a boundary (`-` or end of string) after the version token, preventing incorrect matches on model IDs like `gpt-4.15` or `o35`; added a fallback numeric-version parser for unrecognized `gpt-*` IDs instead of returning `null`.
+- **Provider import extension** (`src/providers/anthropic.ts`): Fixed the `./types.ts` import specifier to `./types.js` to match the compiled output.
+- **Server hardening** (`src/server.ts`): Fastify now sets an explicit `bodyLimit` of 50MB and generates request IDs via `randomUUID()` (`genReqId`) instead of the default incrementing counter.
+
+### Changed
+
+- **Smaller production Docker image** (`Dockerfile`): Added a `prod-deps` build stage that runs `npm prune --omit=dev`, and the final image now copies `node_modules` from `prod-deps` instead of the full `deps` stage. Also bumped `MONGO_CRYPT_VERSION` (`8.3.2` → `8.3.8`) and switched the aarch64 download to the `ubuntu2404` enterprise build.
+- **VS Code extension version and toolchain** (`integrations/vscode/package.json`, `package-lock.json`, `.vscode-test.cjs`): Bumped extension version (`1.0.25` → `1.0.26`), the bundled test runner (`vscode-test` target `1.121.0` → `1.130.0`), and dev dependencies including `@types/node` (`25.9.1` → `^26.2.0`), `@typescript/native-preview`, `tsdown` (`^0.22.2` → `^0.22.14`), and `typescript` (`6.0.3` → `^7.0.2`).
+- **Root dependency versions re-pinned and bumped** (`package.json`): Reverted several dependencies from caret ranges back to exact pins while bumping their versions — `@fastify/helmet` (`13.1.0` → `13.1.1`), `@fastify/schedule` (`^7.0.0` → `7.0.0`), `@fastify/static` (`^10.1.3` → `10.1.3`), `fastify` (`^5.12.0` → `5.12.1`), `jsonrepair` (`^3.15.0` → `3.15.0`), `mongodb-client-encryption` (`^7.2.1` → `7.2.1`), `smol-toml` (`^1.8.0` → `1.8.0`), `toad-scheduler` (`^4.1.0` → `4.1.0`), and dev dependencies `@types/node` (`25.9.3` → `26.2.0`), `@types/sinon` (`21.0.1` → `22.0.0`), `@types/ws` (`^8.18.1` → `8.18.1`), `sinon` (`22.0.0` → `22.1.0`), `tsx` (`4.22.4` → `4.23.12`), and `typescript` (`6.0.3` → `7.0.2`).
+- **Lockfile updated** (`package-lock.json`): Regenerated to reflect the above version and toolchain bumps, including the TypeScript 7 platform-specific optional packages and updated transitive dependencies.
+
+---
+
 ## [1.0.34] - 2026-08-15
 
 ### Removed
