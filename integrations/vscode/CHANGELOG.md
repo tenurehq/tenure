@@ -6,6 +6,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.27]
+
+### Changed
+
+- **Lockfile updated** (`package-lock.json`): Bumped js-yaml from 4.3.1 to 4.3.2 and qs from 6.15.3 to 6.16.0 (transitive dev dependencies).
+
+---
+
 ## [1.0.26]
 
 ### Removed
