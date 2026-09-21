@@ -141,7 +141,47 @@ export function registerBeliefsWsRoute(
 
   app.get("/v1/ws/beliefs", { websocket: true }, (socket: WebSocket, req) => {
     const userId = req.tenureUserId;
-    //let currentScope: string | null = null;
+    const tokenKind = req.tenureTokenKind;
+    const capabilities = req.tenureTokenCapabilities ?? [];
+    const projectScopes = req.tenureTokenProjectScopes;
+
+    const sendError = (requestType: string, message: string): void => {
+      socket.send(JSON.stringify({
+        type: "error",
+        request_type: requestType,
+        message
+      } satisfies ServerMessage));
+    };
+
+    const requireRead = (requestType: string): boolean => {
+      if (tokenKind === "root" || capabilities.includes("beliefs:read")) return true;
+      sendError(requestType, 'This operation requires capability "beliefs:read"');
+      return false;
+    };
+
+    const requireWrite = (requestType: string): boolean => {
+      if (tokenKind === "root") return true;
+      if (tokenKind === "agent") {
+        sendError(requestType, "Agent tokens cannot modify beliefs or workspace data");
+        return false;
+      }
+      if (capabilities.includes("beliefs:write")) return true;
+      sendError(requestType, 'This operation requires capability "beliefs:write"');
+      return false;
+    };
+
+    const requireRoot = (requestType: string): boolean => {
+      if (tokenKind === "root") return true;
+      sendError(requestType, "Only the root token can change global settings");
+      return false;
+    };
+
+    const requireScopes = (requestType: string, scopes: string[]): boolean => {
+      const scopeCheck = assertTokenProjectScopes(req, scopes);
+      if (scopeCheck.ok) return true;
+      sendError(requestType, scopeCheck.message);
+      return false;
+    };
 
     registry.add(userId, socket);
 
@@ -161,12 +201,14 @@ export function registerBeliefsWsRoute(
       }
 
       switch (msg.type) {
-        /* case "subscribe": {
-          currentScope = msg.scope;
+        case "subscribe": {
+          if (!requireRead("subscribe")) break;
+          if (!requireScopes("subscribe", [msg.scope])) break;
           break;
-        } */
+        }
 
         case "patch_belief": {
+          if (!requireWrite("patch_belief")) break;
           try {
             const { id, patch } = msg;
 
@@ -181,6 +223,8 @@ export function registerBeliefsWsRoute(
               );
               break;
             }
+
+            if (!requireScopes("patch_belief", current.scope)) break;
 
             const $set: Record<string, unknown> = { updated_at: new Date() };
             const logEntries: Array<{
@@ -263,18 +307,12 @@ export function registerBeliefsWsRoute(
         }
 
         case "record_belief": {
-          const scopeCheck = assertTokenProjectScopes(req, msg.scope);
-          if (!scopeCheck.ok) {
-            socket.send(
-              JSON.stringify({
-                type: "error",
-                request_type: "record_belief",
-                message: scopeCheck.message
-              } satisfies ServerMessage)
-            );
-            break;
-          }
-
+          if (!requireWrite("record_belief")) break;
+          const recordScopes = [
+            ...msg.scope,
+            ...(msg.project_scope ? [msg.project_scope] : [])
+          ];
+          if (!requireScopes("record_belief", recordScopes)) break;
           try {
             const now = new Date();
             const beliefId = await beliefWriter.create({
@@ -338,6 +376,11 @@ export function registerBeliefsWsRoute(
         }
 
         case "file_meta": {
+          if (!requireWrite("file_meta")) break;
+          if (projectScopes != null) {
+            sendError("file_meta", "Project-scoped tokens cannot update file metadata without an explicit project scope");
+            break;
+          }
           try {
             const now = new Date();
             await fileMeta.updateOne(
@@ -369,6 +412,8 @@ export function registerBeliefsWsRoute(
         }
 
         case "file_edited": {
+          if (!requireWrite("file_edited")) break;
+          if (!requireScopes("file_edited", [msg.project_scope])) break;
           try {
             const now = new Date();
             await fileMeta.updateOne(
@@ -401,6 +446,11 @@ export function registerBeliefsWsRoute(
         }
 
         case "rename_file": {
+          if (!requireWrite("rename_file")) break;
+          if (projectScopes != null) {
+            sendError("rename_file", "Project-scoped tokens cannot rename files without an explicit project scope");
+            break;
+          }
           try {
             await col.updateMany(
               {
@@ -437,7 +487,17 @@ export function registerBeliefsWsRoute(
         }
 
         case "workspace_state": {
+          if (!requireWrite("workspace_state")) break;
           try {
+            const slug = msg.project_name
+              .toLowerCase()
+              .replace(/^@[^/]+\//, "")
+              .replace(/[^a-z0-9-]/g, "-")
+              .replace(/-+/g, "-")
+              .replace(/^-|-$/g, "");
+            const workspaceScope = `project:${slug}`;
+            if (!requireScopes("workspace_state", [workspaceScope])) break;
+
             await deps.workspaceState.set(userId, {
               workspace_root: msg.workspace_root,
               project_name: msg.project_name,
@@ -447,33 +507,20 @@ export function registerBeliefsWsRoute(
               updated_at: new Date()
             });
 
-            const slug = msg.project_name
-              .toLowerCase()
-              .replace(/^@[^/]+\//, "")
-              .replace(/[^a-z0-9-]/g, "-")
-              .replace(/-+/g, "-")
-              .replace(/^-|-$/g, "");
-
-            socket.send(
-              JSON.stringify({
-                type: "scope_confirmed",
-                scope: `project:${slug}`,
-                active_file: msg.active_file
-              } satisfies ServerMessage)
-            );
+            socket.send(JSON.stringify({
+              type: "scope_confirmed",
+              scope: workspaceScope,
+              active_file: msg.active_file
+            } satisfies ServerMessage));
           } catch (e) {
-            socket.send(
-              JSON.stringify({
-                type: "error",
-                request_type: "workspace_state",
-                message: (e as Error).message
-              } satisfies ServerMessage)
-            );
+            sendError("workspace_state", (e as Error).message);
           }
           break;
         }
 
         case "fetch_categorized_beliefs": {
+          if (!requireRead("fetch_categorized_beliefs")) break;
+          if (!requireScopes("fetch_categorized_beliefs", [msg.scope])) break;
           try {
             const fileBeliefs: BeliefSummary[] = [];
             if (msg.active_file) {
@@ -482,7 +529,8 @@ export function registerBeliefsWsRoute(
                   user_id: userId,
                   resolved_at: null,
                   superseded_by: null,
-                  "origin_context.active_file": msg.active_file
+                  "origin_context.active_file": msg.active_file,
+                  scope: { $in: [msg.scope, "user:universal"] }
                 })
                 .sort({ pinned: -1, last_reinforced_at: -1 })
                 .toArray();
@@ -553,6 +601,7 @@ export function registerBeliefsWsRoute(
         }
 
         case "set_toggle": {
+          if (!requireRoot("set_toggle")) break;
           try {
             const key =
               msg.toggle === "injection"
@@ -580,6 +629,7 @@ export function registerBeliefsWsRoute(
         }
 
         case "fetch_toggles": {
+          if (!requireRead("fetch_toggles")) break;
           try {
             const cfg = await deps.runtimeStore.load();
             socket.send(

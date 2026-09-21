@@ -170,8 +170,19 @@ export function registerMessagesRoute(
         });
       }
 
+      const cfg = await deps.runtimeStore.load().catch(() => ({
+        extraction_enabled: true,
+        injection_enabled: true,
+        scope_auto_detect: true,
+        strict_model_tiers: true
+      }));
+
       const tierResult = checkModelTier(requestedModel);
-      if (!tierResult.supported && tierResult.family !== null) {
+      if (
+        !tierResult.supported &&
+        tierResult.family !== null &&
+        cfg.strict_model_tiers !== false
+      ) {
         return reply.code(422).send({
           type: "error",
           error: {
@@ -279,11 +290,7 @@ export function registerMessagesRoute(
         );
       }
 
-      const cfg = await deps.runtimeStore.load().catch(() => ({
-        extraction_enabled: true,
-        injection_enabled: true,
-        scope_auto_detect: true
-      }));
+
 
       const client = parseClient(
         req.headers["user-agent"] as string | undefined

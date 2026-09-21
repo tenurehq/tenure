@@ -80,8 +80,19 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       return reply.code(400).send({ error: { message: "model is required" } });
     }
 
+    const cfg = await deps.runtimeStore.load().catch(() => ({
+      extraction_enabled: true,
+      injection_enabled: true,
+      scope_auto_detect: true,
+      strict_model_tiers: true
+    }));
+
     const tierResult = checkModelTier(requestedModel);
-    if (!tierResult.supported && tierResult.family !== null) {
+    if (
+      !tierResult.supported &&
+      tierResult.family !== null &&
+      cfg.strict_model_tiers !== false
+    ) {
       return reply.code(422).send({
         error: {
           message: tierResult.reason,
@@ -185,11 +196,7 @@ export function registerChatRoute(app: FastifyInstance, deps: ChatDeps): void {
       });
     }
 
-    const cfg = await deps.runtimeStore.load().catch(() => ({
-      extraction_enabled: true,
-      injection_enabled: true,
-      scope_auto_detect: true
-    }));
+
 
     const client = parseClient(req.headers["user-agent"] as string | undefined);
 

@@ -178,19 +178,28 @@ export async function buildApp(config: BootstrapConfig) {
     );
   }
   if (runtimeConfig.anthropic_api_key) {
-    providers.register(new AnthropicAdapter(runtimeConfig.anthropic_api_key));
+    providers.register(new AnthropicAdapter(
+        runtimeConfig.anthropic_api_key,
+        runtimeConfig.anthropic_base_url ?? undefined
+      ));
   }
 
   const resolveAdapter = (): InternalLLMCaller => {
-    if (providers.listRegistered().includes("anthropic")) {
-      const a = providers.resolve(
-        "anthropic"
-      ) as unknown as import("./providers/anthropic.js").AnthropicAdapter;
-      return { call: a.callPositional.bind(a) };
+    const model = runtimeConfig.default_model;
+    if (!model) {
+      throw new Error("No model specified, select a default model in the UI");
     }
-    if (providers.listRegistered().includes("openai"))
-      return providers.resolve("openai") as unknown as InternalLLMCaller;
-    throw new Error("No provider configured, add credentials in the UI");
+
+    const adapter = providers.detectFromModel(
+      model,
+      runtimeConfig.default_provider
+    );
+
+    if (adapter instanceof AnthropicAdapter) {
+      return { call: adapter.callPositional.bind(adapter) };
+    }
+
+    return adapter as unknown as InternalLLMCaller;
   };
 
   const personaSummary = new PersonaSummaryService({

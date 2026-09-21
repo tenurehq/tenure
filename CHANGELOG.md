@@ -6,6 +6,23 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.0.36] - 2026-09-20
+
+### Added
+
+- **Custom Anthropic API base URL support** (`src/app.ts`, `src/providers/anthropic.ts`): `AnthropicAdapter` now accepts an optional `baseURL`, sourced from `runtimeConfig.anthropic_base_url`, allowing requests to be routed to a non-default Anthropic endpoint.
+- **Capability-based authorization for belief WebSocket operations** (`src/routes/beliefs-ws.ts`): Introduced `requireRead`, `requireWrite`, `requireRoot`, and `requireScopes` guards enforcing token kind (`root`/`agent`) and capability checks (`beliefs:read`, `beliefs:write`) across `subscribe`, `patch_belief`, `record_belief`, `file_meta`, `file_edited`, `rename_file`, `workspace_state`, `fetch_categorized_beliefs`, `set_toggle`, and `fetch_toggles` handlers. Re-enabled the previously disabled `subscribe` handler with scope validation.
+- **`strict_model_tiers` runtime toggle** (`src/routes/chat.ts`, `src/routes/messages.ts`): New config flag allows model tier restrictions to be disabled at runtime; when `false`, unsupported model tier requests are no longer rejected with a 422.
+
+### Changed
+
+- **Provider resolution now model-driven** (`src/app.ts`): `resolveAdapter` now derives the active provider from `runtimeConfig.default_model` via `providers.detectFromModel`, replacing the previous fixed Anthropic-then-OpenAI fallback lookup. Throws an explicit error if no default model is configured.
+- **`fetch_categorized_beliefs` scope filtering** (`src/routes/beliefs-ws.ts`): File-scoped belief queries now also match beliefs with scope `user:universal`, in addition to the request's own scope.
+- **`record_belief` scope handling** (`src/routes/beliefs-ws.ts`): Scope validation now runs through the shared `requireScopes` helper and additionally includes `project_scope` (when present) alongside the message's declared scopes.
+- **Config load order** (`src/routes/chat.ts`, `src/routes/messages.ts`): `runtimeStore` config is now loaded before the model tier check (rather than after) so `strict_model_tiers` can gate that check.
+
+---
+
 ## [1.0.35] - 2026-08-22
 
 ### Fixed
